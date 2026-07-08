@@ -46,6 +46,9 @@ train:
   batch_size: 8
   num_epochs: 10
   max_steps: null  # override via --max-steps CLI
+  seed: 42
+  deterministic: false
+  amp: false  # automatic mixed precision (CUDA only)
   lr: 1.0e-4
   weight_decay: 0.05
   warmup_steps: 100

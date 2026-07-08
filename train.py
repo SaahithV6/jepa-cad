@@ -10,19 +10,15 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 import torch
-import yaml
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from data.dataset import build_dataset
 from data.transforms import collate_masked_batch
 from models.jepa import JEPAModel
 from utils.checkpoint import load_checkpoint, prune_checkpoints, save_checkpoint
+from utils.config import apply_overrides, load_yaml, seed_everything, validate_config
 from utils.logging import MetricLogger
-
-
-def load_config(path: str | Path) -> dict[str, Any]:
-    with open(path) as f:
-        return yaml.safe_load(f)
+from utils.schedule import warmup_cosine
 
 
 def resolve_device(device_cfg: str) -> torch.device:
@@ -154,18 +150,13 @@ def build_dataloader(cfg: dict[str, Any], data_source: str) -> DataLoader:
 
 
 def build_scheduler(optimizer: torch.optim.Optimizer, cfg: dict[str, Any], total_steps: int):
-    warmup = cfg["train"]["warmup_steps"]
-
-    def lr_lambda(step: int) -> float:
-        if step < warmup:
-            return float(step + 1) / float(max(warmup, 1))
-        progress = (step - warmup) / max(total_steps - warmup, 1)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    warmup = int(cfg["train"]["warmup_steps"])
+    return warmup_cosine(optimizer, total_steps=total_steps, warmup_steps=warmup, min_lr_ratio=0.0)
 
 
 def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
+    validate_config(cfg)
+    seed_everything(int(cfg["train"].get("seed", 42)), bool(cfg["train"].get("deterministic", False)))
     device = resolve_device(cfg["train"].get("device", "auto"))
     print(f"Using device: {device}")
 
@@ -198,6 +189,9 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     ckpt_every = int(cfg["train"]["checkpoint_every"])
     grad_clip = float(cfg["train"]["grad_clip"])
 
+    use_amp = bool(cfg["train"].get("amp", False)) and device.type == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+
     model.train()
     start_time = time.perf_counter()
     data_iter = iter(dataloader)
@@ -217,12 +211,15 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
         target_block_ids = batch["target_block_ids"].to(device)
 
         optimizer.zero_grad(set_to_none=True)
-        out = model(points, fields, context_mask, target_masks, target_block_ids)
-        loss = out["loss"]
-        loss.backward()
+        with torch.amp.autocast("cuda", enabled=use_amp):
+            out = model(points, fields, context_mask, target_masks, target_block_ids)
+            loss = out["loss"]
+        scaler.scale(loss).backward()
 
+        scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
         model.update_target_encoder()
         scheduler.step()
 
@@ -270,6 +267,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=str, default="configs/base.yaml")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint path to resume from")
     parser.add_argument(
+        "--set",
+        type=str,
+        action="append",
+        default=None,
+        help="Override config keys, e.g. --set train.lr=3e-4 --set masking.grid_size=[6,6,6]",
+    )
+    parser.add_argument(
         "--data-source",
         type=str,
         choices=["real", "synthetic", "mixed"],
@@ -282,7 +286,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    cfg = load_config(args.config)
+    cfg = load_yaml(args.config)
+    cfg = apply_overrides(cfg, args.set)
     train_loop(cfg, args)
 
 

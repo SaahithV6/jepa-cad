@@ -60,6 +60,9 @@ pytest tests/ -q
 
 # Linear probe after training
 python eval/probe.py --checkpoint checkpoints/latest.pt --data-source synthetic
+
+# Inspect real shards (sanity checks)
+python -m data.stats --data-dir data/processed --limit 32
 ```
 
 ## Data representation
