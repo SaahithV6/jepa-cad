@@ -1,0 +1,72 @@
+# JEPA-CAD base configuration — all hyperparameters live here.
+
+# Data
+data:
+  data_dir: "data/processed"
+  num_points: 1024
+  num_fields: 3  # e.g. pressure, temperature, von_mises_stress
+  shard_format: "npz"  # npz | pt
+  mix_ratio: 0.7  # fraction of real samples in mixed batches (0.0 = all synthetic)
+  num_workers: 0
+  pin_memory: false
+
+# Synthetic data generator
+synthetic:
+  seed: 42
+  num_primitives: 3
+  noise_std: 0.05
+  field_scale: 1.0
+
+# JEPA block masking (I-JEPA / V-JEPA style spatial blocks)
+masking:
+  grid_size: [4, 4, 4]  # spatial block grid (x, y, z)
+  context_ratio: 0.5  # fraction of blocks used as context
+  num_target_blocks: 4
+  min_target_block_ratio: 0.05  # skip tiny target blocks
+
+# Model (small defaults for fast iteration)
+model:
+  embed_dim: 128
+  encoder:
+    num_layers: 3
+    num_heads: 4
+    mlp_ratio: 2.0
+    dropout: 0.1
+    use_field_features: true
+  predictor:
+    num_layers: 2
+    num_heads: 4
+    mlp_ratio: 2.0
+    dropout: 0.1
+  ema_decay: 0.996
+  loss_type: "smooth_l1"  # smooth_l1 | cosine
+
+# Training
+train:
+  batch_size: 8
+  num_epochs: 10
+  max_steps: null  # override via --max-steps CLI
+  lr: 1.0e-4
+  weight_decay: 0.05
+  warmup_steps: 100
+  grad_clip: 1.0
+  log_every: 10
+  checkpoint_every: 500
+  collapse_std_threshold: 0.01
+  device: "auto"  # auto | cpu | cuda
+
+# Linear probe eval
+probe:
+  num_epochs: 5
+  lr: 1.0e-3
+  batch_size: 16
+  train_split: 0.8
+
+# Logging & checkpoints
+logging:
+  log_dir: "runs"
+  experiment_name: "jepa-cad"
+
+checkpoint:
+  checkpoint_dir: "checkpoints"
+  keep_last: 3
