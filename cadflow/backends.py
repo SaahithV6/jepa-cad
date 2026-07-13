@@ -35,6 +35,12 @@ class CadBackend(Protocol):
 
     def sculpt_offset(self, shape: Any, distance: float) -> Any: ...
 
+    def boolean_cut(self, target: Any, tool: Any) -> Any: ...
+
+    def boolean_union(self, a: Any, b: Any) -> Any: ...
+
+    def fillet(self, shape: Any, radius: float) -> Any: ...
+
     def volume(self, shape: Any) -> float: ...
 
     def bounding_box(self, shape: Any) -> tuple[float, float, float, float, float, float]: ...
@@ -65,6 +71,9 @@ class MockCadSolid:
     dimensions: tuple[float, ...]
     offset: float = 0.0
     profile: tuple[tuple[float, float], ...] = ()
+    volume_scale: float = 1.0
+    extra_faces: int = 0
+    ops: tuple[str, ...] = ()
 
     @property
     def effective_scale(self) -> float:
@@ -116,28 +125,76 @@ class MockCadBackend:
             dimensions=shape.dimensions,
             offset=shape.offset + float(distance),
             profile=shape.profile,
+            volume_scale=shape.volume_scale,
+            extra_faces=shape.extra_faces,
+            ops=shape.ops + ("sculpt_offset",),
+        )
+
+    def boolean_cut(self, target: MockCadSolid, tool: MockCadSolid) -> MockCadSolid:
+        tool_vol = max(self.volume(tool), 1e-12)
+        target_vol = max(self.volume(target), 1e-12)
+        scale = max(0.05, 1.0 - min(0.9, tool_vol / target_vol))
+        return MockCadSolid(
+            kind=target.kind,
+            dimensions=target.dimensions,
+            offset=target.offset,
+            profile=target.profile,
+            volume_scale=target.volume_scale * scale,
+            extra_faces=target.extra_faces + max(1, self.face_count(tool) // 2),
+            ops=target.ops + ("boolean_cut",),
+        )
+
+    def boolean_union(self, a: MockCadSolid, b: MockCadSolid) -> MockCadSolid:
+        # Approximate union volume as sum * 0.9 (overlap heuristic).
+        combined_scale = a.volume_scale + b.volume_scale * 0.9
+        return MockCadSolid(
+            kind="assembly",
+            dimensions=a.dimensions if a.dimensions else b.dimensions,
+            offset=max(a.offset, b.offset),
+            profile=a.profile or b.profile,
+            volume_scale=combined_scale,
+            extra_faces=a.extra_faces + b.extra_faces + 2,
+            ops=a.ops + b.ops + ("boolean_union",),
+        )
+
+    def fillet(self, shape: MockCadSolid, radius: float) -> MockCadSolid:
+        _require_positive("radius", radius)
+        return MockCadSolid(
+            kind=shape.kind,
+            dimensions=shape.dimensions,
+            offset=shape.offset,
+            profile=shape.profile,
+            volume_scale=shape.volume_scale * 0.98,
+            extra_faces=shape.extra_faces + 4,
+            ops=shape.ops + ("fillet",),
         )
 
     def volume(self, shape: MockCadSolid) -> float:
         scale = shape.effective_scale
         if shape.kind == "box":
-            return float(prod(shape.dimensions) * (scale**3))
-        if shape.kind == "cylinder":
+            base = float(prod(shape.dimensions) * (scale**3))
+        elif shape.kind == "cylinder":
             r, h = shape.dimensions
-            return float(pi * (r * scale) ** 2 * (h * scale))
-        if shape.kind == "sphere":
+            base = float(pi * (r * scale) ** 2 * (h * scale))
+        elif shape.kind == "sphere":
             r = shape.dimensions[0] * scale
-            return float((4.0 / 3.0) * pi * r**3)
-        if shape.kind == "extrusion":
+            base = float((4.0 / 3.0) * pi * r**3)
+        elif shape.kind == "extrusion":
             area = _polygon_area(shape.profile) * (scale**2)
             height = shape.dimensions[0] * scale
-            return float(abs(area) * height)
-        raise ValueError(f"unknown mock solid kind: {shape.kind}")
+            base = float(abs(area) * height)
+        elif shape.kind == "assembly":
+            # dimensions may be from first part; use unit cube * volume_scale
+            base = float(prod(shape.dimensions) * (scale**3)) if shape.dimensions else float(scale**3)
+        else:
+            raise ValueError(f"unknown mock solid kind: {shape.kind}")
+        return max(base * shape.volume_scale, 0.0)
 
     def bounding_box(self, shape: MockCadSolid) -> tuple[float, float, float, float, float, float]:
         scale = shape.effective_scale
-        if shape.kind == "box":
-            w, h, d = (v * scale for v in shape.dimensions)
+        if shape.kind in {"box", "assembly"}:
+            dims = shape.dimensions if len(shape.dimensions) >= 3 else (1.0, 1.0, 1.0)
+            w, h, d = (float(v) * scale for v in dims[:3])
             return (-w / 2, -h / 2, -d / 2, w / 2, h / 2, d / 2)
         if shape.kind == "cylinder":
             r, h = shape.dimensions[0] * scale, shape.dimensions[1] * scale
@@ -153,8 +210,8 @@ class MockCadBackend:
         raise ValueError(f"unknown mock solid kind: {shape.kind}")
 
     def face_count(self, shape: MockCadSolid) -> int:
-        counts = {"box": 6, "cylinder": 3, "sphere": 1, "extrusion": 5}
-        return counts.get(shape.kind, 0)
+        counts = {"box": 6, "cylinder": 3, "sphere": 1, "extrusion": 5, "assembly": 8}
+        return counts.get(shape.kind, 0) + shape.extra_faces
 
     def is_valid(self, shape: MockCadSolid) -> bool:
         try:
@@ -304,6 +361,22 @@ class CadQueryBackend:
                 (zmax - zmin) + 2 * pad,
             )
 
+    def boolean_cut(self, target: Any, tool: Any) -> Any:
+        cadquery = cq
+        assert cadquery is not None
+        return cadquery.Workplane("XY").newObject([self._solid(target)]).cut(tool)
+
+    def boolean_union(self, a: Any, b: Any) -> Any:
+        cadquery = cq
+        assert cadquery is not None
+        return cadquery.Workplane("XY").newObject([self._solid(a)]).union(b)
+
+    def fillet(self, shape: Any, radius: float) -> Any:
+        cadquery = cq
+        assert cadquery is not None
+        radius = _require_positive("radius", radius)
+        return cadquery.Workplane("XY").newObject([self._solid(shape)]).edges().fillet(radius)
+
     def volume(self, shape: Any) -> float:
         return float(self._solid(shape).Volume())
 
@@ -415,9 +488,38 @@ def build_from_spec(spec: dict[str, Any], backend: CadBackend | None = None) -> 
         shape = backend.sphere(params["radius"])
     elif kind in {"extrude", "extrusion", "extrude_profile"}:
         shape = backend.extrude_profile(params["profile"], params["height"])
+    elif kind in {"assembly", "union"}:
+        parts = list(params.get("parts") or spec.get("parts") or [])
+        if len(parts) < 2:
+            raise ValueError("assembly/union requires at least 2 parts")
+        shape = build_from_spec(parts[0], backend=backend)
+        for part in parts[1:]:
+            shape = backend.boolean_union(shape, build_from_spec(part, backend=backend))
     else:
         raise ValueError(f"unsupported geometry kind: {kind}")
+
     offset = params.get("sculpt_offset")
     if offset is not None and float(offset) != 0.0:
         shape = backend.sculpt_offset(shape, float(offset))
+
+    # Optional feature history for refinement workflows.
+    for feature in list(spec.get("features") or params.get("features") or []):
+        fkind = str(feature.get("op") or feature.get("kind") or "").lower()
+        fparams = dict(feature.get("params", feature))
+        if fkind in {"cut", "boolean_cut"}:
+            tool_spec = fparams.get("tool") or feature.get("tool")
+            if not isinstance(tool_spec, dict):
+                raise ValueError("boolean_cut feature requires tool spec")
+            shape = backend.boolean_cut(shape, build_from_spec(tool_spec, backend=backend))
+        elif fkind == "fillet":
+            shape = backend.fillet(shape, float(fparams["radius"]))
+        elif fkind in {"union", "boolean_union"}:
+            other = fparams.get("other") or feature.get("other")
+            if not isinstance(other, dict):
+                raise ValueError("boolean_union feature requires other spec")
+            shape = backend.boolean_union(shape, build_from_spec(other, backend=backend))
+        elif fkind in {"sculpt", "sculpt_offset"}:
+            shape = backend.sculpt_offset(shape, float(fparams.get("distance", fparams.get("offset", 0.0))))
+        else:
+            raise ValueError(f"unsupported feature op: {fkind}")
     return shape

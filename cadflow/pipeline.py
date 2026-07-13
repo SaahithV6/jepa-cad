@@ -1,6 +1,7 @@
 """Thin end-to-end CAD/CAE orchestration path.
 
-manifest -> geometry build -> export -> solver -> verification -> flywheel
+manifest -> geometry build -> export -> solver adapter -> verification -> flywheel
+Optional: promote verified runs into curated training shards.
 """
 
 from __future__ import annotations
@@ -9,17 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .adapters import run_solver
 from .backends import CadBackend, build_from_spec, get_backend
 from .flywheel import DataFlywheel, FlywheelEntry
 from .manifest import JobManifest, ProvenanceRecord, RunRecord
-from .solver import (
-    SolverResult,
-    probe_fea,
-    probe_mbd,
-    probe_openfoam,
-    run_fallback_solver,
-    wrap_solver_result,
-)
+from .promotion import PromotionResult, promote_verified_to_dataset
+from .solver import SolverResult, wrap_solver_result
 from .verification import VerificationReport, render_verification_report, verify_solid
 
 
@@ -32,6 +28,7 @@ class PipelineResult:
     artifacts: tuple[str, ...]
     flywheel_entry: FlywheelEntry | None
     report_text: str
+    promotion: PromotionResult | None = None
 
     @property
     def ok(self) -> bool:
@@ -46,19 +43,8 @@ class PipelineResult:
             "flywheel_recorded": self.flywheel_entry is not None,
             "report_text": self.report_text,
             "ok": self.ok,
+            "promotion": self.promotion.to_dict() if self.promotion is not None else None,
         }
-
-
-def _select_solver_probe(kind: str):
-    mapping = {
-        "openfoam": probe_openfoam,
-        "cfd": probe_openfoam,
-        "fea": probe_fea,
-        "structural": probe_fea,
-        "mbd": probe_mbd,
-        "dynamics": probe_mbd,
-    }
-    return mapping.get(kind.lower(), probe_fea)()
 
 
 def run_pipeline(
@@ -71,8 +57,11 @@ def run_pipeline(
     solver_kind: str | None = None,
     solver_payload: Mapping[str, Any] | None = None,
     prefer_real_cad: bool = True,
+    allow_solver_fallback: bool = True,
+    promote_to: str | Path | None = None,
+    promote_limit: int = 5,
 ) -> PipelineResult:
-    """Execute a minimal deterministic CAD/CAE orchestration loop."""
+    """Execute a deterministic CAD/CAE orchestration loop with hard gates."""
 
     backend = backend or get_backend(prefer_real=prefer_real_cad)
     workdir = Path(workdir or "artifacts") / manifest.fingerprint
@@ -80,7 +69,6 @@ def run_pipeline(
 
     geometry_spec = dict(manifest.inputs.get("geometry") or manifest.parameters.get("geometry") or {})
     if not geometry_spec:
-        # Sensible default primitive when planner omitted explicit geometry.
         geometry_spec = {
             "kind": "box",
             "width": float(manifest.parameters.get("width", 1.0)),
@@ -91,36 +79,45 @@ def run_pipeline(
     shape = build_from_spec(geometry_spec, backend=backend)
     step_path = backend.export_step(shape, workdir / "geometry.step")
     stl_path = backend.export_stl(shape, workdir / "geometry.stl")
-    artifacts = (str(step_path), str(stl_path))
+    artifacts: list[str] = [str(step_path), str(stl_path)]
 
-    kind = solver_kind or str(manifest.parameters.get("solver", "fea"))
-    probe = _select_solver_probe(kind)
-    if solver_payload is not None:
-        solver_result = wrap_solver_result(solver_payload, probe=probe)
-    elif probe.available:
-        # Native binary present but full case decks are not wired yet — keep
-        # an explicit fallback with probe metadata for accountability.
-        solver_result = run_fallback_solver(
-            backend=kind,
-            objective=float(manifest.parameters.get("objective", 1.0)),
-            metadata={"note": "native probe available; using calibrated fallback until case decks land"},
-            probe=probe,
-        )
-    else:
-        solver_result = run_fallback_solver(
-            backend=kind,
-            objective=float(manifest.parameters.get("objective", 1.0)),
-            probe=probe,
-        )
-
+    # Geometry gate before solvers.
     verification = verify_solid(shape, backend=backend)
     report_text = render_verification_report(verification)
+    (workdir / "verification.txt").write_text(report_text + "\n", encoding="utf-8")
+    artifacts.append(str(workdir / "verification.txt"))
+
+    kind = solver_kind or str(manifest.parameters.get("solver", "fea"))
+    if not verification.passed:
+        solver_result = SolverResult(
+            status="failed",
+            metadata={"reason": "geometry_verification_failed"},
+            logs=("solver skipped: geometry verification failed",),
+        )
+    elif solver_payload is not None:
+        solver_result = wrap_solver_result(solver_payload)
+    else:
+        materials = tuple(manifest.inputs.get("materials") or manifest.parameters.get("materials") or [])
+        solver_result = run_solver(
+            kind,
+            job_id=manifest.fingerprint,
+            geometry_path=str(stl_path),
+            workdir=workdir / "solver",
+            parameters=dict(manifest.parameters),
+            materials=materials,
+            allow_fallback=allow_solver_fallback,
+        )
+        artifacts.extend(list(solver_result.artifacts))
 
     status = "verified" if verification.passed and solver_result.ok else "failed"
     provenance = ProvenanceRecord.for_manifest(
         manifest,
         source=source,
-        details={"backend": backend.name, "solver": kind},
+        details={
+            "backend": backend.name,
+            "solver": kind,
+            "solver_mode": solver_result.metadata.get("mode"),
+        },
         artifact_refs=artifacts,
     )
     run = RunRecord(
@@ -129,20 +126,28 @@ def run_pipeline(
         status=status,
         solver_result=solver_result.to_dict(),
         verification=verification.to_dict(),
-        artifact_refs=artifacts,
+        artifact_refs=tuple(artifacts),
     )
 
     entry = None
     if flywheel is not None:
-        # Only verified outputs enter the flywheel training path by default.
         entry = flywheel.record(run, solver_result, verification, only_verified=True)
+
+    promotion = None
+    if promote_to is not None and flywheel is not None:
+        promotion = promote_verified_to_dataset(
+            flywheel,
+            promote_to,
+            limit=promote_limit,
+        )
 
     return PipelineResult(
         run=run,
         shape=shape,
         solver_result=solver_result,
         verification=verification,
-        artifacts=artifacts,
+        artifacts=tuple(artifacts),
         flywheel_entry=entry,
         report_text=report_text,
+        promotion=promotion,
     )

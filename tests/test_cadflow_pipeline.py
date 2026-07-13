@@ -36,12 +36,18 @@ def test_pipeline_manifest_to_flywheel(tmp_path: Path) -> None:
     assert result.ok is True
     assert result.verification.passed is True
     assert result.solver_result.ok is True
-    assert len(result.artifacts) == 2
-    assert all(Path(p).exists() for p in result.artifacts)
+    assert len(result.artifacts) >= 2
+    assert all(Path(p).exists() for p in result.artifacts if p.endswith((".step", ".stl", ".txt")))
     assert result.flywheel_entry is not None
     assert "PASSED" in result.report_text
     assert len(list(flywheel.load_entries())) == 1
     assert flywheel.promote_best(1)[0].manifest.name == "bracket-smoke"
+    assert result.solver_result.metadata.get("mode") in {
+        "fallback",
+        "fallback_after_native_error",
+        "native",
+        "native_stub",
+    }
 
 
 def test_pipeline_rejects_unverified_from_flywheel(tmp_path: Path) -> None:

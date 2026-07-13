@@ -53,6 +53,7 @@ train:
   weight_decay: 0.05
   warmup_steps: 100
   grad_clip: 1.0
+  grad_accum_steps: 1  # increase under memory pressure / torchrun DDP
   log_every: 10
   checkpoint_every: 500
   collapse_std_threshold: 0.01

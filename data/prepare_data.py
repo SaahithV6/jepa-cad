@@ -8,40 +8,40 @@ from pathlib import Path
 
 import numpy as np
 
-from data.synthetic import SyntheticConfig, generate_synthetic_sample
+from data.parsers import ParseError, parse_raw_file
 
 
-def _load_raw_sample(raw_path: Path, num_points: int, num_fields: int) -> dict[str, np.ndarray]:
-    """
-    Placeholder loader for real CAD/CFD/FEA inputs.
+def _load_raw_sample(
+    raw_path: Path,
+    num_points: int,
+    num_fields: int,
+    *,
+    allow_synthetic_fallback: bool = False,
+) -> dict[str, np.ndarray]:
+    """Load CAD/mesh/VTK/NPZ inputs into points + fields arrays."""
 
-    Expected future formats:
-      - CAD: STL/OBJ/STEP mesh vertices
-      - CFD/FEA: VTK/VTU nodal fields aligned to mesh vertices
-
-    For scaffolding, unprocessed paths fall back to deterministic synthetic samples
-    so the pipeline can be exercised before real parsers are wired in.
-    """
-    if raw_path.suffix == ".npz":
-        data = np.load(raw_path)
-        return {
-            "points": data["points"].astype(np.float32),
-            "fields": data["fields"].astype(np.float32),
-        }
-
-    # TODO: add STL/VTK parsers when real data layout is finalized.
-    sample = generate_synthetic_sample(
-        index=hash(raw_path.name) % 10_000,
-        cfg=SyntheticConfig(num_points=num_points, num_fields=num_fields),
+    sample = parse_raw_file(
+        raw_path,
+        num_points=num_points,
+        num_fields=num_fields,
+        allow_synthetic_fallback=allow_synthetic_fallback,
     )
-    return {
-        "points": sample["points"].numpy(),
-        "fields": sample["fields"].numpy(),
-    }
+    return sample.to_arrays()
 
 
-def process_sample(raw_path: Path, num_points: int, num_fields: int) -> dict[str, np.ndarray]:
-    data = _load_raw_sample(raw_path, num_points, num_fields)
+def process_sample(
+    raw_path: Path,
+    num_points: int,
+    num_fields: int,
+    *,
+    allow_synthetic_fallback: bool = False,
+) -> dict[str, np.ndarray]:
+    data = _load_raw_sample(
+        raw_path,
+        num_points,
+        num_fields,
+        allow_synthetic_fallback=allow_synthetic_fallback,
+    )
     points = data["points"]
     fields = data["fields"]
 
@@ -56,7 +56,11 @@ def process_sample(raw_path: Path, num_points: int, num_fields: int) -> dict[str
 
     stress_col = min(2, fields.shape[-1] - 1)
     max_stress = float(fields[:, stress_col].max())
-    return {"points": points, "fields": fields, "max_stress": np.array(max_stress, dtype=np.float32)}
+    return {
+        "points": points.astype(np.float32),
+        "fields": fields.astype(np.float32),
+        "max_stress": np.array(max_stress, dtype=np.float32),
+    }
 
 
 def save_shard(shard: dict[str, np.ndarray], out_path: Path, fmt: str) -> None:
@@ -77,6 +81,11 @@ def main() -> None:
     parser.add_argument("--num-fields", type=int, default=3)
     parser.add_argument("--format", choices=["npz", "pt"], default="npz")
     parser.add_argument("--dry-run", action="store_true", help="Process 5 samples and print stats only")
+    parser.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="If set, unsupported formats become synthetic samples (off by default)",
+    )
     args = parser.parse_args()
 
     raw_dir = Path(args.raw_dir)
@@ -87,14 +96,23 @@ def main() -> None:
 
     limit = 5 if args.dry_run else len(raw_files)
     manifest_shards: list[str] = []
+    errors: list[str] = []
 
     for i, raw_path in enumerate(raw_files[:limit]):
-        shard = process_sample(raw_path, args.num_points, args.num_fields)
+        try:
+            shard = process_sample(
+                raw_path,
+                args.num_points,
+                args.num_fields,
+                allow_synthetic_fallback=args.allow_synthetic_fallback,
+            )
+        except ParseError as exc:
+            errors.append(f"{raw_path.name}: {exc}")
+            print(f"[{i}] SKIP {raw_path.name}: {exc}")
+            continue
         print(f"[{i}] {raw_path.name}")
         print(f"  points: {shard['points'].shape}, fields: {shard['fields'].shape}")
-        print(
-            f"  point range: [{shard['points'].min():.3f}, {shard['points'].max():.3f}]"
-        )
+        print(f"  point range: [{shard['points'].min():.3f}, {shard['points'].max():.3f}]")
         print(
             f"  field mean/std: {shard['fields'].mean():.4f} / {shard['fields'].std():.4f}, "
             f"max_stress: {float(shard['max_stress']):.4f}"
@@ -107,13 +125,19 @@ def main() -> None:
 
     if args.dry_run:
         print("\nDry run complete — no shards written.")
+        if errors:
+            print(f"Skipped {len(errors)} files due to parse errors.")
         return
+
+    if not manifest_shards:
+        raise SystemExit(f"No shards written. Errors: {errors}")
 
     manifest = {
         "num_points": args.num_points,
         "num_fields": args.num_fields,
         "format": args.format,
         "shards": manifest_shards,
+        "errors": errors,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "manifest.json", "w") as f:

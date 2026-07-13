@@ -19,15 +19,21 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 
 | Module | Role |
 |--------|------|
-| `cadflow/backends.py` | Parametric + sculpt primitives, metadata, STEP/STL export |
-| `cadflow/solver.py` | Normalized `SolverResult`, binary probes, subprocess wrap, fallbacks |
+| `cadflow/backends.py` | Parametric + sculpt + boolean/fillet, metadata, STEP/STL export |
+| `cadflow/adapters.py` | OpenFOAM / FEA / MBD case decks + native/fallback execution |
+| `cadflow/solver.py` | Normalized `SolverResult`, binary probes, subprocess wrap |
 | `cadflow/verification.py` | Volume / bbox / validity / watertight checks + text reports |
 | `cadflow/manifest.py` | Fingerprinted jobs, provenance, run records |
-| `cadflow/flywheel.py` | Append-only JSONL history + verified ranking/promotion |
-| `cadflow/pipeline.py` | Thin end-to-end orchestration |
+| `cadflow/flywheel.py` | Append-only JSONL history + verified ranking |
+| `cadflow/promotion.py` | Promote verified runs → curated JEPA shards |
+| `cadflow/pipeline.py` | End-to-end orchestration with geometry gate |
+| `cadflow/cli.py` | `python -m cadflow.cli run|promote` |
+| `data/parsers.py` | STL/OBJ/STEP/VTK/NPZ parsers for shard prep |
 
 ```bash
-pytest tests/test_cadflow_*.py -q
+pytest tests/ -q
+python -m cadflow.cli run --manifest job.json --mock-cad
+python -m cadflow.cli promote --flywheel artifacts/flywheel.jsonl --out-dir data/curated
 ```
 
 ## Project scope
