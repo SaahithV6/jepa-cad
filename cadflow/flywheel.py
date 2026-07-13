@@ -32,12 +32,17 @@ class FlywheelEntry:
     def manifest_fingerprint(self) -> str:
         return self.run.manifest_fingerprint
 
+    @property
+    def verified(self) -> bool:
+        return bool(self.verification.passed and self.solver_result.ok)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "run": self.run.to_dict(),
             "solver_result": self.solver_result.to_dict(),
             "verification": self.verification.to_dict(),
             "recorded_at": self.recorded_at,
+            "verified": self.verified,
         }
 
     @classmethod
@@ -62,8 +67,12 @@ class DataFlywheel:
         run: RunRecord,
         solver_result: SolverResult,
         verification: VerificationReport,
-    ) -> FlywheelEntry:
+        *,
+        only_verified: bool = False,
+    ) -> FlywheelEntry | None:
         entry = FlywheelEntry(run=run, solver_result=solver_result, verification=verification)
+        if only_verified and not entry.verified:
+            return None
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry.to_dict(), sort_keys=True) + "\n")
         return entry
@@ -78,16 +87,27 @@ class DataFlywheel:
                     continue
                 yield FlywheelEntry.from_dict(json.loads(line))
 
-    def best_runs(self, limit: int = 5) -> list[FlywheelEntry]:
+    def verified_entries(self) -> list[FlywheelEntry]:
+        return [entry for entry in self.load_entries() if entry.verified]
+
+    def best_runs(self, limit: int = 5, *, verified_only: bool = True) -> list[FlywheelEntry]:
         entries = list(self.load_entries())
+        if verified_only:
+            entries = [entry for entry in entries if entry.verified]
 
         def key(entry: FlywheelEntry) -> tuple[int, float, str]:
             objective = entry.solver_result.objective
             objective_score = float(objective) if objective is not None else float("inf")
+            # Lower objective is better among verified runs.
             return (
-                1 if entry.verification.passed else 0,
-                -objective_score if entry.verification.passed else objective_score,
+                1 if entry.verified else 0,
+                -objective_score if entry.verified else -objective_score,
                 entry.recorded_at,
             )
 
         return sorted(entries, key=key, reverse=True)[:limit]
+
+    def promote_best(self, limit: int = 1) -> list[FlywheelEntry]:
+        """Return top verified runs suitable for curated training promotion."""
+
+        return self.best_runs(limit=limit, verified_only=True)

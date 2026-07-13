@@ -8,6 +8,28 @@ The repo now also declares a real CAD/geometry toolchain for downstream modeling
 
 This repository is still intentionally modular and test-driven: the goal is a correct single-machine training and tooling loop that can be scaled up once the architecture is validated.
 
+## CAD/CAE orchestration (`cadflow/`)
+
+Deterministic CAD/CAE loop where the LLM is planner/orchestrator only:
+
+```
+manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
+        → verification → append-only flywheel (verified runs only)
+```
+
+| Module | Role |
+|--------|------|
+| `cadflow/backends.py` | Parametric + sculpt primitives, metadata, STEP/STL export |
+| `cadflow/solver.py` | Normalized `SolverResult`, binary probes, subprocess wrap, fallbacks |
+| `cadflow/verification.py` | Volume / bbox / validity / watertight checks + text reports |
+| `cadflow/manifest.py` | Fingerprinted jobs, provenance, run records |
+| `cadflow/flywheel.py` | Append-only JSONL history + verified ranking/promotion |
+| `cadflow/pipeline.py` | Thin end-to-end orchestration |
+
+```bash
+pytest tests/test_cadflow_*.py -q
+```
+
 ## Project scope
 
 ### In scope (v1)
@@ -35,6 +57,7 @@ This repository is still intentionally modular and test-driven: the goal is a co
 
 ```
 jepa-cad/
+├── cadflow/                # CAD/CAE orchestration (backends, solvers, verify, flywheel)
 ├── configs/base.yaml       # all hyperparameters
 ├── data/
 │   ├── dataset.py          # lazy shard loading + synthetic flag
@@ -48,7 +71,7 @@ jepa-cad/
 ├── train.py                  # main training loop
 ├── eval/probe.py             # linear probe sanity check
 ├── utils/                    # logging, checkpoints
-└── tests/                    # masking + EMA unit tests
+└── tests/                    # JEPA + cadflow tests
 ```
 
 ## Quick start
