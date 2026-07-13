@@ -1,6 +1,12 @@
 # JEPA-CAD
 
-Self-supervised pretraining for **CAD geometry paired with CFD/FEA simulation annotations**, using a [JEPA](https://arxiv.org/abs/2301.08243) (Joint Embedding Predictive Architecture) objective. This repository is **scaffolding**, not a production model: the goal is a correct, modular, single-machine training loop that can be scaled up once the architecture is validated.
+Self-supervised pretraining for **CAD geometry paired with CFD/FEA simulation annotations**, using a [JEPA](https://arxiv.org/abs/2301.08243) (Joint Embedding Predictive Architecture) objective.
+
+The repo now also declares a real CAD/geometry toolchain for downstream modeling work:
+- `cadquery` for solid modeling / export paths
+- `trimesh`, `scipy`, and `shapely` for geometry processing and validation utilities
+
+This repository is still intentionally modular and test-driven: the goal is a correct single-machine training and tooling loop that can be scaled up once the architecture is validated.
 
 ## Project scope
 
