@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from typing import Any, Mapping, Sequence
 
+from cadflow.runtime import SolverRuntime
+
 
 @dataclass(frozen=True, slots=True)
 class NativeProbeResult:
@@ -109,37 +111,43 @@ def probe_native_solver(module_name: str, attribute: str | None = None) -> Nativ
     )
 
 
-def probe_solver_binary(candidates: Sequence[str], backend: str | None = None) -> NativeProbeResult:
+def probe_solver_binary(
+    candidates: Sequence[str],
+    backend: str | None = None,
+    *,
+    runtime: SolverRuntime | None = None,
+) -> NativeProbeResult:
     """Probe whether an external solver binary exists on PATH."""
 
     name = backend or (candidates[0] if candidates else "solver")
+    search_dirs = [str(path) for path in runtime.bin_dirs] if runtime is not None else []
     for candidate in candidates:
-        path = shutil.which(candidate)
+        path = str(runtime.command_path(candidate)) if runtime is not None and runtime.command_path(candidate) is not None else shutil.which(candidate)
         if path:
             return NativeProbeResult(
                 backend=name,
                 available=True,
                 reason="available",
-                details={"binary": candidate, "path": path},
+                details={"binary": candidate, "path": path, "search_dirs": search_dirs},
             )
     return NativeProbeResult(
         backend=name,
         available=False,
         reason=f"missing binaries: {', '.join(candidates)}",
-        details={"candidates": list(candidates)},
+        details={"candidates": list(candidates), "search_dirs": search_dirs},
     )
 
 
-def probe_openfoam() -> NativeProbeResult:
-    return probe_solver_binary(("simpleFoam", "foamRun", "blockMesh"), backend="openfoam")
+def probe_openfoam(runtime: SolverRuntime | None = None) -> NativeProbeResult:
+    return probe_solver_binary(("simpleFoam", "foamRun", "blockMesh"), backend="openfoam", runtime=runtime)
 
 
-def probe_fea() -> NativeProbeResult:
-    return probe_solver_binary(("ccx", "CalculiX", "ElmerSolver", "elmer"), backend="fea")
+def probe_fea(runtime: SolverRuntime | None = None) -> NativeProbeResult:
+    return probe_solver_binary(("ccx", "CalculiX", "ElmerSolver", "elmer"), backend="fea", runtime=runtime)
 
 
-def probe_mbd() -> NativeProbeResult:
-    return probe_solver_binary(("chrono", "projectchrono", "mbdyn"), backend="mbd")
+def probe_mbd(runtime: SolverRuntime | None = None) -> NativeProbeResult:
+    return probe_solver_binary(("chrono", "projectchrono", "mbdyn"), backend="mbd", runtime=runtime)
 
 
 def wrap_solver_result(result: Any, probe: NativeProbeResult | None = None) -> SolverResult:
@@ -237,24 +245,34 @@ def run_external_command(
     timeout_s: float = 60.0,
     backend: str = "external",
     allow_fallback: bool = True,
+    runtime: SolverRuntime | None = None,
 ) -> SolverResult:
     """Run an external solver command and normalize stdout/stderr/exit code."""
 
-    probe = probe_solver_binary((command[0],), backend=backend) if command else NativeProbeResult(
-        backend=backend, available=False, reason="empty command"
+    probe = (
+        probe_solver_binary((command[0],), backend=backend, runtime=runtime)
+        if command
+        else NativeProbeResult(backend=backend, available=False, reason="empty command")
     )
     if not probe.available:
         if allow_fallback:
             return run_fallback_solver(backend=backend, probe=probe, metadata={"command": list(command)})
         return SolverResult(status="failed", metadata={"command": list(command)}, probe=probe, logs=(probe.reason,))
 
+    resolved_command = list(command)
+    if runtime is not None and command:
+        resolved = runtime.command_path(command[0])
+        if resolved is not None:
+            resolved_command[0] = str(resolved)
+
     try:
         completed = subprocess.run(
-            list(command),
+            resolved_command,
             cwd=cwd,
             capture_output=True,
             text=True,
             timeout=timeout_s,
+            env=runtime.merged_env() if runtime is not None else None,
             check=False,
         )
     except Exception as exc:

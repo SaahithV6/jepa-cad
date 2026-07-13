@@ -7,10 +7,12 @@ import json
 from pathlib import Path
 
 from cadflow.backends import get_backend
+from cadflow.doctor import build_doctor_report, render_doctor_report
 from cadflow.flywheel import DataFlywheel
 from cadflow.manifest import JobManifest
 from cadflow.pipeline import run_pipeline
 from cadflow.promotion import promote_verified_to_dataset
+from cadflow.runtime import resolve_solver_runtime
 
 
 def _load_manifest(path: Path) -> JobManifest:
@@ -18,10 +20,19 @@ def _load_manifest(path: Path) -> JobManifest:
     return JobManifest.from_dict(payload)
 
 
+def _runtime_from_args(args: argparse.Namespace):
+    return resolve_solver_runtime(
+        root=getattr(args, "solver_root", None),
+        bin_dirs=getattr(args, "solver_bin_dir", None),
+        lib_dirs=getattr(args, "solver_lib_dir", None),
+    )
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     manifest = _load_manifest(Path(args.manifest))
     flywheel = DataFlywheel(args.flywheel) if args.flywheel else None
     backend = get_backend(prefer_real=not args.mock_cad)
+    runtime = _runtime_from_args(args)
     result = run_pipeline(
         manifest,
         backend=backend,
@@ -32,6 +43,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         allow_solver_fallback=not args.require_native_solver,
         promote_to=args.promote_to,
         promote_limit=args.promote_limit,
+        runtime=runtime,
     )
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
@@ -56,6 +68,13 @@ def cmd_promote(args: argparse.Namespace) -> int:
     return 0 if result.promoted else 1
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    runtime = _runtime_from_args(args)
+    report = build_doctor_report(runtime)
+    print(render_doctor_report(report, as_json=args.json))
+    return 0 if report.get("native_ready") else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cadflow", description="JEPA-CAD CAD/CAE orchestration")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -70,6 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--require-native-solver", action="store_true", help="Fail if solver binary missing")
     run.add_argument("--promote-to", default=None, help="Optional curated dataset output dir")
     run.add_argument("--promote-limit", type=int, default=5)
+    run.add_argument("--solver-root", default=None, help="Native solver root directory")
+    run.add_argument("--solver-bin-dir", action="append", default=None, help="Additional native solver bin dir")
+    run.add_argument("--solver-lib-dir", action="append", default=None, help="Additional native solver library dir")
     run.set_defaults(func=cmd_run)
 
     promote = sub.add_parser("promote", help="Promote verified flywheel runs to curated shards")
@@ -79,6 +101,13 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--num-points", type=int, default=1024)
     promote.add_argument("--num-fields", type=int, default=3)
     promote.set_defaults(func=cmd_promote)
+
+    doctor = sub.add_parser("doctor", help="Inspect native solver readiness")
+    doctor.add_argument("--json", action="store_true", help="Emit JSON diagnostic output")
+    doctor.add_argument("--solver-root", default=None, help="Native solver root directory")
+    doctor.add_argument("--solver-bin-dir", action="append", default=None, help="Additional native solver bin dir")
+    doctor.add_argument("--solver-lib-dir", action="append", default=None, help="Additional native solver library dir")
+    doctor.set_defaults(func=cmd_doctor)
 
     return parser
 
@@ -91,3 +120,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

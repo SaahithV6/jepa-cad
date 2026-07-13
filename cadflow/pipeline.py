@@ -16,6 +16,7 @@ from .flywheel import DataFlywheel, FlywheelEntry
 from .manifest import JobManifest, ProvenanceRecord, RunRecord
 from .promotion import PromotionResult, promote_verified_to_dataset
 from .solver import SolverResult, wrap_solver_result
+from .runtime import SolverRuntime
 from .verification import VerificationReport, render_verification_report, verify_solid
 
 
@@ -60,6 +61,7 @@ def run_pipeline(
     allow_solver_fallback: bool = True,
     promote_to: str | Path | None = None,
     promote_limit: int = 5,
+    runtime: SolverRuntime | None = None,
 ) -> PipelineResult:
     """Execute a deterministic CAD/CAE orchestration loop with hard gates."""
 
@@ -106,6 +108,7 @@ def run_pipeline(
             parameters=dict(manifest.parameters),
             materials=materials,
             allow_fallback=allow_solver_fallback,
+            runtime=runtime,
         )
         artifacts.extend(list(solver_result.artifacts))
 

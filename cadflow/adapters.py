@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from typing import Any, Mapping, Sequence
 
+from cadflow.runtime import SolverRuntime
 from cadflow.solver import (
     NativeProbeResult,
     SolverResult,
@@ -35,6 +36,7 @@ class SolverJob:
     materials: tuple[str, ...] = ()
     timeout_s: float = 120.0
     allow_fallback: bool = True
+    runtime: SolverRuntime | None = None
 
 
 class SolverAdapter(ABC):
@@ -56,6 +58,7 @@ class SolverAdapter(ABC):
         job.workdir.mkdir(parents=True, exist_ok=True)
         case_files = self.write_case(job)
         probe = self.probe()
+        runtime = getattr(self, "runtime", None)
         cmd = self.command(job, case_files)
         (job.workdir / "command.json").write_text(
             json.dumps(
@@ -96,6 +99,7 @@ class SolverAdapter(ABC):
                 capture_output=True,
                 text=True,
                 timeout=job.timeout_s,
+                env=runtime.merged_env() if runtime is not None else None,
                 check=False,
             )
         except Exception as exc:
@@ -170,7 +174,7 @@ class OpenFOAMAdapter(SolverAdapter):
     name = "openfoam"
 
     def probe(self) -> NativeProbeResult:
-        return probe_openfoam()
+        return probe_openfoam(getattr(self, "runtime", None))
 
     def write_case(self, job: SolverJob) -> dict[str, Path]:
         case = job.workdir / "openfoam_case"
@@ -269,7 +273,7 @@ class FEAAdapter(SolverAdapter):
     name = "fea"
 
     def probe(self) -> NativeProbeResult:
-        return probe_fea()
+        return probe_fea(getattr(self, "runtime", None))
 
     def write_case(self, job: SolverJob) -> dict[str, Path]:
         inp = job.workdir / "job.inp"
@@ -359,7 +363,7 @@ class MBDAdapter(SolverAdapter):
     name = "mbd"
 
     def probe(self) -> NativeProbeResult:
-        return probe_mbd()
+        return probe_mbd(getattr(self, "runtime", None))
 
     def write_case(self, job: SolverJob) -> dict[str, Path]:
         model = job.workdir / "mbd_model.json"
@@ -405,7 +409,7 @@ class MBDAdapter(SolverAdapter):
         )
 
 
-def get_adapter(kind: str) -> SolverAdapter:
+def get_adapter(kind: str, runtime: SolverRuntime | None = None) -> SolverAdapter:
     key = kind.lower().strip()
     mapping = {
         "openfoam": OpenFOAMAdapter,
@@ -418,7 +422,9 @@ def get_adapter(kind: str) -> SolverAdapter:
     cls = mapping.get(key)
     if cls is None:
         raise ValueError(f"unknown solver kind: {kind}")
-    return cls()
+    adapter = cls()
+    adapter.runtime = runtime
+    return adapter
 
 
 def run_solver(
@@ -431,8 +437,9 @@ def run_solver(
     materials: Sequence[str] | None = None,
     allow_fallback: bool = True,
     timeout_s: float = 120.0,
+    runtime: SolverRuntime | None = None,
 ) -> SolverResult:
-    adapter = get_adapter(kind)
+    adapter = get_adapter(kind, runtime=runtime)
     job = SolverJob(
         job_id=job_id,
         geometry_path=geometry_path,
@@ -441,5 +448,6 @@ def run_solver(
         materials=tuple(materials or ()),
         allow_fallback=allow_fallback,
         timeout_s=timeout_s,
+        runtime=runtime,
     )
     return adapter.run(job)

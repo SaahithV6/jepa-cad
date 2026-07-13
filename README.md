@@ -27,14 +27,19 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 | `cadflow/flywheel.py` | Append-only JSONL history + verified ranking |
 | `cadflow/promotion.py` | Promote verified runs → curated JEPA shards |
 | `cadflow/pipeline.py` | End-to-end orchestration with geometry gate |
-| `cadflow/cli.py` | `python -m cadflow.cli run|promote` |
+| `cadflow/cli.py` | `python -m cadflow.cli run|promote|doctor` |
+| `cadflow/runtime.py` | Native solver binary/library resolution + env wiring |
 | `data/parsers.py` | STL/OBJ/STEP/VTK/NPZ parsers for shard prep |
 
 ```bash
 pytest tests/ -q
+python -m cadflow.cli doctor --json
 python -m cadflow.cli run --manifest job.json --mock-cad
+python -m cadflow.cli run --manifest job.json --solver-root /opt/cadflow-solvers
 python -m cadflow.cli promote --flywheel artifacts/flywheel.jsonl --out-dir data/curated
 ```
+
+Set `CADFLOW_SOLVER_ROOT`, `CADFLOW_SOLVER_BIN_DIRS`, and `CADFLOW_SOLVER_LIB_DIRS` to point at a native solver installation when running without explicit CLI flags.
 
 ## Project scope
 
