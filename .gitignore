@@ -4,7 +4,13 @@ __pycache__/
 .pytest_cache/
 runs/
 checkpoints/
+artifacts/
 data/processed/
 *.egg-info/
 dist/
 build/
+desktop/node_modules/
+desktop/dist/
+desktop/release/
+desktop/python-dist/
+*.tsbuildinfo

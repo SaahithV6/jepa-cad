@@ -1,0 +1,88 @@
+{
+  "name": "latticezero",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Verified engineering intelligence for JEPA-CAD",
+  "author": "JEPA-CAD",
+  "desktopName": "latticezero",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && electron .\"",
+    "dev:web": "vite --host 127.0.0.1",
+    "build:web": "tsc -b && vite build",
+    "build": "npm run build:web && electron-builder --linux AppImage",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.4",
+    "@react-three/fiber": "^9.4.0",
+    "framer-motion": "^12.23.24",
+    "lucide-react": "^0.552.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.3.0",
+    "three": "^0.180.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "concurrently": "^9.2.1",
+    "electron": "^39.2.1",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2",
+    "vitest": "^4.0.10",
+    "wait-on": "^9.0.1"
+  },
+  "build": {
+    "appId": "ai.latticezero.studio",
+    "productName": "LatticeZero",
+    "executableName": "latticezero",
+    "artifactName": "LatticeZero-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "python/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python/bridge.py",
+        "to": "python-bridge/bridge.py"
+      },
+      {
+        "from": "../cadflow",
+        "to": "cadflow"
+      },
+      {
+        "from": "../data",
+        "to": "data"
+      },
+      {
+        "from": "../models",
+        "to": "models"
+      },
+      {
+        "from": "../configs",
+        "to": "configs"
+      }
+    ],
+    "linux": {
+      "icon": "assets/latticezero.png",
+      "synopsis": "Verified CAD/CAE intelligence cockpit",
+      "syncDesktopName": true,
+      "target": [
+        "AppImage"
+      ],
+      "category": "Science"
+    }
+  }
+}

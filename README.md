@@ -2,6 +2,35 @@
 
 Self-supervised pretraining for **CAD geometry paired with CFD/FEA simulation annotations**, using a [JEPA](https://arxiv.org/abs/2301.08243) (Joint Embedding Predictive Architecture) objective.
 
+## LatticeZero desktop
+
+`desktop/` contains the investor-grade Linux application: an Electron + React +
+Three.js engineering cockpit backed by a local Python JSON bridge into
+`cadflow`. The LLM-facing design intent remains advisory; geometry, solver
+results, verification, provenance, and flywheel promotion stay in deterministic
+Python tooling.
+
+The six theaters are:
+
+- **Forge** — deterministic CAD controls, live 3D viewport, ghost iteration stack
+- **Solve** — FEA / OpenFOAM / MBD selection and residual visualization
+- **Proof** — verification matrix and provenance constellation
+- **Atlas** — JEPA geometry/physics latent neighborhood
+- **Autopilot** — accountable recursive improvement cycle
+- **Systems** — native solver doctor and portable fallback status
+
+```bash
+cd desktop
+npm install
+npm run dev        # desktop development
+npm run build      # release/LatticeZero-0.1.0-x86_64.AppImage
+```
+
+The AppImage discovers the project `.venv` first and then system `python3`.
+Set `LATTICEZERO_PYTHON=/path/to/python` to select an explicit Python runtime.
+Native solver availability is always surfaced in the UI; fallback results are
+visibly labeled and never silently elevated to native evidence.
+
 The repo now also declares a real CAD/geometry toolchain for downstream modeling work:
 - `cadquery` for solid modeling / export paths
 - `trimesh`, `scipy`, and `shapely` for geometry processing and validation utilities
