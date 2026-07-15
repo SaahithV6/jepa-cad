@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 from cadflow.backends import get_backend
 from cadflow.doctor import build_doctor_report, render_doctor_report
+from cadflow.e2e import run_end_to_end
 from cadflow.flywheel import DataFlywheel
+from cadflow.flywheel_loop import run_flywheel_loop
 from cadflow.manifest import JobManifest
 from cadflow.pipeline import run_pipeline
 from cadflow.promotion import promote_verified_to_dataset
 from cadflow.runtime import resolve_solver_runtime
+from data.ingest import ingest_sources
 
 
 def _load_manifest(path: Path) -> JobManifest:
@@ -68,6 +72,82 @@ def cmd_promote(args: argparse.Namespace) -> int:
     return 0 if result.promoted else 1
 
 
+def cmd_ingest(args: argparse.Namespace) -> int:
+    if not args.raw_dir and not args.flywheel:
+        raise SystemExit("at least one --raw-dir or --flywheel is required")
+    result = ingest_sources(
+        args.raw_dir,
+        args.out_dir,
+        flywheel_path=args.flywheel,
+        num_points=args.num_points,
+        num_fields=args.num_fields,
+        fmt=args.format,
+        recursive=not args.non_recursive,
+        limit=args.limit,
+        allow_synthetic_fallback=args.allow_synthetic_fallback,
+    )
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ingested else 1
+
+
+def cmd_e2e(args: argparse.Namespace) -> int:
+    if not args.raw_dir and not args.flywheel:
+        raise SystemExit("at least one --raw-dir or --flywheel is required")
+    result = run_end_to_end(
+        args.raw_dir,
+        args.out_dir,
+        flywheel_path=args.flywheel,
+        num_points=args.num_points,
+        num_fields=args.num_fields,
+        fmt=args.format,
+        recursive=not args.non_recursive,
+        limit=args.limit,
+        allow_synthetic_fallback=args.allow_synthetic_fallback,
+        config=args.config,
+        data_source=args.data_source,
+        max_steps=args.max_steps,
+        grad_accum_steps=args.grad_accum_steps,
+        extra_overrides=args.set or [],
+    )
+    if result.train_stdout:
+        print(result.train_stdout, end="")
+    if result.train_stderr:
+        print(result.train_stderr, file=sys.stderr, end="")
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ok else 2
+
+
+def cmd_loop(args: argparse.Namespace) -> int:
+    if not args.raw_dir and not args.flywheel:
+        raise SystemExit("at least one --raw-dir or --flywheel is required")
+    result = run_flywheel_loop(
+        args.raw_dir,
+        args.out_dir,
+        flywheel_path=args.flywheel,
+        config=args.config,
+        num_points=args.num_points,
+        num_fields=args.num_fields,
+        fmt=args.format,
+        recursive=not args.non_recursive,
+        limit=args.limit,
+        allow_synthetic_fallback=args.allow_synthetic_fallback,
+        data_source=args.data_source,
+        probe_data_source=args.probe_data_source,
+        max_steps=args.max_steps,
+        grad_accum_steps=args.grad_accum_steps,
+        extra_overrides=args.set or [],
+        promote_limit=args.promote_limit,
+        baseline_checkpoint=args.baseline_checkpoint,
+        improvement_threshold=args.improvement_threshold,
+    )
+    if result.train_stdout:
+        print(result.train_stdout, end="")
+    if result.train_stderr:
+        print(result.train_stderr, file=sys.stderr, end="")
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ok else 2
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     runtime = _runtime_from_args(args)
     report = build_doctor_report(runtime)
@@ -101,6 +181,85 @@ def build_parser() -> argparse.ArgumentParser:
     promote.add_argument("--num-points", type=int, default=1024)
     promote.add_argument("--num-fields", type=int, default=3)
     promote.set_defaults(func=cmd_promote)
+
+    ingest = sub.add_parser("ingest", help="Ingest raw files and verified flywheel runs into training shards")
+    ingest.add_argument("--raw-dir", action="append", default=[], help="Raw input directory (repeatable)")
+    ingest.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
+    ingest.add_argument("--out-dir", required=True, help="Curated shard output directory")
+    ingest.add_argument("--num-points", type=int, default=1024)
+    ingest.add_argument("--num-fields", type=int, default=3)
+    ingest.add_argument("--format", choices=["npz", "pt"], default="npz")
+    ingest.add_argument("--limit", type=int, default=None)
+    ingest.add_argument("--non-recursive", action="store_true", help="Only scan the top level of raw dirs")
+    ingest.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="Allow unsupported raw files to fall back to synthetic samples",
+    )
+    ingest.set_defaults(func=cmd_ingest)
+
+    e2e = sub.add_parser("e2e", help="Ingest data and run a short JEPA training job")
+    e2e.add_argument("--raw-dir", action="append", default=[], help="Raw input directory (repeatable)")
+    e2e.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
+    e2e.add_argument("--out-dir", required=True, help="Curated shard output directory")
+    e2e.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    e2e.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
+    e2e.add_argument("--num-points", type=int, default=1024)
+    e2e.add_argument("--num-fields", type=int, default=3)
+    e2e.add_argument("--format", choices=["npz", "pt"], default="npz")
+    e2e.add_argument("--limit", type=int, default=None)
+    e2e.add_argument("--non-recursive", action="store_true", help="Only scan the top level of raw dirs")
+    e2e.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="Allow unsupported raw files to fall back to synthetic samples",
+    )
+    e2e.add_argument("--max-steps", type=int, default=1, help="Training steps for the smoke run")
+    e2e.add_argument("--grad-accum-steps", type=int, default=None)
+    e2e.add_argument(
+        "--set",
+        type=str,
+        action="append",
+        default=None,
+        help="Extra training overrides, e.g. --set model.embed_dim=256",
+    )
+    e2e.set_defaults(func=cmd_e2e)
+
+    loop = sub.add_parser("loop", help="Run the verified-data flywheel: ingest -> promote -> train -> probe -> promote")
+    loop.add_argument("--raw-dir", action="append", default=[], help="Raw input directory (repeatable)")
+    loop.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
+    loop.add_argument("--out-dir", required=True, help="Loop output directory")
+    loop.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    loop.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
+    loop.add_argument("--probe-data-source", choices=["real", "synthetic", "mixed"], default="real")
+    loop.add_argument("--num-points", type=int, default=1024)
+    loop.add_argument("--num-fields", type=int, default=3)
+    loop.add_argument("--format", choices=["npz", "pt"], default="npz")
+    loop.add_argument("--limit", type=int, default=None)
+    loop.add_argument("--non-recursive", action="store_true", help="Only scan the top level of raw dirs")
+    loop.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="Allow unsupported raw files to fall back to synthetic samples",
+    )
+    loop.add_argument("--max-steps", type=int, default=1, help="Training steps for the loop run")
+    loop.add_argument("--grad-accum-steps", type=int, default=None)
+    loop.add_argument("--promote-limit", type=int, default=50)
+    loop.add_argument("--baseline-checkpoint", default=None, help="Optional prior checkpoint to compare against")
+    loop.add_argument(
+        "--improvement-threshold",
+        type=float,
+        default=0.0,
+        help="Required fractional improvement over the baseline probe score",
+    )
+    loop.add_argument(
+        "--set",
+        type=str,
+        action="append",
+        default=None,
+        help="Extra training overrides, e.g. --set model.embed_dim=256",
+    )
+    loop.set_defaults(func=cmd_loop)
 
     doctor = sub.add_parser("doctor", help="Inspect native solver readiness")
     doctor.add_argument("--json", action="store_true", help="Emit JSON diagnostic output")

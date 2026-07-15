@@ -2,7 +2,10 @@
 
 from .adapters import FEAAdapter, MBDAdapter, OpenFOAMAdapter, get_adapter, run_solver
 from .backends import CadQueryBackend, MockCadBackend, build_from_spec, get_backend
+from .e2e import EndToEndResult, run_end_to_end
 from .flywheel import DataFlywheel, FlywheelEntry
+from .flywheel_loop import FlywheelLoopResult, run_flywheel_loop
+from .ingest import IngestionResult, ingest_sources
 from .manifest import JobManifest, ProvenanceRecord, RunRecord
 from .pipeline import PipelineResult, run_pipeline
 from .promotion import PromotionResult, promote_verified_to_dataset
@@ -32,8 +35,14 @@ def cli_main(*args, **kwargs):
 __all__ = [
     "CadQueryBackend",
     "DataFlywheel",
+    "EndToEndResult",
+    "run_end_to_end",
+    "run_flywheel_loop",
     "FEAAdapter",
     "FlywheelEntry",
+    "FlywheelLoopResult",
+    "IngestionResult",
+    "ingest_sources",
     "JobManifest",
     "MBDAdapter",
     "MockCadBackend",

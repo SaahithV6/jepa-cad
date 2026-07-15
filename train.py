@@ -7,7 +7,7 @@ import math
 import random
 import time
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Iterator, Literal, cast
 
 import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
@@ -144,12 +144,13 @@ def build_dataloader(cfg: dict[str, Any], data_source: str) -> DataLoader:
         )
 
     dataset = build_dataset(data_source, cfg)  # type: ignore[arg-type]
+    dataset_len = len(cast(Any, dataset))
 
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        drop_last=True,
+        drop_last=dataset_len >= batch_size,
         num_workers=data_cfg.get("num_workers", 0),
         pin_memory=data_cfg.get("pin_memory", False),
         collate_fn=lambda batch: collate_masked_batch(batch, cfg["masking"]),
