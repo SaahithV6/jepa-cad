@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 
 class MLP(nn.Module):
@@ -72,6 +73,7 @@ class PointCloudEncoder(nn.Module):
         num_heads: int = 4,
         mlp_ratio: float = 2.0,
         dropout: float = 0.1,
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         in_dim = 3 + (num_fields if use_field_features else 0)
@@ -81,6 +83,7 @@ class PointCloudEncoder(nn.Module):
             [TransformerBlock(embed_dim, num_heads, mlp_ratio, dropout) for _ in range(num_layers)]
         )
         self.norm = nn.LayerNorm(embed_dim)
+        self.gradient_checkpointing = gradient_checkpointing
 
     def forward(
         self,
@@ -103,7 +106,10 @@ class PointCloudEncoder(nn.Module):
             key_padding_mask = ~mask
 
         for block in self.blocks:
-            x = block(x, key_padding_mask=key_padding_mask)
+            if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
+                x = checkpoint(lambda inp, blk=block, kpm=key_padding_mask: blk(inp, key_padding_mask=kpm), x, use_reentrant=False)
+            else:
+                x = block(x, key_padding_mask=key_padding_mask)
 
         x = self.norm(x)
 
@@ -127,6 +133,7 @@ class PointCloudEncoder(nn.Module):
             num_heads=enc["num_heads"],
             mlp_ratio=enc["mlp_ratio"],
             dropout=enc["dropout"],
+            gradient_checkpointing=cfg["model"].get("gradient_checkpointing", False),
         )
 
 

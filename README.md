@@ -27,7 +27,7 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 | `cadflow/flywheel.py` | Append-only JSONL history + verified ranking |
 | `cadflow/promotion.py` | Promote verified runs → curated JEPA shards |
 | `cadflow/pipeline.py` | End-to-end orchestration with geometry gate |
-| `cadflow/cli.py` | `python -m cadflow.cli run|promote|doctor` |
+| `cadflow/cli.py` | `python -m cadflow.cli run|promote|ingest|e2e|loop|autopilot|doctor` |
 | `cadflow/runtime.py` | Native solver binary/library resolution + env wiring |
 | `data/parsers.py` | STL/OBJ/STEP/VTK/NPZ parsers for shard prep |
 
@@ -35,9 +35,10 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 pytest tests/ -q
 python -m cadflow.cli doctor --json
 python -m cadflow.cli run --manifest job.json --mock-cad
-python -m cadflow.cli run --manifest job.json --solver-root /opt/cadflow-solvers
-python -m cadflow.cli promote --flywheel artifacts/flywheel.jsonl --out-dir data/curated
-```
+python -m cadflow.cli e2e --raw-dir /path/to/raw --out-dir data/curated --max-steps 1
+python -m cadflow.cli loop --raw-dir /path/to/raw --flywheel artifacts/flywheel.jsonl --out-dir artifacts/loop --repeat 0 --interval-seconds 300 --stop-file artifacts/loop.stop
+python -m cadflow.cli autopilot --raw-dir /path/to/raw --flywheel artifacts/flywheel.jsonl --out-dir artifacts/autopilot
+python -m cadflow.cli doctor --json
 
 Set `CADFLOW_SOLVER_ROOT`, `CADFLOW_SOLVER_BIN_DIRS`, and `CADFLOW_SOLVER_LIB_DIRS` to point at a native solver installation when running without explicit CLI flags.
 
@@ -176,11 +177,12 @@ If target embedding std drops below `train.collapse_std_threshold`, a warning is
 Once smoke tests pass:
 
 1. Prepare real shards with `prepare_data.py`
-2. Increase `model.embed_dim`, encoder layers, and `data.num_points` in config
-3. Train with `--data-source mixed` and tune `mix_ratio`
-4. Run `eval/probe.py` before committing to long runs
+2. Increase `model.embed_dim`, encoder layers, `data.num_points`, and enable `model.gradient_checkpointing` in config
+3. Set `train.precision=bf16` on supported GPUs, or `fp16` if bf16 is unavailable
+4. Train with `--data-source mixed` and tune `mix_ratio`
+5. Run `eval/probe.py` before committing to long runs
 
-Distributed training is left as a TODO in `train.py`.
+The next real scale step is distributed sharding in `train.py` (FSDP/ZeRO-style), but the repo now has the memory/precision knobs needed to push the model size upward safely.
 
 ## License
 

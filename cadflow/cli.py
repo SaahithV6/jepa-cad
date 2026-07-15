@@ -7,13 +7,14 @@ import json
 import sys
 from pathlib import Path
 
+from cadflow.autopilot import run_autopilot
 from cadflow.backends import get_backend
 from cadflow.doctor import build_doctor_report, render_doctor_report
 from cadflow.e2e import run_end_to_end
 from cadflow.flywheel import DataFlywheel
-from cadflow.flywheel_loop import run_flywheel_loop
 from cadflow.manifest import JobManifest
 from cadflow.pipeline import run_pipeline
+from cadflow.loop_controller import run_loop_controller
 from cadflow.promotion import promote_verified_to_dataset
 from cadflow.runtime import resolve_solver_runtime
 from data.ingest import ingest_sources
@@ -120,7 +121,41 @@ def cmd_e2e(args: argparse.Namespace) -> int:
 def cmd_loop(args: argparse.Namespace) -> int:
     if not args.raw_dir and not args.flywheel:
         raise SystemExit("at least one --raw-dir or --flywheel is required")
-    result = run_flywheel_loop(
+    result = run_loop_controller(
+        args.raw_dir,
+        args.out_dir,
+        repeat=args.repeat,
+        interval_seconds=args.interval_seconds,
+        stop_file=args.stop_file,
+        flywheel_path=args.flywheel,
+        config=args.config,
+        num_points=args.num_points,
+        num_fields=args.num_fields,
+        fmt=args.format,
+        recursive=not args.non_recursive,
+        limit=args.limit,
+        allow_synthetic_fallback=args.allow_synthetic_fallback,
+        data_source=args.data_source,
+        probe_data_source=args.probe_data_source,
+        max_steps=args.max_steps,
+        grad_accum_steps=args.grad_accum_steps,
+        extra_overrides=args.set or [],
+        promote_limit=args.promote_limit,
+        baseline_checkpoint=args.baseline_checkpoint,
+        improvement_threshold=args.improvement_threshold,
+    )
+    if result.results:
+        last = result.results[-1]
+        if last.train_stdout:
+            print(last.train_stdout, end="")
+        if last.train_stderr:
+            print(last.train_stderr, file=sys.stderr, end="")
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ok else 2
+
+
+def cmd_autopilot(args: argparse.Namespace) -> int:
+    result = run_autopilot(
         args.raw_dir,
         args.out_dir,
         flywheel_path=args.flywheel,
@@ -139,11 +174,18 @@ def cmd_loop(args: argparse.Namespace) -> int:
         promote_limit=args.promote_limit,
         baseline_checkpoint=args.baseline_checkpoint,
         improvement_threshold=args.improvement_threshold,
+        skip_tests=args.skip_tests,
+        repair_env=not args.no_repair_env,
     )
-    if result.train_stdout:
-        print(result.train_stdout, end="")
-    if result.train_stderr:
-        print(result.train_stderr, file=sys.stderr, end="")
+    if result.pytest_stdout:
+        print(result.pytest_stdout, end="")
+    if result.pytest_stderr:
+        print(result.pytest_stderr, file=sys.stderr, end="")
+    if result.loop is not None:
+        if result.loop.train_stdout:
+            print(result.loop.train_stdout, end="")
+        if result.loop.train_stderr:
+            print(result.loop.train_stderr, file=sys.stderr, end="")
     print(json.dumps(result.to_dict(), indent=2))
     return 0 if result.ok else 2
 
@@ -252,6 +294,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="Required fractional improvement over the baseline probe score",
     )
+    loop.add_argument("--repeat", type=int, default=1, help="Number of loop cycles to run; 0 means run until stopped")
+    loop.add_argument(
+        "--interval-seconds",
+        type=float,
+        default=0.0,
+        help="Seconds to sleep between loop cycles",
+    )
+    loop.add_argument(
+        "--stop-file",
+        default=None,
+        help="Optional file path; if it exists, the loop stops before the next cycle",
+    )
     loop.add_argument(
         "--set",
         type=str,
@@ -260,6 +314,44 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra training overrides, e.g. --set model.embed_dim=256",
     )
     loop.set_defaults(func=cmd_loop)
+
+    autopilot = sub.add_parser("autopilot", help="Run env repair, pytest, and the recursive improvement loop")
+    autopilot.add_argument("--raw-dir", action="append", default=[], help="Raw input directory (repeatable)")
+    autopilot.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
+    autopilot.add_argument("--out-dir", required=True, help="Autopilot report / loop output directory")
+    autopilot.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    autopilot.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
+    autopilot.add_argument("--probe-data-source", choices=["real", "synthetic", "mixed"], default="real")
+    autopilot.add_argument("--num-points", type=int, default=1024)
+    autopilot.add_argument("--num-fields", type=int, default=3)
+    autopilot.add_argument("--format", choices=["npz", "pt"], default="npz")
+    autopilot.add_argument("--limit", type=int, default=None)
+    autopilot.add_argument("--non-recursive", action="store_true", help="Only scan the top level of raw dirs")
+    autopilot.add_argument(
+        "--allow-synthetic-fallback",
+        action="store_true",
+        help="Allow unsupported raw files to fall back to synthetic samples",
+    )
+    autopilot.add_argument("--max-steps", type=int, default=1, help="Training steps for the loop run")
+    autopilot.add_argument("--grad-accum-steps", type=int, default=None)
+    autopilot.add_argument("--promote-limit", type=int, default=50)
+    autopilot.add_argument("--baseline-checkpoint", default=None, help="Optional prior checkpoint to compare against")
+    autopilot.add_argument(
+        "--improvement-threshold",
+        type=float,
+        default=0.0,
+        help="Required fractional improvement over the baseline probe score",
+    )
+    autopilot.add_argument("--skip-tests", action="store_true", help="Skip the pytest gate")
+    autopilot.add_argument("--no-repair-env", action="store_true", help="Do not auto-install missing requirements")
+    autopilot.add_argument(
+        "--set",
+        type=str,
+        action="append",
+        default=None,
+        help="Extra training overrides, e.g. --set model.embed_dim=256",
+    )
+    autopilot.set_defaults(func=cmd_autopilot)
 
     doctor = sub.add_parser("doctor", help="Inspect native solver readiness")
     doctor.add_argument("--json", action="store_true", help="Emit JSON diagnostic output")

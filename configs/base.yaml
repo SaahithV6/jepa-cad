@@ -40,6 +40,7 @@ model:
     dropout: 0.1
   ema_decay: 0.996
   loss_type: "smooth_l1"  # smooth_l1 | cosine
+  gradient_checkpointing: false  # save memory on larger models
 
 # Training
 train:
@@ -48,7 +49,8 @@ train:
   max_steps: null  # override via --max-steps CLI
   seed: 42
   deterministic: false
-  amp: false  # automatic mixed precision (CUDA only)
+  precision: "auto"  # auto | fp32 | fp16 | bf16
+  amp: false  # backward-compat alias; set precision instead
   lr: 1.0e-4
   weight_decay: 0.05
   warmup_steps: 100

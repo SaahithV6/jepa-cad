@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from torch.utils.checkpoint import checkpoint
 
 from models.encoder import MLP, TransformerBlock
 
@@ -31,6 +32,7 @@ class LatentPredictor(nn.Module):
         mlp_ratio: float = 2.0,
         dropout: float = 0.1,
         max_blocks: int = 512,
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         self.embed_dim = embed_dim
@@ -41,6 +43,7 @@ class LatentPredictor(nn.Module):
         )
         self.norm = nn.LayerNorm(embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
+        self.gradient_checkpointing = gradient_checkpointing
 
     def forward(
         self,
@@ -65,7 +68,10 @@ class LatentPredictor(nn.Module):
         key_padding_mask = ~mask
 
         for block in self.blocks:
-            x = block(x, key_padding_mask=key_padding_mask)
+            if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
+                x = checkpoint(lambda inp, blk=block, kpm=key_padding_mask: blk(inp, key_padding_mask=kpm), x, use_reentrant=False)
+            else:
+                x = block(x, key_padding_mask=key_padding_mask)
 
         predicted = self.out_proj(self.norm(x[:, -num_targets:]))
         return predicted
@@ -87,4 +93,5 @@ class LatentPredictor(nn.Module):
             mlp_ratio=pred["mlp_ratio"],
             dropout=pred["dropout"],
             max_blocks=max(max_blocks, 64),
+            gradient_checkpointing=cfg["model"].get("gradient_checkpointing", False),
         )

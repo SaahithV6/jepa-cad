@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import math
 import random
 import time
@@ -162,6 +163,28 @@ def build_scheduler(optimizer: torch.optim.Optimizer, cfg: dict[str, Any], total
     return warmup_cosine(optimizer, total_steps=total_steps, warmup_steps=warmup, min_lr_ratio=0.0)
 
 
+def resolve_precision(cfg: dict[str, Any], device: torch.device) -> tuple[torch.dtype | None, bool, str]:
+    precision = str(cfg["train"].get("precision", "auto")).lower()
+    if precision == "auto" and bool(cfg["train"].get("amp", False)):
+        precision = "fp16"
+    if precision not in {"auto", "fp32", "fp16", "bf16"}:
+        raise ValueError(f"Unsupported train.precision: {precision}")
+
+    if device.type != "cuda":
+        return None, False, "fp32"
+
+    if precision == "fp32":
+        return None, False, "fp32"
+    if precision == "fp16":
+        return torch.float16, True, "fp16"
+    if precision == "bf16":
+        return torch.bfloat16, False, "bf16"
+
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16, False, "bf16"
+    return torch.float16, True, "fp16"
+
+
 def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     validate_config(cfg)
     seed_everything(int(cfg["train"].get("seed", 42)), bool(cfg["train"].get("deterministic", False)))
@@ -203,8 +226,10 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
     ckpt_every = int(cfg["train"]["checkpoint_every"])
     grad_clip = float(cfg["train"]["grad_clip"])
 
-    use_amp = bool(cfg["train"].get("amp", False)) and device.type == "cuda"
-    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    precision_dtype, use_scaler, precision_mode = resolve_precision(cfg, device)
+    if dist_info.is_primary:
+        print(f"Precision mode: {precision_mode}")
+    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
 
     model.train()
     start_time = time.perf_counter()
@@ -227,7 +252,12 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             target_masks = batch["target_masks"].to(device)
             target_block_ids = batch["target_block_ids"].to(device)
 
-            with torch.amp.autocast("cuda", enabled=use_amp):
+            precision_context = (
+                torch.autocast(device_type=device.type, dtype=precision_dtype)
+                if precision_dtype is not None
+                else contextlib.nullcontext()
+            )
+            with precision_context:
                 out = model(points, fields, context_mask, target_masks, target_block_ids)
                 loss = out["loss"] / accum_steps
             scaler.scale(loss).backward()
