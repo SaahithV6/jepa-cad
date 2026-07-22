@@ -35,8 +35,9 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { GeometryViewport } from "./GeometryViewport";
+import { planGeometryFromIntent } from "./intentPlanner";
 import { bridgeRequest, useStudio } from "./store";
-import type { BootstrapData, DoctorProbe, PipelineResult, Theater, Verdict } from "./types";
+import type { BootstrapData, DoctorProbe, GeometrySpec, PipelineResult, Theater, Verdict } from "./types";
 
 const theaters: Array<{ id: Theater; label: string; caption: string; icon: typeof Box; key: string }> = [
   { id: "forge", label: "Forge", caption: "Geometry studio", icon: Box, key: "1" },
@@ -63,6 +64,10 @@ function useKeyboardTheaters() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [setTheater]);
+}
+
+function buildIntentGeometry(intent: string): { geometry: GeometrySpec; solver: "fea" | "openfoam" | "mbd"; material: string; summary: string } | null {
+  return planGeometryFromIntent(intent);
 }
 
 function App() {
@@ -120,6 +125,15 @@ function App() {
     } catch (error) {
       failRun(error instanceof Error ? error.message : String(error));
     }
+  };
+
+  const applyIntent = () => {
+    const preset = buildIntentGeometry(intent);
+    if (!preset) return;
+    setGeometry(preset.geometry);
+    setSolver(preset.solver);
+    setMaterial(preset.material);
+    setIntent((current) => `${current}\n\n${preset.summary}`);
   };
 
   const verdict: Verdict = running ? "warn" : result ? (result.ok ? "pass" : "fail") : "idle";
@@ -184,9 +198,11 @@ function App() {
                 fieldLens={fieldLens}
                 toggleFieldLens={toggleFieldLens}
                 verdict={verdict}
+
                 running={running}
                 intent={intent}
                 setIntent={setIntent}
+                applyIntent={applyIntent}
                 material={material}
                 setMaterial={setMaterial}
               />
@@ -287,7 +303,8 @@ function ForgeTheater(props: {
   verdict: Verdict;
   running: boolean;
   intent: string;
-  setIntent: (value: string) => void;
+  setIntent: (value: string | ((current: string) => string)) => void;
+  applyIntent: () => void;
   material: string;
   setMaterial: (value: string) => void;
 }) {
@@ -298,7 +315,6 @@ function ForgeTheater(props: {
         <div className="viewport-toolbar">
           <button className={props.showGhosts ? "active" : ""} onClick={props.toggleGhosts}><Layers3 size={14} /> Ghost stack</button>
           <button className={props.fieldLens ? "active" : ""} onClick={props.toggleFieldLens}><ScanLine size={14} /> Field lens</button>
-          <button><Aperture size={14} /> Orthographic</button>
         </div>
         <div className="viewport-caption">
           <span>DETERMINISTIC B-REP</span><i /><span>CADQUERY / OCC</span><i /><span>MM</span>
@@ -308,16 +324,22 @@ function ForgeTheater(props: {
         <div className="panel-kicker"><WandSparkles size={14} /> DESIGN INTENT</div>
         <textarea value={props.intent} onChange={(event) => props.setIntent(event.target.value)} />
         <div className="intent-foot">
-          <span>Planner describes</span><i /><strong>Tools construct</strong><i /><span>Proof decides</span>
+          <span>Planner describes</span><i /><strong>Tools construct</strong><i /><span>Primitive seeds the solid, features sculpt it</span>
+          <button className="primary-subtle" type="button" onClick={props.applyIntent}><Sparkles size={14} /> Generate geometry</button>
         </div>
         <div className="parameter-grid">
-          <SelectField label="Primitive" value={props.geometry.kind} onChange={(value) => props.setGeometry({ kind: value as "box" | "cylinder" | "sphere" })} options={["box", "cylinder", "sphere"]} />
+          <SelectField label="Primitive" value={props.geometry.kind} onChange={(value) => props.setGeometry({ kind: value as "box" | "cylinder" | "sphere" | "extrude" })} options={["box", "cylinder", "sphere", "extrude"]} />
           <SelectField label="Material" value={props.material} onChange={props.setMaterial} options={["Al 6061-T6", "Ti-6Al-4V", "AISI 4140", "PA12-GF"]} />
           {props.geometry.kind === "box" ? (
             <>
               <NumberField label="Width" value={props.geometry.width ?? 4.8} onChange={(width) => props.setGeometry({ width })} />
               <NumberField label="Height" value={props.geometry.height ?? 1.25} onChange={(height) => props.setGeometry({ height })} />
               <NumberField label="Depth" value={props.geometry.depth ?? 2.6} onChange={(depth) => props.setGeometry({ depth })} />
+            </>
+          ) : props.geometry.kind === "extrude" ? (
+            <>
+              <NumberField label="Profile depth" value={props.geometry.height ?? 3.5} onChange={(height) => props.setGeometry({ height })} />
+              <div className="field"><span>Profile</span><div className="number-input"><small>Nozzle profile is generated from intent text</small></div></div>
             </>
           ) : (
             <>

@@ -17,7 +17,7 @@ from data.dataset import build_dataset
 from data.transforms import collate_masked_batch
 from models.jepa import JEPAModel
 from utils.checkpoint import load_checkpoint, prune_checkpoints, save_checkpoint
-from utils.config import apply_overrides, load_yaml, seed_everything, validate_config
+from utils.config import apply_overrides, load_yaml_with_family, seed_everything, validate_config
 from utils.distributed import (
     all_reduce_mean,
     barrier,
@@ -326,6 +326,7 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="JEPA-CAD pretraining")
     parser.add_argument("--config", type=str, default="configs/base.yaml")
+    parser.add_argument("--family", type=str, default=None, help="Optional config family overlay, e.g. space")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint path to resume from")
     parser.add_argument(
         "--set",
@@ -353,7 +354,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    cfg = load_yaml(args.config)
+    cfg = load_yaml_with_family(args.config, family=args.family)
     cfg = apply_overrides(cfg, args.set)
     train_loop(cfg, args)
 

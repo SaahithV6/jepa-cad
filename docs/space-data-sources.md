@@ -1,0 +1,392 @@
+# Rocket / Space CAD Dataset Source Manifest
+
+Curated public and reference sources for building a large-scale JEPA corpus for rocket / spacecraft geometry, launch-system taxonomy, propulsion internals, and related engineering priors.
+
+## Public / institutional space geometry sources
+- **ESA CHEOPS spacecraft schematic** (`esa_cheops_schematic`)
+  - URL: https://sci.esa.int/web/cheops/-/58644-cheops-spacecraft-schematic
+  - Use cases: spacecraft schematic, component layout, module geometry
+  - Notes: Useful ESA schematic reference for compact spacecraft layout.
+- **ESA Herschel 3D model** (`esa_herschel_3d`)
+  - URL: https://sci.esa.int/web/herschel/-/35060-3d-model
+  - Use cases: interactive 3D model, space observatory, structure priors
+  - Notes: ESA model useful for telescope and spacecraft structural priors.
+- **ESA INTEGRAL blueprint 4** (`esa_integral_blueprint4`)
+  - URL: https://sci.esa.int/web/integral/-/49273-integral-blueprint-4
+  - Use cases: blueprint, exploded view, service module, payload module
+  - Notes: Exploded-view blueprint of the INTEGRAL spacecraft service and payload modules.
+- **ESA INTEGRAL technical drawings** (`esa_integral_drawings`)
+  - URL: https://www.cosmos.esa.int/web/integral/spacecraft-drawings
+  - Use cases: technical drawings, spacecraft schematics, launch configuration
+  - Notes: Scanned technical drawings of INTEGRAL with launch and orbit configuration views.
+- **ESA JUICE spacecraft models** (`esa_juice`)
+  - URL: https://www.cosmos.esa.int/web/esac-csa/scifleet
+  - Use cases: spacecraft 3D models, texture-rich geometry, print models
+  - Notes: ESA download portal includes JUICE print models and other science satellites.
+- **ESA LISA Pathfinder science module exploded view** (`esa_lisa_pathfinder_exploded`)
+  - URL: https://sci.esa.int/web/lisa-pathfinder/-/56427-an-exploded-view-of-lisa-pathfinders-science-module
+  - Use cases: exploded view, module assembly, solar array
+  - Notes: Useful exploded geometry for assembly and integration learning.
+- **ESA LISA Pathfinder inertial sensor schematic** (`esa_lisa_pathfinder_schematic`)
+  - URL: https://sci.esa.int/web/lisa-pathfinder/-/53355-schematic-diagram-of-the-inertial-sensor-head
+  - Use cases: schematic diagram, precision mechanism, vacuum enclosure geometry
+  - Notes: Compact but valuable mechanism/layout schematic for precision space hardware.
+- **ESA Planck spacecraft interactive 3D model** (`esa_planck`)
+  - URL: https://sci.esa.int/web/planck/-/35059-3d-model
+  - Use cases: spacecraft structure, deconstruction layers, mission geometry priors
+  - Notes: ESA 3D interactive model with labeled structure and layer-by-layer deconstruction.
+- **ESA Rosetta comet 67P shape models** (`esa_rosetta_67p`)
+  - URL: https://pdssbn.astro.umd.edu/holdings/ro-c-multi-5-67p-shape-v2.0/dataset.shtml
+  - Use cases: shape models, mesh surfaces, asteroid/comet priors
+  - Notes: Not a spacecraft CAD source, but valuable for learned shape priors and mesh robustness.
+- **ESA Science Satellite Fleet (Scifleet)** (`esa_scifleet`)
+  - URL: https://scifleet.esa.int/
+  - Use cases: ESA spacecraft models, 3D meshes, textures, 3D print models
+  - Notes: Interactive ESA model catalog with downloadable models and print-friendly assets.
+- **ESA SMART-1 interactive 3D model** (`esa_smart1_3d`)
+  - URL: https://sci.esa.int/web/smart-1/-/31387-3d-model
+  - Use cases: interactive 3D model, boom geometry, spacecraft structure
+  - Notes: Small ESA spacecraft model with deconstructable structure.
+- **ESA Space Rider blueprint** (`esa_space_rider_blueprint`)
+  - URL: https://www.esa.int/ESA_Multimedia/Images/2025/11/Space_Rider_blueprint
+  - Use cases: blueprint, reusable spacecraft, spaceplane geometry
+  - Notes: Blueprint reference for a reusable spaceplane-like spacecraft.
+- **Trace Gas Orbiter 3D model** (`esa_trace_gas_orbiter`)
+  - URL: https://science.nasa.gov/resource/trace-gas-orbiter-3d-model/
+  - Use cases: spacecraft geometry, solar arrays, antenna, bus layout
+  - Notes: ESA spacecraft model mirrored via NASA resource page.
+- **ESA Ulysses 3D model** (`esa_ulysses_3d`)
+  - URL: https://sci.esa.int/web/ulysses/-/31383-3d-model
+  - Use cases: interactive 3D model, boom geometry, spacecraft structure
+  - Notes: Includes the two-section radial boom in pre-launch configuration.
+- **ESA Venus Express interactive 3D model** (`esa_venus_express_3d`)
+  - URL: https://sci.esa.int/web/venus-express/-/35192-3d-model
+  - Use cases: interactive 3D model, spacecraft structure, deconstruction
+  - Notes: Interactive 3D spacecraft model useful for overall architecture priors.
+- **ESA XMM-Newton 3D model** (`esa_xmm_newton_3d`)
+  - URL: https://sci.esa.int/web/xmm-newton/-/31382-3d-model
+  - Use cases: interactive 3D model, deconstruction, spacecraft geometry
+  - Notes: ESA spacecraft model with layer-by-layer deconstruction and labeled structures.
+- **ESA XMM-Newton spacecraft schematic** (`esa_xmm_spacecraft_schematic`)
+  - URL: https://sci.esa.int/web/xmm-newton/-/38277-spacecraft-schematic
+  - Use cases: spacecraft schematic, diagram, module layout
+  - Notes: Diagram of the XMM-Newton spacecraft; useful as schematic layout prior.
+- **GCAT launch vehicles, engines, and stages** (`gcat_launch_vehicles`)
+  - URL: https://huggingface.co/datasets/juliensimon/gcat-launch-vehicles
+  - Size: 4,875 records
+  - Use cases: launch vehicle metadata, engine specs, stage specs, propellant groups
+  - Notes: Structured launch-vehicle/engine/stage metadata useful for conditioning and curriculum design.
+- **GrabCAD spacecraft collection** (`grabcad_spacecraft`)
+  - URL: https://grabcad.com/library/tag/spacecraft
+  - Use cases: spacecraft CAD, community geometry, reference models
+  - Notes: Community spacecraft CAD library; license hygiene required but useful for breadth.
+- **JAXA Digital Archives 3D models** (`jaxa_digital_archive`)
+  - URL: https://jda.jaxa.jp/
+  - Use cases: rocket CG, launch vehicle cutaways, mission visuals
+  - Notes: JAXA archive containing rocket/transport system CG assets and spacecraft materials.
+- **JAXA Epsilon-S rocket CG cut model** (`jaxa_epsilon_s`)
+  - URL: https://jda.jaxa.jp/result.php?id=b3e7895bd574dc9b720c6f37cb0acb23&lang=j
+  - Use cases: rocket CG, launch vehicle cut model, stage/fairing priors
+  - Notes: Japanese launch-vehicle CG / cutaway reference geometry.
+- **JAXA H3 launch vehicle research / aeroacoustics** (`jaxa_h3_launch_vehicle`)
+  - URL: https://www.jss.jaxa.jp/en/h3/
+  - Use cases: launch vehicle, engine arrangement, pad interaction
+  - Notes: Research portal with H3 simulation and engine arrangement references.
+- **JAXA H3 rocket model** (`jaxa_h3_rocket`)
+  - URL: https://www.printables.com/model/1281748-h3-rocket-1100-jaxa
+  - Use cases: launch vehicle geometry, boosters, fairings, stage variants
+  - Notes: Community model of JAXA H3 with multiple booster/fairing configurations.
+- **JAXA LE-9 turbopump development paper** (`jaxa_le9_turbopump_dev`)
+  - URL: https://repository.exst.jaxa.jp/dspace/handle/a-is/835996
+  - Use cases: turbopump development, LE-9, engine development, H3 launch vehicle
+  - Notes: LE-9 turbopump development and test status for H3 first-stage engine.
+- **JAXA LE-X engine cycle analysis** (`jaxa_lex_cycle_analysis`)
+  - URL: https://stage.tksc.jaxa.jp/jedi/en/topics/20100708.html
+  - Use cases: cycle analysis, engine component calculation, numerical simulation
+  - Notes: Engine cycle analysis guide from JAXA's engineering digital innovation center.
+- **JAXA M-V rocket model** (`jaxa_mv_rocket`)
+  - URL: https://sketchfab.com/3d-models/jaxa-m-v-rocket-0c51f74a0ead46819b12014ff7417a47
+  - Use cases: three-stage rocket, fairing, solid motor stages
+  - Notes: Public model of the early M-V variants with three solid stages and fairing.
+- **JAXA NEXUS CAD / board data** (`jaxa_nexus_cad`)
+  - URL: https://stage.tksc.jaxa.jp/taurus/students/nexus/1_cad.html
+  - Use cases: CAD, step files, board data, assembly manuals
+  - Notes: Public JAXA NEXUS package with drawings, STEP files, and assembly instructions.
+- **JAXA RVT-14 reusable rocket engine test overview** (`jaxa_rvt_14`)
+  - URL: https://www.isas.jaxa.jp/j/topics/topics/2009/0310_rvt.shtml
+  - Use cases: reusable rocket, turbopump engine, thrust control, liquid-side control
+  - Notes: Reusable vehicle testbed with explicit engine and turbopump configuration details.
+- **Ryugu shape models and derivatives** (`jaxa_ryugu_shape`)
+  - URL: https://data.darts.isas.jaxa.jp/pub/hayabusa2/paper/Watanabe_2019/README.html
+  - Use cases: high-res shape models, OBJ/CSV/analysis data, mesh robustness
+  - Notes: Massive shape-model corpus from the Hayabusa2 Ryugu campaign.
+- **JAXA SLIM lander model** (`jaxa_slim`)
+  - URL: https://www.printables.com/model/530596-smart-lander-for-investigating-moon-slim-120-model
+  - Use cases: lander geometry, deployables, landing systems priors
+  - Notes: JAXA lunar lander model useful for non-launch spacecraft geometry diversity.
+- **JAXA XF9-1 engine overview cutaway** (`jaxa_xf9_1_engine`)
+  - URL: https://repository.exst.jaxa.jp/dspace/bitstream/a-is/960713/1/AA2040166001.pdf
+  - Use cases: engine cutaway, thrust chamber, turbomachinery, combustion cycle
+  - Notes: Japanese next-gen engine overview with a cutaway and element views.
+- **JAXA DARTS / Space XR shape models** (`jaxa_xr_darts`)
+  - URL: https://www.isas.jaxa.jp/home/showcase/xR/index.html.ja
+  - Use cases: shape models, asteroids, spacecraft visuals, FBX/STL/OBJ priors
+  - Notes: JAXA materials include 3D models of asteroid Ryugu and other science assets.
+- **LREKit (rocket engine geometry/export toolkit)** (`lrekit`)
+  - URL: https://pypi.org/project/lrekit/
+  - Use cases: nozzles, chambers, injectors, regenerative cooling, manufacturing geometry
+  - Notes: Engineering toolkit rather than a dataset, but strong for generating engine-family geometry priors.
+- **MUR project parts repository** (`murproject_parts`)
+  - URL: https://github.com/murproject/parts
+  - Use cases: thruster parts, STEP models, propulsion hardware
+  - Notes: Repository containing STEP parts for thruster hardware and related geometry.
+- **NASA 3D Resources** (`nasa_3d_resources`)
+  - URL: https://science.nasa.gov/3d-resources/
+  - Use cases: spacecraft geometry, mission models, assembly structure, visual priors
+  - Notes: Free NASA 3D models and mission assets; strong for spacecraft structure priors.
+- **Advanced Space Engine preliminary design** (`nasa_advanced_space_engine`)
+  - URL: https://ntrs.nasa.gov/api/citations/19740007348/downloads/19740007348.pdf
+  - Use cases: engine preliminary design, extendible nozzle, turbopumps, tank pressurization
+  - Notes: Contains drawings, dimensions, and parametric data for a high-thrust LH2/LOX engine.
+- **Orbital Transfer Rocket Engine Technology / Advanced Engine Study** (`nasa_advanced_space_engine_parametric`)
+  - URL: https://ntrs.nasa.gov/api/citations/19920022885/downloads/19920022885.pdf
+  - Use cases: parametric design, thrust chamber, pumps, nozzle contour, expander cycle
+  - Notes: Large report with parametric engine data, cooling concepts, and design tables.
+- **NASA Ares 1 3D Model** (`nasa_ares_1`)
+  - URL: https://data.nasa.gov/dataset/nasa-3d-models-ares-1
+  - Use cases: launch vehicle geometry, solid rocket staging, interstage priors
+  - Notes: Launch-vehicle reference geometry with obvious stage hierarchy.
+- **NASA Atlas V 501 3D Model** (`nasa_atlas_v_501`)
+  - URL: https://science.nasa.gov/resource/atlas-v-501-3d-model/
+  - Use cases: launch vehicle geometry, payload fairing, stage interface
+  - Notes: Launch vehicle reference geometry useful for body, fairing, and stage priors.
+- **NASA 3D Models: Cassini Assembly** (`nasa_cassini_assembly`)
+  - URL: https://data.nasa.gov/dataset/nasa-3d-models-cassini-assembly
+  - Use cases: spacecraft assemblies, subassemblies, thermal/propulsion modules
+  - Notes: High-detail spacecraft assembly with many subassemblies and parts.
+- **NASA Historical Spacecraft Diagrams** (`nasa_historical_diagrams`)
+  - URL: https://www.nasa.gov/history/historical-spacecraft-diagrams/
+  - Use cases: technical diagrams, blueprints, historical spacecraft
+  - Notes: Gallery of high-resolution historical spacecraft blueprints and diagrams.
+- **JPL Solar System Simulator Spacecraft Models** (`nasa_jpl_spacecraft_models`)
+  - URL: https://space.jpl.nasa.gov/models/
+  - Use cases: spacecraft geometry, rocket assemblies, rocket subassemblies
+  - Notes: Contains spacecraft and rocket assemblies, including some rocket-specific CAD-like assets.
+- **NASA 3D Models: Kepler** (`nasa_kepler`)
+  - URL: https://data.nasa.gov/dataset/nasa-3d-models-kepler
+  - Use cases: space telescope geometry, solar arrays, attitude/antenna priors
+  - Notes: Compact spacecraft model useful for body/panel/antenna priors.
+- **OTV advanced expander cycle engine point design study** (`nasa_otv_advanced_expander`)
+  - URL: https://ntrs.nasa.gov/api/citations/19810006503/downloads/19810006503.pdf
+  - Use cases: engine design report, layout drawings, turbopump, nozzle, valves
+  - Notes: Excellent historical engine layout and component sizing study.
+- **NASA Pegasus XL 3D Model** (`nasa_pegasus_xl`)
+  - URL: https://science.nasa.gov/resource/pegasus-xl-3d-model/
+  - Use cases: launch vehicle geometry, air-launched rocket, fairing/body structure
+  - Notes: Useful for air-launch and slender launch-vehicle form factors.
+- **RL10A-3-3A rocket engine report** (`nasa_rl10a_3_3a_report`)
+  - URL: https://ntrs.nasa.gov/api/citations/19970010379/downloads/19970010379.pdf
+  - Use cases: engine report, turbopump, cooling jacket, nozzle, injector
+  - Notes: Detailed RL10 engine model with component cross-sections and maps.
+- **NASA 3D Models: Satellite Kit** (`nasa_satellite_kit`)
+  - URL: https://data.nasa.gov/dataset/nasa-3d-models-satellite-kit
+  - Use cases: satellite parts, modular spacecraft layout, adapter rings
+  - Notes: Interchangeable satellite parts: bodies, radios, solar panels.
+- **NASA Saturn V 3D Models** (`nasa_saturn_v`)
+  - URL: https://science.nasa.gov/3d-resources/saturn-v/
+  - Use cases: launch vehicle geometry, stage segmentation, fairings, interstages
+  - Notes: High-signal launch vehicle geometry with stage-like structure.
+- **NASA 3D Models: Shuttle Parts (Hi-Res)** (`nasa_shuttle_parts_hi_res`)
+  - URL: https://data.nasa.gov/dataset/nasa-3d-models-shuttle-parts-hi-res
+  - Use cases: external tank, solid rocket booster, payload, EVA suit
+  - Notes: Contains a launch-system subassembly set with recognizable rocket hardware.
+- **Small high-pressure liquid hydrogen turbopump** (`nasa_small_hydrogen_turbopump`)
+  - URL: https://ntrs.nasa.gov/api/citations/19800018163/downloads/19800018163.pdf
+  - Use cases: turbopump assembly, impellers, seals, bearing layouts
+  - Notes: Detailed turbopump hardware and assembly drawings with design parameters.
+- **Space Shuttle Main Engine drawings PDF** (`nasa_space_shuttle_main_engine_drawings`)
+  - URL: https://www.nasa.gov/wp-content/uploads/2024/12/space-shuttle-main-engine-drawings.pdf?emrc=e914d4
+  - Use cases: engine drawings, turbopumps, cooling ducts, nozzle, chamber
+  - Notes: Highly valuable engine drawing PDF with SSME layout and component views.
+- **STME Main Injector Technology Program and Nozzle ADP** (`nasa_stme_main_injector_nozzle_adp`)
+  - URL: https://ntrs.nasa.gov/api/citations/19940020537/downloads/19940020537.pdf
+  - Use cases: main injector, nozzle development, calorimeter chamber, combustion stability
+  - Notes: STME injector/nozzle development report with subscale and large-scale injector configurations.
+- **NASA Technical Diagrams and Drawings** (`nasa_technical_diagrams`)
+  - URL: https://www.nasa.gov/history/diagrams/diagrams.htm
+  - Use cases: technical diagrams, drawings, piloted spacecraft blueprints
+  - Notes: Historical technical drawings useful for feature extraction and layout priors.
+- **Historical systems study of liquid rocket engine throttling** (`nasa_throttling_hist_study`)
+  - URL: https://ntrs.nasa.gov/api/citations/20100033271/downloads/20100033271.pdf
+  - Use cases: throttling, component interactions, injector, turbomachinery
+  - Notes: Excellent component-level throttling study with SSME/RL10 analysis.
+- **NCSTP synthetic benchmark for non-cooperative space target perception** (`ncstp`)
+  - URL: https://github.com/LYXLYXlyv/NCSTP
+  - Size: 200k images
+  - Use cases: satellite models, space debris, component segmentation, synthetic scenes
+  - Notes: Large synthetic benchmark built from 3D target models and Blender scenes.
+- **OpenOrbitXSwirl open swirl injector** (`openorbitxswirl`)
+  - URL: https://github.com/dpb-educ/openorbitxswirl
+  - Use cases: swirl injector, liquid propulsion, blueprints, documentation
+  - Notes: Open-source swirl injector CAD and docs for liquid propulsion research.
+- **OpenRocket enhanced parts database** (`openrocket_database`)
+  - URL: https://github.com/openrocket/openrocket-database
+  - Use cases: nose cones, body tubes, transitions, model rocket components
+  - Notes: Not production CAD, but very useful for a rocket-part prior and taxonomy.
+- **OpenRocket motor database** (`openrocket_motor_database`)
+  - URL: https://github.com/openrocket/motor-database
+  - Use cases: motor curves, thrust profiles, solid rocket motors
+  - Notes: Dynamic backend for OpenRocket thrust curves and motor metadata.
+- **OSHRockets** (`oshrockets`)
+  - URL: https://github.com/lexaerospace/OSHRockets
+  - Use cases: rocket parts, STEP/STL open parts, flight-proven hardware
+  - Notes: Open-source parts library for model rocketry; strong for part-type priors.
+- **Open Source Rocket Engines** (`osrengines`)
+  - URL: https://github.com/gNSortino/OSREngines
+  - Use cases: liquid rocket engines, injectors, igniters, engine assemblies
+  - Notes: Open liquid-fueled engine CAD repository with design/analysis files and mating components.
+- **Reusable Flight configuration (RFZ)** (`rfz_reusable_flight`)
+  - URL: https://www.dlr.de/en/as/research-and-transfer/software-solutions/aerothermodynamics/reusable-flight-configuration-on-zenodo
+  - Use cases: reusable launch vehicle geometry, CFD validation, heat-management, exhaust interaction
+  - Notes: Open reusable launcher model plus results database; very relevant for reentry, plume interaction, and thermal load cases.
+- **RocketSmith rocket parts database** (`rocketsmith_parts`)
+  - URL: https://github.com/ppak10/RocketSmith
+  - Use cases: rocket parts, parametric STEP files, launch hardware taxonomy
+  - Notes: Open rocket-parts database with parametric STEP exports and viewer tooling.
+- **Space datasets metadata pipeline** (`space_datasets_metadata`)
+  - URL: https://github.com/juliensimon/space-datasets
+  - Use cases: spacecraft metadata, missions, manufacturers, orbits
+  - Notes: Large public space/astronomy pipeline including spacecraft metadata from multiple public sources.
+- **3D spacecraft component segmentation dataset** (`spacecraft_component_segmentation`)
+  - URL: https://github.com/GY-ZHAO/3D_spacecraft_component_segmentation_dataset
+  - Use cases: component segmentation, spacecraft body/panel/antenna priors, point clouds
+  - Notes: Multi-source spacecraft CAD, reconstructed point clouds, and component labels.
+- **Spacecraft database from space-datasets** (`spacecraft_database`)
+  - URL: https://huggingface.co/datasets/juliensimon/spacecraft-database
+  - Size: 8K+ spacecraft
+  - Use cases: spacecraft metadata, operators, manufacturers, orbits
+  - Notes: Useful for broad spacecraft taxonomy and metadata conditioning.
+- **Spacecraft-DS** (`spacecraft_ds`)
+  - URL: https://github.com/spacecraftds/Spacecraft-DS
+  - Use cases: component detection, segmentation, hardware-in-the-loop capture
+  - Notes: Spacecraft component detection/segmentation dataset with motion and illumination variation.
+- **SPE3R spacecraft reconstruction dataset** (`spacecraft_pose_recon`)
+  - URL: https://purl.stanford.edu/pk719hm4806
+  - Use cases: spacecraft reconstruction, pose priors, shape understanding
+  - Notes: Useful as a perception/shape prior rather than parametric CAD supervision.
+- **SpaceSense-Bench** (`spacesense_bench`)
+  - URL: https://huggingface.co/datasets/Alvin16/SpaceSense-Bench
+  - Size: 136 models, ~70 GB
+  - Use cases: RGB, Depth, LiDAR, part-level semantic labels, 6-DoF pose
+  - Notes: Large synthetic multimodal spacecraft benchmark with 136 satellite models.
+- **SWiM: Spacecraft With Masks** (`swim_spacecraft_masks`)
+  - URL: https://github.com/RiceD2KLab/SWiM
+  - Use cases: instance segmentation, spacecraft masks, inspection imagery
+  - Notes: NASA/Rice spacecraft image dataset for segmentation and inspection tasks.
+- **UK Space Exploration Technology Roadmap** (`uk_sa_roadmap`)
+  - URL: https://www.gov.uk/government/publications/space-exploration-technology-roadmap/space-exploration-technology-roadmap--3
+  - Use cases: strategy, technology taxonomy, mission focus
+  - Notes: Not geometry, but good for domain breadth and technology taxonomy in the UK/ESA/NASA context.
+- **Voskhod rocket STL (Wikimedia Commons)** (`voskhod_rocket_stl`)
+  - URL: https://commons.wikimedia.org/wiki/File:Voskhod_Rocket.stl
+  - Use cases: Soviet rocket stages, historic launch vehicle geometry, split stage model
+  - Notes: Public Soviet-era launcher geometry from Wikimedia Commons, useful as historical launch-vehicle priors.
+
+## Private-industry reference sources (license review required)
+- **Angara A5 reference model (private marketplace)** (`angara_a5_private_reference`)
+  - URL: https://www.cgtrader.com/3d-models/vehicle/sci-fi-vehicle/angara-a5-rocket
+  - License: marketplace license
+  - Use cases: Russian launch vehicle, modular core stages, upper stage priors
+  - Notes: Private reference model for modern Russian launch-vehicle family morphology.
+- **Falcon 9 reference model (private marketplace)** (`falcon9_private_reference`)
+  - URL: https://www.cgtrader.com/free-3d-models/space/spaceship/falcon-9-rocket-model
+  - License: marketplace license
+  - Use cases: private launch vehicle reference, booster/fairing geometry, reuse systems
+  - Notes: Private reference asset for modern launch-vehicle morphology; license restrictions apply.
+- **Japanese Experiment Module Kibo on ISS** (`jaxa_kibo`)
+  - URL: https://www.cgtrader.com/3d-models/space/spaceship/japanese-experiment-module-kibo-hope-module-on-iss
+  - License: CGTrader marketplace terms
+  - Use cases: module geometry, ISS integration, pressurized modules
+  - Notes: Useful for module/integration priors; note marketplace license restrictions.
+- **Blue Origin New Glenn reference model (private marketplace)** (`new_glenn_private_reference`)
+  - URL: https://www.cgtrader.com/3d-models/vehicle/sci-fi/new-glenn-rocket
+  - License: marketplace license
+  - Use cases: heavy lift launch vehicle, core stage, fairing, upper stage
+  - Notes: Private reference model useful for large-stage and reusable-booster morphology.
+- **Blue Origin New Shepard reference model (private marketplace)** (`new_shepard_private_reference`)
+  - URL: https://www.cgtrader.com/free-3d-models/space/spaceship/new-shepard-model-blue-origin
+  - License: marketplace license
+  - Use cases: suborbital rocket, capsule/booster, launch pad infrastructure
+  - Notes: Private marketplace reference asset for suborbital launch systems.
+- **Rocket Lab Electron reference model (private marketplace)** (`rocketlab_electron_private_reference`)
+  - URL: https://www.cgtrader.com/3d-models/aircraft/other/rocket-lab-electron-617bee74-1b2b-4a9a-b661-3d468bb3f8f5
+  - License: marketplace license
+  - Use cases: small launcher geometry, composite structures, kick stage / fairing
+  - Notes: Private reference geometry from the marketplace; good for modern small-launch form factors.
+- **Soyuz 2 reference model (private marketplace)** (`soyuz_2_private_reference`)
+  - URL: https://www.cgtrader.com/3d-models/space/spaceship/soyuz-2-orbital-launch-vehicle
+  - License: marketplace license
+  - Use cases: Russian launch vehicle geometry, stage structure, fairing priors
+  - Notes: Private-marketplace reference model; useful for taxonomy but license must be checked.
+- **SpaceX Super Heavy booster reference model (private marketplace)** (`spacex_superheavy_private_reference`)
+  - URL: https://www.cgtrader.com/3d-models/space/spaceship/spacex-super-heavy-booster-v3
+  - License: marketplace license
+  - Use cases: super-heavy launch vehicle, booster geometry, rapid reusability priors
+  - Notes: Private reference asset; useful if you want contemporary booster form factors in the corpus.
+
+## Mechanical / cross-domain geometry sources
+- **ABC: A Big CAD Model Dataset For Geometric Deep Learning** (`abc_dataset`)
+  - URL: https://deep-geometry.github.io/abc-dataset/
+  - Size: 1M+ models
+  - Use cases: B-Rep geometry, feature learning, surface/curve priors
+  - Notes: Large mechanical CAD corpus; strong geometry pretraining source.
+- **3D Assembly Repository** (`assembly_repository`)
+  - URL: http://3dassemblyrepository.ge.imati.cnr.it/
+  - Use cases: assembly retrieval, part grouping, contact patterns
+  - Notes: Public STEP assembly dataset with 137 assembly models across 11 classes.
+- **AssemblyBench** (`assemblybench`)
+  - URL: https://zenodo.org/records/19742725
+  - Use cases: assembly trajectories, physics-aware sequencing, instructions
+  - Notes: Synthetic industrial assembly dataset with 6-DoF trajectories and manuals.
+- **AutoMate CAD assembly mating dataset** (`automate`)
+  - URL: https://doi.org/10.5061/dryad.2547d7wvw
+  - Use cases: mate prediction, assembly constraints, joint completion
+  - Notes: Large-scale B-Rep assembly/mate dataset for predicting mates and constraints.
+- **Fusion 360 Gallery Assembly Dataset** (`fusion360_assembly`)
+  - URL: https://github.com/AutodeskAILab/Fusion360GalleryDataset/blob/master/docs/assembly.md
+  - Size: 8,251 assemblies
+  - Use cases: assembly graphs, joints, holes, mating structure
+  - Notes: Contains assemblies, part hierarchy, joints, contacts, and hole features.
+- **Standard Parts Recognition Dataset** (`standard_parts`)
+  - URL: http://standardpartrecognitiondataset.ge.imati.cnr.it/
+  - Use cases: fasteners, nuts, washers, screws, pins
+  - Notes: STEP dataset for standard and non-standard mechanical parts.
+- **step.parts open-source STEP directory** (`step_parts`)
+  - URL: https://github.com/earthtojake/step.parts
+  - Size: 12k+ parts
+  - Use cases: STEP part library, assemblies, mechanical prototypes
+  - Notes: Large open STEP directory useful for general part priors across mechanisms and hardware.
+- **Thingi10K** (`thingi10k`)
+  - URL: https://huggingface.co/datasets/Thingi10K/Thingi10K
+  - Size: 10k models
+  - Use cases: 3D-printable meshes, real-world geometry diversity, non-manifold shapes
+  - Notes: Large public STL corpus with lots of imperfect real geometry; good for robustness.
+- **TraceParts CAD / drawings catalog** (`traceparts`)
+  - URL: https://www.traceparts.com/en
+  - Use cases: 3D models, CAD files, 2D drawings, catalog parts
+  - Notes: Large industrial parts catalog useful for generic component priors and supplier geometry.
+- **UK STFC ISAAC AM petal re-design CAD dataset** (`uk_isaac_am_petal`)
+  - URL: https://edata.stfc.ac.uk/items/5145abd7-6878-4b42-a163-18c4efd4504d/full
+  - Use cases: lightweight deployable structures, lattice panels, additive manufacturing
+  - Notes: UK open CAD dataset for deployable mirror petals; strong for lattice/lightweight structures.
+
+## Practical intake priorities
+- First pass: NASA, ESA, JAXA public diagrams / drawings / engine reports.
+- Second pass: propulsion patents, turbopump, injector, tank-pressurization, nozzle and chamber sources.
+- Third pass: launch-vehicle metadata, spacecraft databases, OpenRocket, step.parts, OSHRockets, RocketSmith, TraceParts, GrabCAD.
+- Fourth pass: RFZ and LREKit for propulsion / thermal / reentry priors and synthetic expansion.
+- Optional reference-only pass: private marketplace models for morphology and taxonomy, with license review.
+
+## Notes
+- Many sources are not raw training shards; they are still valuable for curriculum, taxonomy, and synthetic generation.
+- License terms vary by source and must be checked before redistribution or commercial use.

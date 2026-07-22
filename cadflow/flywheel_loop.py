@@ -116,6 +116,7 @@ def run_flywheel_loop(
     *,
     flywheel_path: str | Path | None = None,
     config: str | Path = "configs/base.yaml",
+    family: str | None = None,
     num_points: int = 1024,
     num_fields: int = 3,
     fmt: str = "npz",
@@ -183,6 +184,10 @@ def run_flywheel_loop(
         str(train_py),
         "--config",
         str(config),
+    ]
+    if family is not None:
+        cmd.extend(["--family", family])
+    cmd.extend([
         "--data-source",
         data_source,
         "--set",
@@ -193,7 +198,7 @@ def run_flywheel_loop(
         f"logging.log_dir={runs_dir}",
         "--set",
         f"logging.experiment_name={cycle_id}",
-    ]
+    ])
     if max_steps is not None:
         cmd.extend(["--max-steps", str(max_steps)])
     if grad_accum_steps is not None:

@@ -1,0 +1,50 @@
+# Space-systems family preset for practical local-first training.
+# Intended as the first generic family before later domain specializations.
+
+data:
+  num_points: 2048
+  num_fields: 6
+  mix_ratio: 0.85
+  num_workers: 0
+  pin_memory: false
+
+masking:
+  grid_size: [6, 6, 6]
+  context_ratio: 0.55
+  num_target_blocks: 6
+  min_target_block_ratio: 0.03
+
+model:
+  embed_dim: 192
+  encoder:
+    num_layers: 4
+    num_heads: 6
+    mlp_ratio: 2.5
+    dropout: 0.1
+    use_field_features: true
+  predictor:
+    num_layers: 3
+    num_heads: 6
+    mlp_ratio: 2.5
+    dropout: 0.1
+  ema_decay: 0.997
+  loss_type: "smooth_l1"
+  gradient_checkpointing: true
+
+train:
+  batch_size: 4
+  num_epochs: 12
+  precision: "bf16"
+  amp: false
+  lr: 8.0e-5
+  weight_decay: 0.05
+  warmup_steps: 200
+  grad_clip: 1.0
+  grad_accum_steps: 2
+  log_every: 10
+  checkpoint_every: 500
+  collapse_std_threshold: 0.01
+  device: "auto"
+
+logging:
+  experiment_name: "jepa-cad-space"

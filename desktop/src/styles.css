@@ -97,6 +97,7 @@ body { background: radial-gradient(circle at 45% 15%, #0e1822 0, #080b10 48%, #0
 .viewport-reticle::before, .viewport-reticle::after { content: ""; position: absolute; background: rgba(131,189,224,.2); }
 .viewport-reticle::before { left: -7px; right: -7px; top: 50%; height: 1px; }
 .viewport-reticle::after { top: -7px; bottom: -7px; left: 50%; width: 1px; }
+.viewport-mode-badge { position: absolute; right: 18px; top: 18px; padding: 6px 10px; border-radius: 999px; background: rgba(8, 15, 23, 0.72); border: 1px solid rgba(131,189,224,.18); color: #dcefff; font: 8px "DM Mono"; letter-spacing: 0.14em; pointer-events: none; }
 .viewport-axis { position: absolute; right: 18px; bottom: 18px; font: 8px "DM Mono"; display: flex; gap: 5px; }
 .axis-x { color: #ec7070; }.axis-y { color: #6ee09e; }.axis-z { color: #65aef1; }
 .dimension-label { color: #9aafbd; background: rgba(7,11,15,.78); border: 1px solid #2a3945; padding: 3px 7px; border-radius: 4px; font: 8px "DM Mono"; white-space: nowrap; }

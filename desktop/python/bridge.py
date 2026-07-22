@@ -34,6 +34,16 @@ def emit(event: str, payload: dict[str, Any]) -> None:
     sys.__stdout__.flush()
 
 
+def health(_: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "bridge": "ready",
+        "repoRoot": str(REPO_ROOT),
+        "appRoot": str(APP_ROOT),
+        "python": sys.executable,
+    }
+
+
 def _safe_json(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return _safe_json(value.to_dict())
@@ -267,9 +277,11 @@ def promote(params: dict[str, Any]) -> dict[str, Any]:
 
 
 METHODS = {
+    "health": health,
     "bootstrap": bootstrap,
     "doctor": doctor,
     "history": history,
+    "flywheel": history,
     "run_pipeline": run_pipeline,
     "latent_atlas": latent_atlas,
     "run_autopilot": run_autopilot,
@@ -291,7 +303,8 @@ def main() -> None:
             with contextlib.redirect_stdout(buffer):
                 result = handler(request.get("params") or {})
             if buffer.getvalue():
-                emit("bridge.log", {"level": "info", "message": buffer.getvalue()})
+                sys.stderr.write(buffer.getvalue())
+                sys.stderr.flush()
             print(json.dumps({"id": request_id, "result": _safe_json(result)}, default=str), flush=True)
         except Exception as exc:
             print(

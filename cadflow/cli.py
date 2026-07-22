@@ -8,13 +8,16 @@ import sys
 from pathlib import Path
 
 from cadflow.autopilot import run_autopilot
+from cadflow.cloud import build_cloud_training_plan
 from cadflow.backends import get_backend
+from cadflow.design_loop import run_design_loop
 from cadflow.doctor import build_doctor_report, render_doctor_report
 from cadflow.e2e import run_end_to_end
 from cadflow.flywheel import DataFlywheel
+from cadflow.loop_controller import run_loop_controller
 from cadflow.manifest import JobManifest
 from cadflow.pipeline import run_pipeline
-from cadflow.loop_controller import run_loop_controller
+from cadflow.project import intake_project
 from cadflow.promotion import promote_verified_to_dataset
 from cadflow.runtime import resolve_solver_runtime
 from data.ingest import ingest_sources
@@ -31,6 +34,21 @@ def _runtime_from_args(args: argparse.Namespace):
         bin_dirs=getattr(args, "solver_bin_dir", None),
         lib_dirs=getattr(args, "solver_lib_dir", None),
     )
+
+
+def _parse_target_overrides(items: list[str] | None) -> dict[str, object]:
+    import yaml
+
+    targets: dict[str, object] = {}
+    for expr in items or []:
+        if "=" not in expr:
+            raise SystemExit(f"target overrides must use key=value syntax, got {expr!r}")
+        key, rhs = expr.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise SystemExit(f"target override is missing a key: {expr!r}")
+        targets[key] = yaml.safe_load(rhs.strip())
+    return targets
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -91,6 +109,85 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0 if result.ingested else 1
 
 
+def cmd_project_intake(args: argparse.Namespace) -> int:
+    result = intake_project(
+        args.project_root,
+        goal=args.goal,
+        family=args.family,
+        solver=args.solver,
+        material=args.material,
+        targets=_parse_target_overrides(args.target),
+        notes=args.notes,
+        out_dir=args.out_dir,
+    )
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0
+    print(json.dumps(result.to_dict(), indent=2))
+    if result.questions:
+        print("\nNext questions:")
+        for question in result.questions:
+            print(f"- {question}")
+    return 0
+
+
+def cmd_cloud_plan(args: argparse.Namespace) -> int:
+    manifest = _load_manifest(Path(args.manifest))
+    plan = build_cloud_training_plan(
+        manifest,
+        family=args.family,
+        provider_preference=args.provider,
+        max_dataset_sources=args.max_dataset_sources,
+    )
+    if args.json:
+        print(json.dumps(plan.to_dict(), indent=2))
+        return 0
+    print(f"primary_provider={plan.primary_provider}")
+    if plan.secondary_provider:
+        print(f"secondary_provider={plan.secondary_provider}")
+    print(f"family={plan.family}")
+    print(f"project_manifest={plan.project_manifest}")
+    if plan.dataset_sources:
+        print("dataset_sources:")
+        for source in plan.dataset_sources:
+            print(f"- {source.key}: {source.title} -> {source.url}")
+    print("preprocessing_steps:")
+    for step in plan.preprocessing_steps:
+        print(f"- {step}")
+    print("training_steps:")
+    for step in plan.training_steps:
+        print(f"- {step}")
+    print("evaluation_steps:")
+    for step in plan.evaluation_steps:
+        print(f"- {step}")
+    print("notes:")
+    for note in plan.notes:
+        print(f"- {note}")
+    return 0
+
+
+def cmd_design_loop(args: argparse.Namespace) -> int:
+    manifest = _load_manifest(Path(args.manifest)) if args.manifest else None
+    result = run_design_loop(
+        manifest=manifest,
+        project_root=args.project_root,
+        goal=args.goal,
+        family=args.family,
+        solver=args.solver,
+        material=args.material,
+        targets=_parse_target_overrides(args.target),
+        out_dir=args.out_dir,
+        repeat=args.repeat,
+        tolerance=args.tolerance,
+        notes=args.notes,
+        allow_solver_fallback=not args.require_native_solver,
+        prefer_real_cad=not args.mock_cad,
+        solver_payload_factory=None,
+    )
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ok else 2
+
+
 def cmd_e2e(args: argparse.Namespace) -> int:
     if not args.raw_dir and not args.flywheel:
         raise SystemExit("at least one --raw-dir or --flywheel is required")
@@ -104,7 +201,7 @@ def cmd_e2e(args: argparse.Namespace) -> int:
         recursive=not args.non_recursive,
         limit=args.limit,
         allow_synthetic_fallback=args.allow_synthetic_fallback,
-        config=args.config,
+        family=args.family,
         data_source=args.data_source,
         max_steps=args.max_steps,
         grad_accum_steps=args.grad_accum_steps,
@@ -128,7 +225,7 @@ def cmd_loop(args: argparse.Namespace) -> int:
         interval_seconds=args.interval_seconds,
         stop_file=args.stop_file,
         flywheel_path=args.flywheel,
-        config=args.config,
+        family=args.family,
         num_points=args.num_points,
         num_fields=args.num_fields,
         fmt=args.format,
@@ -159,7 +256,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
         args.raw_dir,
         args.out_dir,
         flywheel_path=args.flywheel,
-        config=args.config,
+        family=args.family,
         num_points=args.num_points,
         num_fields=args.num_fields,
         fmt=args.format,
@@ -240,11 +337,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.set_defaults(func=cmd_ingest)
 
+    project = sub.add_parser("project", help="Intake an existing project into a manifest")
+    project.add_argument("--project-root", required=True, help="Existing CAD/CAE project root")
+    project.add_argument("--goal", required=True, help="Design goal or optimization objective")
+    project.add_argument("--family", default="space", help="Config family, e.g. space")
+    project.add_argument("--solver", choices=["fea", "openfoam", "mbd"], default=None)
+    project.add_argument("--material", default=None, help="Primary material family")
+    project.add_argument("--target", action="append", default=None, help="Target override, e.g. max_stress_mpa=180")
+    project.add_argument("--notes", default=None, help="Optional extra notes")
+    project.add_argument("--json", action="store_true", help="Emit JSON only")
+    project.add_argument("--out-dir", default=None, help="Where to write the generated manifest")
+    project.set_defaults(func=cmd_project_intake)
+
+    design = sub.add_parser("design-loop", help="Iterate a manifest/project against simulation results")
+    design.add_argument("--manifest", default=None, help="Path to a JobManifest JSON")
+    design.add_argument("--project-root", default=None, help="Existing CAD/CAE project root")
+    design.add_argument("--goal", default=None, help="Goal for intake if no manifest is supplied")
+    design.add_argument("--family", default="space", help="Config family, e.g. space")
+    design.add_argument("--solver", choices=["fea", "openfoam", "mbd"], default=None)
+    design.add_argument("--material", default=None, help="Primary material family")
+    design.add_argument("--target", action="append", default=None, help="Target override, e.g. max_stress_mpa=180")
+    design.add_argument("--notes", default=None, help="Optional extra notes")
+    design.add_argument("--out-dir", required=True, help="Design-loop output directory")
+    design.add_argument("--repeat", type=int, default=3)
+    design.add_argument("--tolerance", type=float, default=0.05)
+    design.add_argument("--mock-cad", action="store_true", help="Force mock CAD backend")
+    design.add_argument("--require-native-solver", action="store_true", help="Fail if solver binary missing")
+    design.set_defaults(func=cmd_design_loop)
+
+    cloud_plan = sub.add_parser("cloud-plan", help="Generate a Modal/Fireworks training plan from a manifest")
+    cloud_plan.add_argument("--manifest", required=True, help="Path to a JobManifest JSON")
+    cloud_plan.add_argument("--family", default="space", help="Config family, e.g. space")
+    cloud_plan.add_argument("--provider", default=None, choices=["Modal", "Fireworks", "modal", "fireworks"], help="Preferred primary provider")
+    cloud_plan.add_argument("--max-dataset-sources", type=int, default=6)
+    cloud_plan.add_argument("--json", action="store_true", help="Emit JSON output")
+    cloud_plan.set_defaults(func=cmd_cloud_plan)
+
     e2e = sub.add_parser("e2e", help="Ingest data and run a short JEPA training job")
     e2e.add_argument("--raw-dir", action="append", default=[], help="Raw input directory (repeatable)")
     e2e.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
     e2e.add_argument("--out-dir", required=True, help="Curated shard output directory")
     e2e.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    e2e.add_argument("--family", default=None, help="Optional config family overlay, e.g. space")
     e2e.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
     e2e.add_argument("--num-points", type=int, default=1024)
     e2e.add_argument("--num-fields", type=int, default=3)
@@ -272,6 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     loop.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
     loop.add_argument("--out-dir", required=True, help="Loop output directory")
     loop.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    loop.add_argument("--family", default=None, help="Optional config family overlay, e.g. space")
     loop.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
     loop.add_argument("--probe-data-source", choices=["real", "synthetic", "mixed"], default="real")
     loop.add_argument("--num-points", type=int, default=1024)
@@ -320,6 +455,7 @@ def build_parser() -> argparse.ArgumentParser:
     autopilot.add_argument("--flywheel", default=None, help="Optional flywheel JSONL path")
     autopilot.add_argument("--out-dir", required=True, help="Autopilot report / loop output directory")
     autopilot.add_argument("--config", default="configs/base.yaml", help="Training config path")
+    autopilot.add_argument("--family", default=None, help="Optional config family overlay, e.g. space")
     autopilot.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="real")
     autopilot.add_argument("--probe-data-source", choices=["real", "synthetic", "mixed"], default="real")
     autopilot.add_argument("--num-points", type=int, default=1024)

@@ -6,3 +6,4 @@ trimesh>=4.0.0
 scipy>=1.11.0
 shapely>=2.0.0
 cadquery>=2.8.0
+modal>=1.5.2

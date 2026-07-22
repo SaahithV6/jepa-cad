@@ -6,6 +6,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import copy
 from typing import Any
 
 import torch
@@ -14,7 +15,7 @@ import yaml
 from torch.utils.data import DataLoader, random_split
 
 from data.dataset import build_dataset
-from models.encoder import PointCloudEncoder
+from models.jepa import JEPAModel
 from utils.checkpoint import load_checkpoint
 
 
@@ -61,7 +62,7 @@ def load_config(path: str | Path) -> dict:
 
 
 @torch.no_grad()
-def encode_batch(encoder: PointCloudEncoder, batch: dict[str, torch.Tensor], device: torch.device) -> torch.Tensor:
+def encode_batch(encoder: nn.Module, batch: dict[str, torch.Tensor], device: torch.device) -> torch.Tensor:
     points = batch["points"].to(device)
     fields = batch["fields"].to(device)
     mask = torch.ones(points.shape[:2], dtype=torch.bool, device=device)
@@ -90,15 +91,20 @@ def probe_checkpoint(
     seed: int | None = None,
     verbose: bool = True,
 ) -> ProbeResult:
-    dataset = build_dataset(data_source, cfg)  # type: ignore[arg-type]
+    checkpoint_payload = torch.load(checkpoint, map_location=device, weights_only=False)
+    model_cfg = copy.deepcopy(checkpoint_payload.get("config", cfg))
+    model_cfg["data"]["data_dir"] = cfg["data"].get("data_dir", model_cfg["data"].get("data_dir"))
+    model_cfg["data"]["shard_format"] = cfg["data"].get("shard_format", model_cfg["data"].get("shard_format", "npz"))
+
+    dataset = build_dataset(data_source, model_cfg)  # type: ignore[arg-type]
     train_ds, val_ds = _split_dataset(dataset, cfg["probe"]["train_split"], seed if seed is not None else int(cfg["train"]["seed"]))
 
     train_loader = DataLoader(train_ds, batch_size=cfg["probe"]["batch_size"], shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=cfg["probe"]["batch_size"], shuffle=False)
 
-    encoder = PointCloudEncoder.from_config(cfg, cfg["data"]["num_fields"])
-    load_checkpoint(checkpoint, encoder, device=device)
-    encoder.to(device)
+    jepa = JEPAModel.from_config(model_cfg).to(device)
+    load_checkpoint(checkpoint, jepa, device=device)
+    encoder = jepa.context_encoder
     encoder.eval()
     for p in encoder.parameters():
         p.requires_grad = False
@@ -171,12 +177,20 @@ def train_probe(cfg: dict, checkpoint: str, data_source: str, device: torch.devi
 def main() -> None:
     parser = argparse.ArgumentParser(description="Linear probe on frozen JEPA encoder")
     parser.add_argument("--config", type=str, default="configs/base.yaml")
+    parser.add_argument("--family", type=str, default=None, help="Optional config family overlay")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="synthetic")
+    parser.add_argument("--data-dir", type=str, default=None, help="Override data.data_dir for real or mixed datasets")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable output")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    if args.family is not None:
+        from utils.config import load_yaml_with_family
+
+        cfg = load_yaml_with_family(args.config, family=args.family)
+    if args.data_dir is not None:
+        cfg["data"]["data_dir"] = args.data_dir
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     result = train_probe(cfg, args.checkpoint, args.data_source, device)
     if args.json:

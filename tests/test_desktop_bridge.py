@@ -32,6 +32,35 @@ def _bridge_requests(tmp_path: Path, requests: list[dict]) -> list[dict]:
     return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
 
 
+def test_desktop_bridge_core_rpc_set(tmp_path: Path) -> None:
+    messages = _bridge_requests(
+        tmp_path,
+        [
+            {"id": 1, "method": "health", "params": {}},
+            {"id": 2, "method": "doctor", "params": {}},
+            {"id": 3, "method": "flywheel", "params": {"limit": 5}},
+            {
+                "id": 4,
+                "method": "run_pipeline",
+                "params": {
+                    "name": "Desktop smoke",
+                    "geometry": {"kind": "box", "width": 2, "height": 1, "depth": 1},
+                    "solver": "fea",
+                    "mockCad": True,
+                },
+            },
+            {"id": 5, "method": "run_autopilot", "params": {"skipTests": True}},
+        ],
+    )
+    replies = {message["id"]: message["result"] for message in messages if "id" in message}
+    assert replies[1]["ok"] is True
+    assert replies[2]["native_ready"] in {True, False}
+    assert "entries" in replies[3] and "total" in replies[3]
+    assert replies[4]["ok"] is True
+    assert "decision" in replies[5]
+    assert "summary_path" in replies[5]
+
+
 def test_desktop_bridge_bootstrap_and_atlas(tmp_path: Path) -> None:
     messages = _bridge_requests(
         tmp_path,

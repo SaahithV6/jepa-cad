@@ -69,3 +69,34 @@ def test_pipeline_rejects_unverified_from_flywheel(tmp_path: Path) -> None:
     assert result.ok is False
     assert result.flywheel_entry is None
     assert list(flywheel.load_entries()) == []
+
+
+def test_pipeline_builds_feature_rich_nozzle_geometry(tmp_path: Path) -> None:
+    manifest = JobManifest(
+        name="rocket-nozzle",
+        inputs={
+            "geometry": {
+                "kind": "extrude",
+                "profile": [(0, 0), (1, 0), (1, 2), (0, 2)],
+                "height": 3.5,
+                "features": [
+                    {"op": "fillet", "radius": 0.1},
+                    {"op": "sculpt", "distance": 0.03},
+                ],
+            }
+        },
+        parameters={"solver": "openfoam"},
+    )
+    flywheel = DataFlywheel(tmp_path / "flywheel.jsonl")
+    result = run_pipeline(
+        manifest,
+        backend=MockCadBackend(),
+        workdir=tmp_path / "work",
+        flywheel=flywheel,
+        prefer_real_cad=False,
+    )
+    assert result.ok is True
+    assert getattr(result.shape, "kind", None) in {"extrude", "extrusion"}
+    assert "fillet" in getattr(result.shape, "ops", ())
+    assert "sculpt_offset" in getattr(result.shape, "ops", ())
+    assert result.verification.passed is True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,33 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
     if not isinstance(cfg, dict):
         raise ConfigError(f"Config must be a dict at top-level, got {type(cfg)}")
     return cfg
+
+
+def deep_merge_dicts(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(base)
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge_dicts(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+
+def load_yaml_with_family(
+    path: str | Path,
+    *,
+    family: str | None = None,
+    family_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    cfg = load_yaml(path)
+    if family is None:
+        return cfg
+    base_path = Path(path)
+    root = Path(family_dir) if family_dir is not None else base_path.resolve().parent / "families"
+    overlay_path = root / f"{family}.yaml"
+    if not overlay_path.exists():
+        raise ConfigError(f"Unknown config family: {family} (missing {overlay_path})")
+    return deep_merge_dicts(cfg, load_yaml(overlay_path))
 
 
 def deep_get(cfg: dict[str, Any], dotted_key: str) -> Any:

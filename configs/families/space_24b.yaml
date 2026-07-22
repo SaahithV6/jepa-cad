@@ -1,0 +1,49 @@
+# High-capacity target preset for external compute.
+# This is the roadmap preset for a roughly 24B-class space family run,
+# meant for cloud training only, not the local laptop.
+
+data:
+  num_points: 4096
+  num_fields: 8
+  mix_ratio: 0.9
+
+masking:
+  grid_size: [8, 8, 8]
+  context_ratio: 0.6
+  num_target_blocks: 8
+  min_target_block_ratio: 0.02
+
+model:
+  embed_dim: 512
+  encoder:
+    num_layers: 16
+    num_heads: 16
+    mlp_ratio: 4.0
+    dropout: 0.0
+    use_field_features: true
+  predictor:
+    num_layers: 8
+    num_heads: 16
+    mlp_ratio: 4.0
+    dropout: 0.0
+  ema_decay: 0.999
+  loss_type: "smooth_l1"
+  gradient_checkpointing: true
+
+train:
+  batch_size: 1
+  num_epochs: 1
+  precision: "bf16"
+  amp: false
+  lr: 2.0e-5
+  weight_decay: 0.05
+  warmup_steps: 1000
+  grad_clip: 1.0
+  grad_accum_steps: 16
+  log_every: 10
+  checkpoint_every: 1000
+  collapse_std_threshold: 0.01
+  device: "auto"
+
+logging:
+  experiment_name: "jepa-cad-space-24b"

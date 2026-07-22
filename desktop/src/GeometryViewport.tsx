@@ -1,4 +1,4 @@
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas } from "@react-three/fiber";
 import {
   ContactShadows,
   Environment,
@@ -51,6 +51,13 @@ function GeometryMesh({
     spec.height ?? (spec.radius ?? 1.5) * 2,
     spec.depth ?? (spec.radius ?? 1.5) * 2,
   ];
+  const extrudeGeometry = useMemo(() => {
+    if (spec.kind !== "extrude" || !spec.profile?.length) return null;
+    const shape = new THREE.Shape(spec.profile.map(([x, y]) => new THREE.Vector2(x, y)));
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: spec.height ?? 2, bevelEnabled: false, steps: 1 });
+    geometry.center();
+    return geometry;
+  }, [spec]);
   const material = fieldLens ? (
     <meshStandardMaterial
       color="#ec6f55"
@@ -77,12 +84,12 @@ function GeometryMesh({
   );
 
   return (
-    <mesh castShadow receiveShadow scale={scale}>
+    <mesh castShadow receiveShadow scale={scale} geometry={extrudeGeometry ?? undefined}>
       {spec.kind === "cylinder" ? (
         <cylinderGeometry args={[spec.radius ?? 1.5, spec.radius ?? 1.5, spec.height ?? 3, 64]} />
       ) : spec.kind === "sphere" ? (
         <sphereGeometry args={[spec.radius ?? 1.7, 64, 32]} />
-      ) : (
+      ) : spec.kind === "extrude" ? null : (
         <boxGeometry args={dims} />
       )}
       {material}
@@ -92,12 +99,7 @@ function GeometryMesh({
 
 function Aura({ color, running }: { color: string; running: boolean }) {
   const ref = useRef<THREE.Mesh>(null);
-  useFrame(({ clock }) => {
-    if (!ref.current) return;
-    const pulse = 1.025 + Math.sin(clock.elapsedTime * (running ? 4 : 1.4)) * 0.012;
-    ref.current.scale.setScalar(pulse);
-    ref.current.rotation.y = Math.sin(clock.elapsedTime * 0.18) * 0.025;
-  });
+  useMemo(() => undefined, []);
   return (
     <mesh ref={ref}>
       <boxGeometry args={[4.88, 1.32, 2.68]} />
@@ -116,9 +118,6 @@ function ResidualRibbon({ running, color }: { running: boolean; color: string })
     [],
   );
   const group = useRef<THREE.Group>(null);
-  useFrame((_, delta) => {
-    if (group.current) group.current.rotation.y += delta * (running ? 0.38 : 0.05);
-  });
   return (
     <group ref={group}>
       <Line points={points} color={color} lineWidth={running ? 1.7 : 0.65} transparent opacity={running ? 0.85 : 0.22} />
@@ -193,7 +192,9 @@ export function GeometryViewport(props: Props) {
       </Canvas>
       <div className="viewport-reticle" />
       <div className="viewport-axis">
-        <span className="axis-x">X</span><span className="axis-y">Y</span><span className="axis-z">Z</span>
+        <span className="axis-x">X</span>
+        <span className="axis-y">Y</span>
+        <span className="axis-z">Z</span>
       </div>
     </div>
   );

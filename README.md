@@ -1,14 +1,19 @@
 # JEPA-CAD
 
-Self-supervised pretraining for **CAD geometry paired with CFD/FEA simulation annotations**, using a [JEPA](https://arxiv.org/abs/2301.08243) (Joint Embedding Predictive Architecture) objective.
+Training-first stack for **CAD / spacecraft geometry representation learning** using a [JEPA](https://arxiv.org/abs/2301.08243) (Joint Embedding Predictive Architecture) objective.
+
+The project priority is:
+
+1. **Train the JEPA model on real 3D/CAD data** so it learns useful latent structure for generating or completing 3D files.
+2. Keep deterministic CAD/CAE tooling as the verification and promotion path.
+3. Treat the LatticeZero desktop UI as a secondary control surface until the backend is solid.
 
 ## LatticeZero desktop
 
-`desktop/` contains the investor-grade Linux application: an Electron + React +
-Three.js engineering cockpit backed by a local Python JSON bridge into
-`cadflow`. The LLM-facing design intent remains advisory; geometry, solver
-results, verification, provenance, and flywheel promotion stay in deterministic
-Python tooling.
+`desktop/` contains the Electron + React + Three.js cockpit backed by a local
+Python JSON bridge into `cadflow`. It exists to surface training/provenance and
+deterministic CAD/CAE operations, but it is **not** the core product risk.
+The core product risk is the JEPA training path.
 
 The six theaters are:
 
@@ -56,7 +61,7 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 | `cadflow/flywheel.py` | Append-only JSONL history + verified ranking |
 | `cadflow/promotion.py` | Promote verified runs → curated JEPA shards |
 | `cadflow/pipeline.py` | End-to-end orchestration with geometry gate |
-| `cadflow/cli.py` | `python -m cadflow.cli run|promote|ingest|e2e|loop|autopilot|doctor` |
+| `cadflow/cli.py` | `python -m cadflow.cli run|promote|ingest|project|design-loop|cloud-plan|e2e|loop|autopilot|doctor` |
 | `cadflow/runtime.py` | Native solver binary/library resolution + env wiring |
 | `data/parsers.py` | STL/OBJ/STEP/VTK/NPZ parsers for shard prep |
 
@@ -64,6 +69,9 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 pytest tests/ -q
 python -m cadflow.cli doctor --json
 python -m cadflow.cli run --manifest job.json --mock-cad
+python -m cadflow.cli project --project-root /path/to/existing --goal "reduce stress in spacecraft bracket" --family space --material "Al 6061-T6" --out-dir artifacts/project_intake --json
+python -m cadflow.cli cloud-plan --manifest artifacts/project_intake/project_manifest.json --json
+python -m cadflow.cli design-loop --manifest artifacts/project_intake/project_manifest.json --out-dir artifacts/design_loop --repeat 3
 python -m cadflow.cli e2e --raw-dir /path/to/raw --out-dir data/curated --max-steps 1
 python -m cadflow.cli loop --raw-dir /path/to/raw --flywheel artifacts/flywheel.jsonl --out-dir artifacts/loop --repeat 0 --interval-seconds 300 --stop-file artifacts/loop.stop
 python -m cadflow.cli autopilot --raw-dir /path/to/raw --flywheel artifacts/flywheel.jsonl --out-dir artifacts/autopilot
@@ -75,22 +83,23 @@ Set `CADFLOW_SOLVER_ROOT`, `CADFLOW_SOLVER_BIN_DIRS`, and `CADFLOW_SOLVER_LIB_DI
 
 ### In scope (v1)
 
-- Point-cloud canonical representation with per-point simulation fields (pressure, temperature, stress)
+- Real-data JEPA pretraining on CAD / spacecraft / rocket geometry
+- Point-cloud canonical representation with per-point simulation fields
 - JEPA block masking on spatial regions (I-JEPA / V-JEPA style)
-- Context encoder + EMA target encoder + latent predictor (no point-level reconstruction loss)
+- Context encoder + EMA target encoder + latent predictor
 - Synthetic parametric data generator for smoke tests and mix-ratio experiments
-- Real-data shard pipeline (`prepare_data.py`) with `--dry-run`
+- Real-data shard pipeline (`data/ingest.py`, `data/prepare_data.py`)
 - Single-device training with AdamW, warmup + cosine LR, logging, checkpoints
 - Collapse detection (embedding std warning)
 - Mixed real/synthetic batches via `mix_ratio` config
-- Linear probe eval on frozen encoder (`eval/probe.py`)
+- Probe/eval on frozen encoder after training
 - Unit tests for masking logic and EMA updates
 
 ### Out of scope (explicit TODOs)
 
-- Distributed / multi-node training (marked TODO in `train.py`)
+- UI polish before backend training is stable
+- Distributed / multi-node training (still a later step)
 - Physically accurate synthetic physics
-- Full STL/VTK/STEP parsers (placeholder in `prepare_data.py`)
 - Voxel grids and mesh-based encoders (tradeoffs documented in `data/dataset.py`)
 - Production-scale datasets and hyperparameter sweeps
 

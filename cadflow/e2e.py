@@ -50,6 +50,7 @@ def run_end_to_end(
     limit: int | None = None,
     allow_synthetic_fallback: bool = False,
     config: str | Path = "configs/base.yaml",
+    family: str | None = None,
     data_source: str = "real",
     max_steps: int | None = 1,
     grad_accum_steps: int | None = None,
@@ -76,11 +77,15 @@ def run_end_to_end(
         str(train_py),
         "--config",
         str(config),
+    ]
+    if family is not None:
+        cmd.extend(["--family", family])
+    cmd.extend([
         "--data-source",
         data_source,
         "--set",
         f"data.data_dir={Path(out_dir)}",
-    ]
+    ])
     if max_steps is not None:
         cmd.extend(["--max-steps", str(max_steps)])
     if grad_accum_steps is not None:
