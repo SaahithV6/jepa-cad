@@ -14,3 +14,6 @@ desktop/dist/
 desktop/release/
 desktop/python-dist/
 *.tsbuildinfo
+
+# large external CAD downloads
+data/raw_downloads/

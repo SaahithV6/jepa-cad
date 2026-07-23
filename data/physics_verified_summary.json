@@ -1,0 +1,16 @@
+{
+  "fea_cases_with_frd": 1038,
+  "parts_linked": 965,
+  "parts_total": 2159,
+  "pipeline": "msh2-solid-only-calculix",
+  "fea_dir": "artifacts/fea_final",
+  "graph": "artifacts/jepa-train-bundle/graph.json",
+  "index": "artifacts/jepa-train-bundle/physics_verified_index.json",
+  "units": {
+    "mesh": "meters",
+    "youngs_modulus": "Pa",
+    "load": "N",
+    "reported_stress": "MPa",
+    "reported_displacement": "mm"
+  }
+}
