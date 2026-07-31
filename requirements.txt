@@ -7,3 +7,16 @@ scipy>=1.11.0
 shapely>=2.0.0
 cadquery>=2.8.0
 modal>=1.5.2
+rich
+aiohttp
+cbor2
+certifi
+click
+grpclib
+protobuf
+synchronicity
+toml
+types-certifi
+types-toml
+typing_extensions
+watchfiles

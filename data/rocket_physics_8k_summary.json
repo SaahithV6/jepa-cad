@@ -1,0 +1,12 @@
+{
+  "corpus": "/home/best/jepa-cad/data/openrocket_hardware_8k",
+  "entries_requested": 1400,
+  "fea_total": 4,
+  "fea_ok": 0,
+  "cfd_total": 0,
+  "cfd_ok": 0,
+  "fea_root": "/home/best/jepa-cad/artifacts/rocket_fea_8k",
+  "cfd_root": "/home/best/jepa-cad/artifacts/rocket_cfd_8k",
+  "graph": "/home/best/jepa-cad/artifacts/jepa-train-bundle/graph.json",
+  "pipeline": "rocket-stl-volume-msh2-calculix-simplefoam"
+}

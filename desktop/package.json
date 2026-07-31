@@ -63,8 +63,20 @@
         "to": "cadflow"
       },
       {
-        "from": "../data",
-        "to": "data"
+        "from": "../eval",
+        "to": "eval"
+      },
+      {
+        "from": "../data/openrocket_hardware_8k/materials_catalog.json",
+        "to": "materials/materials_catalog.json"
+      },
+      {
+        "from": "../data/physics_verified_summary.json",
+        "to": "data/physics_verified_summary.json"
+      },
+      {
+        "from": "../data/spaceflight_sources.json",
+        "to": "data/spaceflight_sources.json"
       },
       {
         "from": "../models",

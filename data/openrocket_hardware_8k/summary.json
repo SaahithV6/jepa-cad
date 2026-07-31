@@ -1,0 +1,33 @@
+{
+  "parts_total": 10500,
+  "family_counts": {
+    "nose_cone": 1687,
+    "fin": 1400,
+    "body_tube": 1000,
+    "tank": 1100,
+    "nozzle": 1100,
+    "transition": 560,
+    "engine_mount": 153,
+    "fairing": 1000,
+    "tps_tile": 1066,
+    "blanket": 350,
+    "solar_panel": 350,
+    "antenna": 198,
+    "ring_frame": 250,
+    "bulkhead": 115,
+    "strut": 171
+  },
+  "material_category_counts": {
+    "aluminum": 3488,
+    "composite": 3160,
+    "tps": 1721,
+    "titanium": 492,
+    "steel": 604,
+    "superalloy": 478,
+    "copper": 440,
+    "ceramic": 117
+  },
+  "materials_catalog": 39,
+  "updated_at": "2026-07-23T22:50:40.873493+00:00",
+  "note": "OpenRocket + TPS/spacecraft hardware with space materials for LatticeZero"
+}

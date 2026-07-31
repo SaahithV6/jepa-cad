@@ -8,6 +8,13 @@ data:
   num_workers: 0
   pin_memory: false
 
+synthetic:
+  seed: 42
+  family: spaceflight
+  num_primitives: 4
+  noise_std: 0.04
+  field_scale: 1.0
+
 masking:
   grid_size: [6, 6, 6]
   context_ratio: 0.55

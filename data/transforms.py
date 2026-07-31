@@ -153,4 +153,8 @@ def collate_masked_batch(
         out["max_stress"] = torch.stack([item["max_stress"] for item in batch])
     if "is_synthetic" in batch[0]:
         out["is_synthetic"] = torch.stack([item["is_synthetic"] for item in batch])
+    if "graph_metadata" in batch[0]:
+        out["graph_metadata"] = torch.stack([item["graph_metadata"] for item in batch])
+    if "family_code" in batch[0]:
+        out["family_code"] = torch.stack([item["family_code"] for item in batch])
     return out

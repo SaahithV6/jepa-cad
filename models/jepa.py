@@ -29,6 +29,7 @@ class JEPAModel(nn.Module):
         ema_decay: float = 0.996,
         loss_type: str = "smooth_l1",
         grid_size: tuple[int, int, int] = (4, 4, 4),
+        metadata_dim: int = 5,
     ):
         super().__init__()
         self.context_encoder = context_encoder
@@ -37,6 +38,8 @@ class JEPAModel(nn.Module):
         self.ema_decay = ema_decay
         self.loss_type = loss_type
         self.grid_size = grid_size
+        self.metadata_dim = metadata_dim
+        self.metadata_proj = nn.Linear(metadata_dim, predictor.embed_dim) if metadata_dim > 0 else None
 
         for p in self.target_encoder.parameters():
             p.requires_grad = False
@@ -56,6 +59,7 @@ class JEPAModel(nn.Module):
         context_mask: torch.Tensor,
         target_masks: torch.Tensor,
         target_block_ids: torch.Tensor,
+        graph_metadata: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         ctx_out = self.context_encoder(points, fields, mask=context_mask)
         ctx_tokens = ctx_out["token_embeddings"]
@@ -70,11 +74,16 @@ class JEPAModel(nn.Module):
             target_embeddings.append(pool_block_embeddings(tgt_tokens, target_masks[:, t]))
         target_embeddings = torch.stack(target_embeddings, dim=1)
 
+        conditioning = None
+        if graph_metadata is not None and self.metadata_proj is not None:
+            conditioning = self.metadata_proj(graph_metadata.float())
+
         predicted = self.predictor(
             ctx_tokens,
             context_mask,
             target_block_ids,
             self.grid_size,
+            conditioning=conditioning,
         )
 
         loss = self.compute_loss(predicted, target_embeddings)
@@ -99,6 +108,7 @@ class JEPAModel(nn.Module):
         target_encoder = PointCloudEncoder.from_config(cfg, num_fields)
         predictor = LatentPredictor.from_config(cfg)
         grid_size = tuple(cfg["masking"]["grid_size"])
+        metadata_dim = int(cfg["data"].get("graph_metadata_dim", 5))
         return cls(
             context_encoder=context_encoder,
             target_encoder=target_encoder,
@@ -106,4 +116,5 @@ class JEPAModel(nn.Module):
             ema_decay=cfg["model"]["ema_decay"],
             loss_type=cfg["model"]["loss_type"],
             grid_size=grid_size,
+            metadata_dim=metadata_dim,
         )

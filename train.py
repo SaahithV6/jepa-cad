@@ -132,8 +132,7 @@ def build_dataloader(cfg: dict[str, Any], data_source: str) -> DataLoader:
             real_ds, synth_ds, batch_size=batch_size, mix_ratio=float(data_cfg.get("mix_ratio", 0.7))
         )
 
-        def collate(idxs: list[int]) -> dict[str, torch.Tensor]:
-            batch = [mixed_ds[i] for i in idxs]
+        def collate(batch: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
             return collate_masked_batch(batch, cfg["masking"])
 
         return DataLoader(
@@ -251,6 +250,9 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
             context_mask = batch["context_mask"].to(device)
             target_masks = batch["target_masks"].to(device)
             target_block_ids = batch["target_block_ids"].to(device)
+            graph_metadata = batch.get("graph_metadata")
+            if graph_metadata is not None:
+                graph_metadata = graph_metadata.to(device)
 
             precision_context = (
                 torch.autocast(device_type=device.type, dtype=precision_dtype)
@@ -258,7 +260,7 @@ def train_loop(cfg: dict[str, Any], args: argparse.Namespace) -> None:
                 else contextlib.nullcontext()
             )
             with precision_context:
-                out = model(points, fields, context_mask, target_masks, target_block_ids)
+                out = model(points, fields, context_mask, target_masks, target_block_ids, graph_metadata=graph_metadata)
                 loss = out["loss"] / accum_steps
             scaler.scale(loss).backward()
             micro += 1
@@ -338,7 +340,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-source",
         type=str,
-        choices=["real", "synthetic", "mixed"],
+        choices=["real", "synthetic", "mixed", "graph"],
         default="synthetic",
         help="Training data source",
     )

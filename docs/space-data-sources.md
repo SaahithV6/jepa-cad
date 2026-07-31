@@ -2,7 +2,140 @@
 
 Curated public and reference sources for building a large-scale JEPA corpus for rocket / spacecraft geometry, launch-system taxonomy, propulsion internals, and related engineering priors.
 
+## Information modes
+
+Each source is now treated as one of these information modes so downstream ingestion can separate different kinds of evidence:
+
+- `cad-model` — actual geometry or CAD-like model assets, including STEP/STL/OBJ/interactive 3D models and parts libraries
+- `diagram-blueprint` — schematics, exploded views, drawings, and blueprints
+- `mesh-shape` — shape priors and non-CAD mesh corpora such as asteroid/comet shape models
+- `technical-report` — papers, reports, theses, and design studies
+- `database-catalog` — registries, datasets, archives, and catalog-style metadata sources
+- `toolkit` — geometry/export toolkits and software used to generate or manipulate geometry
+- `reference-only-geometry` — private marketplace or rights-constrained reference assets
+
+Rights and access status are tracked separately from the information mode.
+
+## High-signal numeric / simulation augmentations
+These sources are not geometry-first, but they are valuable because they provide structured physics, telemetry, or surrogate targets that can regularize the JEPA backbone without dragging in noisy marketplace geometry.
+
+- **ESA Anomaly Dataset** (`esa_anomaly_dataset`)
+  - URL: https://www.kaggle.com/datasets/sammahoney/esa-anomaly-dataset
+  - Use cases: satellite telemetry, anomaly labels, time-series diagnosis
+  - Notes: real satellite telemetry with curated anomaly annotations; high value for fault and context learning.
+- **ESA's Mars Express Operations Dataset** (`esa_mars_express_ops`)
+  - URL: https://www.kaggle.com/datasets/europeanspaceagency/mars-express-power-hackathon
+  - Use cases: operations telemetry, power profiles, mission context
+  - Notes: useful mission-operations telemetry for power/thermal context and anomaly priors.
+- **Spacecraft Anomaly Data** (`spacecraft_anomaly_data`)
+  - URL: https://www.kaggle.com/datasets/usaf091847/spacecraft-anomaly-data
+  - Use cases: spacecraft anomalies, orbit context, environment-linked failure patterns
+  - Notes: historic spacecraft anomaly catalog with orbit and environmental context.
+- **NASA C-MAPSS / turbofan failure benchmark** (`nasa_cmapss_turbofan`)
+  - URL: https://www.kaggle.com/datasets/lucague/nasa-turbofan-engine
+  - Use cases: multivariate time series, degradation, remaining useful life, anomaly detection
+  - Notes: synthetic but physically grounded degradation benchmark; useful for PHM-style priors.
+- **BLASTNet hydrogen combustion DNS** (`blastnet_premixed_h2_air_dns`)
+  - URL: https://www.kaggle.com/datasets/blastnet/premixed-flame-slot-burner-dns-h2air-phi05
+  - Use cases: combustion DNS, equivalence ratio, temperature fields, reaction-zone physics
+  - Notes: high-fidelity hydrogen/air combustion DNS; useful for flame-regime and thermal-chemistry priors.
+- **Stirred Reactor CFD ML-Dataset** (`blastnet_stirred_reactor_cfd`)
+  - URL: https://www.kaggle.com/datasets/novalabs/stirred-reactor-cfd-ml-dataset
+  - Use cases: CFD surrogate, geometry parameters, turbulence metrics, velocity magnitude
+  - Notes: parametric CFD dataset with explicit geometry/operating features and simulation outputs.
+- **Heat Exchanger Dataset: Parametric Study** (`heat_exchanger_parametric_study`)
+  - URL: https://www.kaggle.com/datasets/kuriangeorge/heat-exchanger-dataset-parametric-study
+  - Use cases: heat transfer, parametric study, thermal performance
+  - Notes: useful for learning thermal response from parameterized geometry and operating conditions.
+- **Critical Heat Flux Dataset** (`critical_heat_flux_dataset`)
+  - URL: https://www.kaggle.com/datasets/kaustubhdhote/critical-heat-flux-dataset
+  - Use cases: boiling heat transfer, critical heat flux, thermal limits
+  - Notes: useful thermal-limit dataset for heat-flux and boiling-regime conditioning.
+- **FEM simulations** (`fem_simulations`)
+  - URL: https://www.kaggle.com/datasets/daalgi/fem-simulations
+  - Use cases: finite element simulations, regression surrogate, structural response
+  - Notes: noise-free parametric FEM data suitable for structural surrogate learning.
+- **UIUC Propeller Database** (`uiuc_propeller_database`)
+  - URL: https://www.kaggle.com/datasets/heitornunes/uiuc-propeller-database
+  - Use cases: propeller geometry, wind tunnel measurements, thrust, efficiency
+  - Notes: experimental propeller geometry/performance database; useful aerodynamic prior.
+- **Crystal Thermal Properties Dataset** (`crystal_thermal_properties`)
+  - URL: https://www.kaggle.com/datasets/ziya07/crystal-thermal-properties-dataset
+  - Use cases: thermal conductivity, specific heat, expansion coefficient, density
+  - Notes: materials thermal-property table useful for material-selection priors.
+- **Active Thermography of Simulated Plates** (`active_thermography_simulated_plates`)
+  - URL: https://www.kaggle.com/datasets/parhamnooralishahi/active-thermography-of-simulated-plates
+  - Use cases: thermal imaging, heating/cooling transients, defect simulation
+  - Notes: COMSOL-generated plate heating/cooling dataset useful for thermal transient priors.
+
 ## Public / institutional space geometry sources
+Recent additions from the current source sweep worth prioritizing for ingestion:
+- **NASA Cassini 3D Model** (`nasa_cassini_3d_model`) — Cassini orbiter geometry with modern model downloads.
+- **NASA Parker Solar Probe 3D Model** (`nasa_parker_solar_probe_3d_model`) — thermal-protection-heavy spacecraft reference.
+- **NASA Europa Clipper Scale Model** (`nasa_europa_clipper_scale_model`) — printable subsystem-rich model with labeled axes.
+- **NASA TESS 3D Model** (`nasa_tess_3d_model`) — compact science-spacecraft geometry with antennas and solar arrays.
+- **ESA Euclid payload module** (`esa_euclid_payload_module`) — CAD-style payload module with VIS/NISP instruments.
+- **ESA Cassini-Huygens 3D model** (`esa_cassini_huygens_3d_model`) — interactive deconstruction-friendly spacecraft model.
+- **JAXA M-V configuration / design** (`jaxa_m_v_configuration`, `jaxa_m_v_design_guidelines`) — high-signal launch-vehicle stage and structure references.
+- **JAXA numerical simulation technology** (`jaxa_jedi_numerical_simulation`) — simulation-stack context for rockets and spacecraft.
+- **ISRO LVM3 / PSLV / SSLV brochures** (`isro_lvm3_m6_bluebird`, `isro_pslv_c61_eos09`, `isro_sslv_d3_eos08`) — stage layouts, mission profiles, and dimensioned launcher data.
+
+- **Chang’E-7 mission and spacecraft design** (`china_change7_mission`)
+  - URL: https://journal.hep.com.cn/jdse/EN/PDF/10.15982/j.issn.2096-9287.2023.20230119
+  - Use cases: lunar mission, orbiter, lander, rover, hopper
+  - Notes: Lunar mission architecture and subsystem breakdown for deep-space spacecraft planning.
+- **General scheme and key technology of Long March 5 launch vehicle booster** (`china_lm5_booster_tech`)
+  - URL: http://jdse.bit.edu.cn/fileSKTCXB/journal/article/sktcxb/2021/4/PDF/sktcxb-8-4-huangshuai.pdf
+  - Use cases: launch vehicle booster, cryogenic tank, heating pressurization, interstage, fairing
+  - Notes: Rich booster-system design paper with structural, thermal, tanking, and pressurization details.
+- **General technical review of Long March 5 LOX/kerosene engine** (`china_lm5_yf100_review`)
+  - URL: http://jdse.bit.edu.cn/sktcxb/cn/article/pdf/preview/10.15982/j.issn.2096-9287.2021.20210003.pdf
+  - Use cases: long march 5, YF-100, LOX kerosene, boosters, staged combustion
+  - Notes: High-signal Chinese launch-vehicle engine review with detailed booster, engine, and control discussion.
+- **Model-based development of manned spacecraft** (`china_manned_lunar_mbes`)
+  - URL: https://hkxb.buaa.edu.cn/EN/10.7527/S1000-6893.2020.23967
+  - Use cases: manned spacecraft, MBSE, design process, verification, digital integration
+  - Notes: Useful for Chinese spacecraft modeling workflow and verification concepts.
+- **Digital models in spacecraft systems engineering** (`china_space_station_mbse`)
+  - URL: https://www.spacejournal.cn/htqgc/cn/article/pdf/preview/10.3969/j.issn.1673-8748.2025.06.008.pdf
+  - Use cases: space station, MBSE, digital twin, systems engineering, model-based definition
+  - Notes: Shows Chinese spacecraft systems engineering model stack and digital-thread practice.
+- **CALLISTO: on the design and development of a reusable first stage demonstrator** (`dlr_callisto_reusable`)
+  - URL: https://elib.dlr.de/223187/1/s12567-026-00710-6.pdf
+  - Use cases: reusable first stage, VTVL, MRO, landing gear, aerodynamics
+  - Notes: Detailed reusable-stage demonstrator description including operations and design drivers.
+- **CALLISTO reusable vehicle system design** (`dlr_callisto_system_design`)
+  - URL: https://elib.dlr.de/132889/1/2019-g-02.pdf
+  - Use cases: reusable stage, VTVL, LOX LH2, flight sequence, system design
+  - Notes: Joint European/Japanese reusable-stage demonstrator with explicit system design and mission profile.
+- **Design of an Oxygen Turbopump for a Dual Expander Cycle Rocket Engine** (`dtic_afit_oxygen_turbopump`)
+  - URL: https://scholar.afit.edu/cgi/viewcontent.cgi?article=3692&context=etd
+  - Use cases: oxygen turbopump, dual expander, upper stage, reusability
+  - Notes: Detailed pump design study with useful component sizing and trade-off discussion.
+- **Computational design of upperstage chamber aerospike and cooling jacket for dual-expander rocket engine** (`dtic_dean_chamber_cooling`)
+  - URL: https://apps.dtic.mil/sti/html/tr/ADA483075/index.html
+  - Use cases: aerospike, cooling jacket, upper stage, NPSS, thermal wall
+  - Notes: Excellent propulsion/thermal aerospike chamber design report with explicit wall temperatures.
+- **Optimized Dual Expander Aerospike Rocket** (`dtic_dual_expander_aerospike`)
+  - URL: https://apps.dtic.mil/sti/tr/pdf/ADA539802.pdf
+  - Use cases: aerospike, dual expander, turbopump, upper stage, reusability
+  - Notes: USAF thesis with deep engine sizing, turbopump design, and aerospike optimization.
+- **HOT EAGLE reusable launch vehicle upper stage study** (`dtic_hot_eagle`)
+  - URL: https://apps.dtic.mil/sti/pdfs/AD1005980.pdf
+  - Use cases: reusable upper stage, launch experiment, propulsion, structure, avionics
+  - Notes: Broad reusable launch vehicle study useful for upper-stage architecture priors.
+- **Space Nuclear Thermal Propulsion Program Final Report** (`dtic_sntp_final`)
+  - URL: https://apps.dtic.mil/sti/pdfs/ADA305996.pdf
+  - Use cases: nuclear thermal propulsion, space propulsion, archive, upper stage
+  - Notes: Use for space propulsion taxonomy and historical advanced-propulsion context.
+- **Design, Development and Flight Test of the Super Loki Dart Meteorological Rocket Systems** (`dtic_super_loki`)
+  - URL: https://apps.dtic.mil/sti/tr/pdf/AD0750796.pdf
+  - Use cases: sounding rocket, meteorological rocket, rocket motor, flight test
+  - Notes: Historically valuable small rocket system report with flight-test and configuration detail.
+- **Transpiration Cooled Throat for Hydrocarbon Rocket Engines** (`dtic_transpiration_throat`)
+  - URL: https://apps.dtic.mil/sti/tr/pdf/ADA244255.pdf
+  - Use cases: transpiration cooling, throat, RP-1, methane, life enhancement
+  - Notes: High-signal nozzle cooling report with clear geometry and test/analysis data.
 - **ESA CHEOPS spacecraft schematic** (`esa_cheops_schematic`)
   - URL: https://sci.esa.int/web/cheops/-/58644-cheops-spacecraft-schematic
   - Use cases: spacecraft schematic, component layout, module geometry
@@ -23,6 +156,10 @@ Curated public and reference sources for building a large-scale JEPA corpus for 
   - URL: https://www.cosmos.esa.int/web/esac-csa/scifleet
   - Use cases: spacecraft 3D models, texture-rich geometry, print models
   - Notes: ESA download portal includes JUICE print models and other science satellites.
+- **ESA technical drawing of the proposed L3S design** (`esa_l3s_design`)
+  - URL: https://www.esa.int/ESA_Multimedia/Images/2009/11/Technical_drawing_of_the_proposed_L3S_design
+  - Use cases: technical drawing, launcher architecture, Ariane precursor, European launcher
+  - Notes: Early European launcher architecture drawing useful for historical taxonomy and shape priors.
 - **ESA LISA Pathfinder science module exploded view** (`esa_lisa_pathfinder_exploded`)
   - URL: https://sci.esa.int/web/lisa-pathfinder/-/56427-an-exploded-view-of-lisa-pathfinders-science-module
   - Use cases: exploded view, module assembly, solar array
@@ -80,6 +217,26 @@ Curated public and reference sources for building a large-scale JEPA corpus for 
   - URL: https://grabcad.com/library/tag/spacecraft
   - Use cases: spacecraft CAD, community geometry, reference models
   - Notes: Community spacecraft CAD library; license hygiene required but useful for breadth.
+- **GSLV-F15 / NVS-02 mission brochure** (`isro_gslv_f15_nvs02`)
+  - URL: https://www.isro.gov.in/media_isro/pdf/GSLVF15/GSLV-F15_NVS-02_EngBrochure240125.pdf
+  - Use cases: cryogenic stage, payload fairing, mission sequence, navic, launcher stages
+  - Notes: Contains launch vehicle stage stack and mission profile details.
+- **GSLV MkIII-D1 / GSAT-19 mission brochure** (`isro_gslvmk3_d1`)
+  - URL: https://www.isro.gov.in/media_isro/pdf/Publications/Brochures/GSLVMarkIIID1.pdf
+  - Use cases: heavy-lift launcher, solid boosters, cryogenic stage, spacecraft bus
+  - Notes: Contains stage characteristics, mission sequence, and launcher performance data.
+- **ISRO launch vehicles overview (pagewise)** (`isro_launch_vehicles_pagewise`)
+  - URL: https://www.isro.gov.in/NSPD2024/assets/pdf/Launch%20Vehicles-Pagewise.pdf
+  - Use cases: launch vehicles, SLV, PSLV, GSLV, LVM3, RLV-TD
+  - Notes: Broad Indian launch-vehicle taxonomy and milestone references across the family.
+- **LVM3-M3 / OneWeb India-2 mission brochure** (`isro_lvm3_m3`)
+  - URL: https://www.isro.gov.in/media_isro/pdf/Missions/LVM3/LVM3_M3_OneWeb_India2_Brochure_V9.pdf
+  - Use cases: heavy-lift launcher, stage configuration, orbit insertion, commercial missions
+  - Notes: Good family-level launcher reference with stage dimensions and mission sequence.
+- **ISRO PSLV project brochure** (`isro_pslv_project`)
+  - URL: https://www.isro.gov.in/media_isro/pdf/Missions/PSLVC25/publication_PSLVC25.pdf
+  - Use cases: PSLV, vehicle configuration, solid boosters, liquid stages, fairing separation
+  - Notes: Mission brochure with vehicle configuration, sequence, and stage sizing for a major launcher family.
 - **JAXA Digital Archives 3D models** (`jaxa_digital_archive`)
   - URL: https://jda.jaxa.jp/
   - Use cases: rocket CG, launch vehicle cutaways, mission visuals
@@ -253,6 +410,10 @@ Curated public and reference sources for building a large-scale JEPA corpus for 
   - URL: https://github.com/ppak10/RocketSmith
   - Use cases: rocket parts, parametric STEP files, launch hardware taxonomy
   - Notes: Open rocket-parts database with parametric STEP exports and viewer tooling.
+- **Turbopumps for gas generator and staged combustion cycle rocket engines** (`russia_turbopump_cycle_study`)
+  - URL: https://www.lpre.de/resources/articles/AIAA-2005-3946.pdf
+  - Use cases: turbopump, gas generator, staged combustion, LOX kerosene, Russian engines
+  - Notes: Useful Russian engine-cycle comparison and turbopump design discussion.
 - **Space datasets metadata pipeline** (`space_datasets_metadata`)
   - URL: https://github.com/juliensimon/space-datasets
   - Use cases: spacecraft metadata, missions, manufacturers, orbits
@@ -381,8 +542,8 @@ Curated public and reference sources for building a large-scale JEPA corpus for 
   - Notes: UK open CAD dataset for deployable mirror petals; strong for lattice/lightweight structures.
 
 ## Practical intake priorities
-- First pass: NASA, ESA, JAXA public diagrams / drawings / engine reports.
-- Second pass: propulsion patents, turbopump, injector, tank-pressurization, nozzle and chamber sources.
+- First pass: NASA, ESA, JAXA, ISRO, DLR, CNES, CNSA, and other public institutional diagrams / reports / engine papers.
+- Second pass: propulsion patents, turbopump, injector, tank-pressurization, nozzle and chamber sources from global patent systems.
 - Third pass: launch-vehicle metadata, spacecraft databases, OpenRocket, step.parts, OSHRockets, RocketSmith, TraceParts, GrabCAD.
 - Fourth pass: RFZ and LREKit for propulsion / thermal / reentry priors and synthetic expansion.
 - Optional reference-only pass: private marketplace models for morphology and taxonomy, with license review.

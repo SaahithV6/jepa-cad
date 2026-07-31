@@ -375,7 +375,13 @@ class CadQueryBackend:
         cadquery = cq
         assert cadquery is not None
         radius = _require_positive("radius", radius)
-        return cadquery.Workplane("XY").newObject([self._solid(shape)]).edges().fillet(radius)
+        solid = self._solid(shape)
+        for candidate in (radius, radius * 0.5, radius * 0.25):
+            try:
+                return cadquery.Workplane("XY").newObject([solid]).edges().fillet(candidate)
+            except Exception:
+                continue
+        return cadquery.Workplane("XY").newObject([solid])
 
     def volume(self, shape: Any) -> float:
         return float(self._solid(shape).Volume())

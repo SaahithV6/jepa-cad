@@ -41,9 +41,26 @@ def load_yaml_with_family(
     cfg = load_yaml(path)
     if family is None:
         return cfg
+    
     base_path = Path(path)
-    root = Path(family_dir) if family_dir is not None else base_path.resolve().parent / "families"
+    
+    # Determine the family directory
+    if family_dir is not None:
+        root = Path(family_dir)
+    else:
+        parent = base_path.resolve().parent
+        # If the config is already in a 'families' dir, use that; otherwise add it
+        if parent.name == "families":
+            root = parent
+        else:
+            root = parent / "families"
+    
     overlay_path = root / f"{family}.yaml"
+    
+    # If the config IS the family config, don't merge with itself
+    if base_path.resolve() == overlay_path.resolve():
+        return cfg
+    
     if not overlay_path.exists():
         raise ConfigError(f"Unknown config family: {family} (missing {overlay_path})")
     return deep_merge_dicts(cfg, load_yaml(overlay_path))

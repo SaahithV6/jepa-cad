@@ -61,7 +61,7 @@ manifest → CadQuery/mock geometry → STEP/STL export → solver wrap/probe
 | `cadflow/flywheel.py` | Append-only JSONL history + verified ranking |
 | `cadflow/promotion.py` | Promote verified runs → curated JEPA shards |
 | `cadflow/pipeline.py` | End-to-end orchestration with geometry gate |
-| `cadflow/cli.py` | `python -m cadflow.cli run|promote|ingest|project|design-loop|cloud-plan|e2e|loop|autopilot|doctor` |
+| `cadflow/cli.py` | `python -m cadflow.cli run|promote|ingest|project|design-loop|cloud-plan|space-eval|preflight|e2e|loop|autopilot|doctor` |
 | `cadflow/runtime.py` | Native solver binary/library resolution + env wiring |
 | `data/parsers.py` | STL/OBJ/STEP/VTK/NPZ parsers for shard prep |
 
@@ -71,6 +71,8 @@ python -m cadflow.cli doctor --json
 python -m cadflow.cli run --manifest job.json --mock-cad
 python -m cadflow.cli project --project-root /path/to/existing --goal "reduce stress in spacecraft bracket" --family space --material "Al 6061-T6" --out-dir artifacts/project_intake --json
 python -m cadflow.cli cloud-plan --manifest artifacts/project_intake/project_manifest.json --json
+python -m cadflow.cli space-eval --candidate checkpoints/latest.pt --baseline checkpoints/baseline.pt --family space --json
+python -m cadflow.cli space-eval --candidate checkpoints/latest.pt --data-dir data/processed/space --json
 python -m cadflow.cli design-loop --manifest artifacts/project_intake/project_manifest.json --out-dir artifacts/design_loop --repeat 3
 python -m cadflow.cli e2e --raw-dir /path/to/raw --out-dir data/curated --max-steps 1
 python -m cadflow.cli loop --raw-dir /path/to/raw --flywheel artifacts/flywheel.jsonl --out-dir artifacts/loop --repeat 0 --interval-seconds 300 --stop-file artifacts/loop.stop

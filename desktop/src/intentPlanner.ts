@@ -103,9 +103,18 @@ function housingPlan(intent: string): IntentPlan {
       ],
     },
     solver: "fea",
-    material: "PA12-GF",
+    material: "PEEK",
     summary: "Housing intent converted into a sculptable shell-like solid",
   };
+}
+
+/** Atlas latent families → deterministic seed plans (never emit free meshes). */
+export function planFromAtlasFamily(family: string): IntentPlan {
+  const key = family.toLowerCase();
+  if (/(nozzle|impeller)/.test(key)) return nozzlePlan(`${family} 250 bar`);
+  if (/(bracket|linkage|mount)/.test(key)) return bracketPlan(`${family} reinforced mount`);
+  if (/(fairing|shell|manifold|housing)/.test(key)) return housingPlan(`${family} shell enclosure`);
+  return planGeometryFromIntent(`${family} lightweight structural part`) ?? bracketPlan("structural bracket");
 }
 
 export function planGeometryFromIntent(intent: string, baseGeometry?: GeometrySpec): IntentPlan | null {

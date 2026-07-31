@@ -13,7 +13,7 @@ from typing import Any, Sequence
 
 from data.ingest import IngestionResult, ingest_sources
 from eval.probe import ProbeResult, load_config, probe_checkpoint
-from utils.config import apply_overrides
+from utils.config import apply_overrides, load_yaml_with_family
 
 from .flywheel import DataFlywheel
 from .promotion import PromotionResult, promote_verified_to_dataset
@@ -197,7 +197,7 @@ def run_flywheel_loop(
         "--set",
         f"logging.log_dir={runs_dir}",
         "--set",
-        f"logging.experiment_name={cycle_id}",
+        f"logging.experiment_name={json.dumps(cycle_id)}",
     ])
     if max_steps is not None:
         cmd.extend(["--max-steps", str(max_steps)])
@@ -222,7 +222,10 @@ def run_flywheel_loop(
     baseline_path = _best_checkpoint(registry_dir, baseline_checkpoint)
 
     if proc.returncode == 0 and checkpoint_path.exists():
-        cfg = apply_overrides(load_config(config), list(extra_overrides or ()))
+        cfg = load_config(config)
+        if family is not None:
+            cfg = load_yaml_with_family(config, family=family)
+        cfg = apply_overrides(cfg, list(extra_overrides or ()))
         cfg["data"]["data_dir"] = str(dataset_dir)
         candidate_probe = probe_checkpoint(cfg, checkpoint_path, probe_data_source, device=_probe_device(), verbose=False)
         if baseline_path is not None:

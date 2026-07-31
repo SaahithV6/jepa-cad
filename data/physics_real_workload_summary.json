@@ -1,0 +1,18 @@
+{
+  "legacy_parts": 2159,
+  "legacy_family_fea": 2031,
+  "legacy_has_cfd": 1458,
+  "legacy_bodyfit_external": 210,
+  "legacy_internal_duct": 1248,
+  "internal_by_recipe": {
+    "component_duct": 919,
+    "chamber_internal": 150,
+    "valve_feed": 118,
+    "nozzle_compressible": 27,
+    "injector_orifice": 18,
+    "tank_pressure_flow": 12,
+    "igniter_internal": 4
+  },
+  "channel_primary": 0,
+  "note": "post component_duct batch + ingest_only"
+}

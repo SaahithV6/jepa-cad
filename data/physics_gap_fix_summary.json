@@ -1,0 +1,171 @@
+{
+  "demote_synthetic": {
+    "demoted_synthetic_fea": 0
+  },
+  "gap_total": 171,
+  "gap_with_stl": 75,
+  "fea_ok": 43,
+  "fea_linked": 43,
+  "promote": {
+    "promoted": 2031,
+    "rejected_quality": 0,
+    "skipped_rocket": 10500
+  },
+  "cfd_ok": 0,
+  "fea_failures": [
+    {
+      "part_id": "part:cc9df089bc88dcf1",
+      "error": "mesh:no_tets"
+    },
+    {
+      "part_id": "part:52267998b5d9c5df",
+      "error": "mesh:no_tets"
+    },
+    {
+      "part_id": "part:474e813bdc6238be",
+      "error": "mesh:gmsh:Exception:PLC Error:  A segment and a facet intersect at point"
+    },
+    {
+      "part_id": "part:a40e9796d92dd1c0",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:24a99cd7c5b94c00",
+      "error": "mesh:mesh_timeout"
+    },
+    {
+      "part_id": "part:5726daa85912ea34",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:954456fa4c991326",
+      "error": "mesh:mesh_no_result"
+    },
+    {
+      "part_id": "part:f2e7ad5595aaa334",
+      "error": "mesh:mesh_timeout"
+    },
+    {
+      "part_id": "part:0399d52c3cfba046",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:3fdf4be42df59f36",
+      "error": "stl_too_large"
+    },
+    {
+      "part_id": "part:b7904a7a382ef132",
+      "error": "mesh:mesh_timeout"
+    },
+    {
+      "part_id": "part:84b9cbd865137797",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:b86d7325e8b6f16e",
+      "error": "stl_too_large"
+    },
+    {
+      "part_id": "part:505bd9b08541bd40",
+      "error": "stl_too_large"
+    },
+    {
+      "part_id": "part:5c3b0757ab088f97",
+      "error": "stl_too_large"
+    },
+    {
+      "part_id": "part:39e6f2f9deaeb3aa",
+      "error": "stl_too_large"
+    },
+    {
+      "part_id": "part:a664ed319445f960",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 159 surface 159"
+    },
+    {
+      "part_id": "part:8de472afe63382ab",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 159 surface 159"
+    },
+    {
+      "part_id": "part:47108ed168a18a39",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:d101372cf1b1a2a9",
+      "error": "mesh:gmsh:Exception:PLC Error:  A segment and a facet intersect at point"
+    },
+    {
+      "part_id": "part:f33c212ac0f3fa4f",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 6 surface 35"
+    },
+    {
+      "part_id": "part:c5599b64bebb6779",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 41 surface 41"
+    },
+    {
+      "part_id": "part:ca34d332e1faf983",
+      "error": "mesh:gmsh:Exception:PLC Error:  A segment and a facet intersect at point"
+    },
+    {
+      "part_id": "part:894d1cea8f2e33d4",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 41 surface 41"
+    },
+    {
+      "part_id": "part:866858cc8e316649",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:ab38d70a2221d23c",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 81 surface 116"
+    },
+    {
+      "part_id": "part:675762fa000ed69d",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:3b535ccfa15c87fd",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:957e83b8cc1c9b19",
+      "error": "mesh:gmsh:Exception:Wrong topology of boundary mesh for parametrization"
+    },
+    {
+      "part_id": "part:52339b71e45924f8",
+      "error": "mesh:gmsh:Exception:Invalid boundary mesh (overlapping facets) on surface 68 surface 71"
+    }
+  ],
+  "cfd_failures": [
+    {
+      "part_id": "part:d71aeb46e374e98e",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:8ec733afca374d18",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:35b7314d4138563e",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:448513a248182de9",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:4bdd737f85fe012e",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:3b59c24fdd2a58ab",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:140ed82293c82653",
+      "error": "missing_stl_or_case_id"
+    },
+    {
+      "part_id": "part:d514f721d850098f",
+      "error": "missing_stl_or_case_id"
+    }
+  ]
+}

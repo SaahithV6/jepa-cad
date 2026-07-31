@@ -51,6 +51,7 @@ class LatentPredictor(nn.Module):
         context_mask: torch.Tensor,
         target_block_ids: torch.Tensor,
         grid_size: tuple[int, int, int],
+        conditioning: torch.Tensor | None = None,
     ) -> torch.Tensor:
         batch_size = context_tokens.shape[0]
         if target_block_ids.dim() == 1:
@@ -61,11 +62,19 @@ class LatentPredictor(nn.Module):
         pos_emb = self.block_pos_emb(target_block_ids.clamp_min(0))
 
         context_summary = self._context_summary(context_tokens, context_mask)
+        if conditioning is not None:
+            context_summary = context_summary + conditioning
         queries = self.query_proj(context_summary.unsqueeze(1) + pos_emb)
 
         x = torch.cat([context_tokens, queries], dim=1)
-        mask = torch.cat([context_mask, torch.ones(batch_size, num_targets, dtype=torch.bool, device=x.device)], dim=1)
-        key_padding_mask = ~mask
+        # Convert context_mask to (batch, seq_len) if needed
+        if context_mask.ndim == 1:
+            context_mask_2d = context_mask.unsqueeze(1).expand(-1, context_tokens.shape[1])
+        else:
+            context_mask_2d = context_mask
+        target_mask_2d = torch.ones(batch_size, num_targets, dtype=torch.bool, device=x.device)
+        mask_2d = torch.cat([context_mask_2d, target_mask_2d], dim=1)
+        key_padding_mask = ~mask_2d
 
         for block in self.blocks:
             if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
@@ -77,8 +86,14 @@ class LatentPredictor(nn.Module):
         return predicted
 
     def _context_summary(self, tokens: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        weights = mask.unsqueeze(-1).float()
-        denom = mask.sum(dim=1, keepdim=True).clamp_min(1).float()
+        """mask can be (batch,) or (batch, seq_len); tokens is (batch, seq_len, dim)."""
+        # Expand mask to (batch, seq_len) if needed
+        if mask.ndim == 1:
+            mask_2d = mask.unsqueeze(1).expand(-1, tokens.shape[1])
+        else:
+            mask_2d = mask
+        weights = mask_2d.unsqueeze(-1).float()
+        denom = mask_2d.sum(dim=1, keepdim=True).clamp_min(1).float()
         return (tokens * weights).sum(dim=1) / denom
 
     @classmethod

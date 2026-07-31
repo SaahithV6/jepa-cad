@@ -1,0 +1,7 @@
+{
+  "pipeline": "snappyHexMesh_external_simpleFoam",
+  "total": 0,
+  "ok": 0,
+  "cfd_root": "/home/best/jepa-cad/artifacts/rocket_cfd_bodyfit",
+  "failures": []
+}

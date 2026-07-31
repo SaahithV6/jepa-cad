@@ -10,14 +10,11 @@ import {
   CircleDot,
   Cpu,
   Database,
-  Eye,
-  EyeOff,
   FileCode2,
   Gauge,
   GitBranch,
   Hexagon,
   Layers3,
-  Menu,
   Orbit,
   PanelRightClose,
   Play,
@@ -35,9 +32,9 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { GeometryViewport } from "./GeometryViewport";
-import { planGeometryFromIntent } from "./intentPlanner";
-import { bridgeRequest, useStudio } from "./store";
-import type { BootstrapData, DoctorProbe, GeometrySpec, PipelineResult, Theater, Verdict } from "./types";
+import { planFromAtlasFamily, planGeometryFromIntent } from "./intentPlanner";
+import { bridgeRequest, CATALOG_MATERIALS, geometryDefaultsForKind, useStudio } from "./store";
+import type { BootstrapData, DoctorProbe, GeometrySpec, MaterialEvalSuite, PipelineResult, SpaceMaterialProps, Theater, Verdict } from "./types";
 
 const theaters: Array<{ id: Theater; label: string; caption: string; icon: typeof Box; key: string }> = [
   { id: "forge", label: "Forge", caption: "Geometry studio", icon: Box, key: "1" },
@@ -45,13 +42,25 @@ const theaters: Array<{ id: Theater; label: string; caption: string; icon: typeo
   { id: "verify", label: "Proof", caption: "Accountability", icon: ShieldCheck, key: "3" },
   { id: "atlas", label: "Atlas", caption: "JEPA latent space", icon: Orbit, key: "4" },
   { id: "autopilot", label: "Autopilot", caption: "Recursive loop", icon: BrainCircuit, key: "5" },
-  { id: "doctor", label: "Systems", caption: "Environment", icon: Cpu, key: "6" },
+  { id: "materials", label: "Materials", caption: "Props + evals", icon: Layers3, key: "6" },
+  { id: "doctor", label: "Systems", caption: "Environment", icon: Cpu, key: "7" },
 ];
 
-const residualData = Array.from({ length: 42 }, (_, index) => ({
+const residualFallback = Array.from({ length: 42 }, (_, index) => ({
   iteration: index,
   residual: Math.max(0.00008, 0.7 * Math.exp(-index / 5.8) + Math.sin(index * 0.8) * 0.012),
 }));
+
+function residualSeries(result: PipelineResult | null, running: boolean) {
+  if (!result?.solver_result) return residualFallback;
+  const finalResidual = Number(result.solver_result.residual ?? result.metrics.residual ?? 1e-4);
+  const iterations = Math.max(8, Math.min(80, Number(result.solver_result.iterations ?? result.metrics.iterations ?? 36)));
+  return Array.from({ length: iterations }, (_, index) => {
+    const t = index / Math.max(iterations - 1, 1);
+    const residual = Math.max(finalResidual, finalResidual * 800 * Math.exp(-t * 5.4) + (running ? Math.sin(index) * finalResidual * 0.4 : 0));
+    return { iteration: index, residual };
+  });
+}
 
 function useKeyboardTheaters() {
   const setTheater = useStudio((s) => s.setTheater);
@@ -79,6 +88,7 @@ function App() {
     setBootstrap,
     geometry,
     setGeometry,
+    replaceGeometry,
     solver,
     setSolver,
     material,
@@ -91,11 +101,14 @@ function App() {
     applyEvent,
     completeRun,
     failRun,
+    resetStudio,
     showGhosts,
     toggleGhosts,
     fieldLens,
     toggleFieldLens,
     momentum,
+    intentSummary,
+    setIntentSummary,
   } = useStudio();
   const [rightRail, setRightRail] = useState(true);
   const [intent, setIntent] = useState("Lightweight structural bracket with softened load paths");
@@ -109,10 +122,14 @@ function App() {
   }, [applyEvent, setBootstrap]);
 
   const run = async () => {
+    if (geometry.kind === "extrude" && (!geometry.profile || geometry.profile.length < 3)) {
+      failRun("Extrude solids need a profile — Generate geometry from nozzle/rocket intent first");
+      return;
+    }
     beginRun();
     try {
       const payload = await bridgeRequest<PipelineResult>("run_pipeline", {
-        name: intent,
+        name: intent.split("\n")[0].slice(0, 80) || "LatticeZero run",
         geometry,
         solver,
         material,
@@ -130,10 +147,16 @@ function App() {
   const applyIntent = () => {
     const preset = buildIntentGeometry(intent);
     if (!preset) return;
-    setGeometry(preset.geometry);
+    replaceGeometry(preset.geometry);
     setSolver(preset.solver);
     setMaterial(preset.material);
-    setIntent((current) => `${current}\n\n${preset.summary}`);
+    setIntentSummary(preset.summary);
+  };
+
+  const handleReset = () => {
+    resetStudio();
+    setIntent("Lightweight structural bracket with softened load paths");
+    setTheater("forge");
   };
 
   const verdict: Verdict = running ? "warn" : result ? (result.ok ? "pass" : "fail") : "idle";
@@ -169,7 +192,7 @@ function App() {
           })}
         </nav>
         <Momentum momentum={momentum} />
-        <button className="nav-icon"><Settings2 size={18} /></button>
+        <button className="nav-icon" title="Systems" onClick={() => setTheater("doctor")}><Settings2 size={18} /></button>
       </aside>
 
       <main className="workspace">
@@ -177,6 +200,7 @@ function App() {
           theater={theater}
           rightRail={rightRail}
           onToggleRail={() => setRightRail((value) => !value)}
+          onReset={handleReset}
           result={result}
         />
         <AnimatePresence mode="wait">
@@ -192,17 +216,18 @@ function App() {
               <ForgeTheater
                 geometry={geometry}
                 setGeometry={setGeometry}
+                replaceGeometry={replaceGeometry}
                 ghosts={ghosts}
                 showGhosts={showGhosts}
                 toggleGhosts={toggleGhosts}
                 fieldLens={fieldLens}
                 toggleFieldLens={toggleFieldLens}
                 verdict={verdict}
-
                 running={running}
                 intent={intent}
                 setIntent={setIntent}
                 applyIntent={applyIntent}
+                intentSummary={intentSummary}
                 material={material}
                 setMaterial={setMaterial}
               />
@@ -211,8 +236,22 @@ function App() {
               <SolveTheater geometry={geometry} ghosts={ghosts} verdict={verdict} running={running} solver={solver} setSolver={setSolver} result={result} />
             )}
             {theater === "verify" && <VerifyTheater result={result} bootstrap={bootstrap} />}
-            {theater === "atlas" && <AtlasTheater modelVersion={bootstrap?.stats.modelVersion ?? "JEPA α.1"} />}
+            {theater === "atlas" && (
+              <AtlasTheater
+                modelVersion={bootstrap?.stats.modelVersion ?? "JEPA α.1"}
+                onSeed={(family) => {
+                  const plan = planFromAtlasFamily(family);
+                  replaceGeometry(plan.geometry);
+                  setSolver(plan.solver);
+                  setMaterial(plan.material);
+                  setIntent(plan.summary);
+                  setIntentSummary(`Atlas seed · ${family}: ${plan.summary}`);
+                  setTheater("forge");
+                }}
+              />
+            )}
             {theater === "autopilot" && <AutopilotTheater />}
+            {theater === "materials" && <MaterialsTheater bootstrap={bootstrap} />}
             {theater === "doctor" && <DoctorTheater bootstrap={bootstrap} />}
           </motion.section>
         </AnimatePresence>
@@ -226,8 +265,10 @@ function App() {
               result={result}
               geometry={geometry}
               solver={solver}
+              material={material}
               bootstrap={bootstrap}
               running={running}
+              intentSummary={intentSummary}
             />
           </motion.aside>
         )}
@@ -275,7 +316,7 @@ function Momentum({ momentum }: { momentum: number }) {
   );
 }
 
-function WorkspaceHeader({ theater, rightRail, onToggleRail, result }: { theater: Theater; rightRail: boolean; onToggleRail: () => void; result: PipelineResult | null }) {
+function WorkspaceHeader({ theater, rightRail, onToggleRail, onReset, result }: { theater: Theater; rightRail: boolean; onToggleRail: () => void; onReset: () => void; result: PipelineResult | null }) {
   const current = theaters.find((item) => item.id === theater)!;
   return (
     <header className="workspace-header">
@@ -285,8 +326,8 @@ function WorkspaceHeader({ theater, rightRail, onToggleRail, result }: { theater
       </div>
       <div className="workspace-actions">
         {result && <span className={`verdict-chip ${result.ok ? "pass" : "fail"}`}><ShieldCheck size={13} /> {result.ok ? "VERIFIED" : "REVIEW"}</span>}
-        <button className="icon-button"><RotateCcw size={16} /></button>
-        <button className={`icon-button ${rightRail ? "selected" : ""}`} onClick={onToggleRail}><PanelRightClose size={17} /></button>
+        <button className="icon-button" title="Reset studio" onClick={onReset}><RotateCcw size={16} /></button>
+        <button className={`icon-button ${rightRail ? "selected" : ""}`} onClick={onToggleRail} title="Toggle inspector"><PanelRightClose size={17} /></button>
       </div>
     </header>
   );
@@ -295,6 +336,7 @@ function WorkspaceHeader({ theater, rightRail, onToggleRail, result }: { theater
 function ForgeTheater(props: {
   geometry: ReturnType<typeof useStudio.getState>["geometry"];
   setGeometry: ReturnType<typeof useStudio.getState>["setGeometry"];
+  replaceGeometry: ReturnType<typeof useStudio.getState>["replaceGeometry"];
   ghosts: PipelineResult["ghosts"];
   showGhosts: boolean;
   toggleGhosts: () => void;
@@ -305,9 +347,13 @@ function ForgeTheater(props: {
   intent: string;
   setIntent: (value: string | ((current: string) => string)) => void;
   applyIntent: () => void;
+  intentSummary: string | null;
   material: string;
   setMaterial: (value: string) => void;
 }) {
+  const onKindChange = (value: string) => {
+    props.replaceGeometry(geometryDefaultsForKind(value as GeometrySpec["kind"]));
+  };
   return (
     <div className="forge-layout">
       <section className="viewport-panel">
@@ -322,14 +368,17 @@ function ForgeTheater(props: {
       </section>
       <section className="intent-panel glass-panel">
         <div className="panel-kicker"><WandSparkles size={14} /> DESIGN INTENT</div>
-        <textarea value={props.intent} onChange={(event) => props.setIntent(event.target.value)} />
+        <textarea value={props.intent} onChange={(event) => props.setIntent(event.target.value)} placeholder="Describe the part — bracket, nozzle, fairing…" />
+        <div className="intent-actions">
+          <button className="primary-subtle" type="button" onClick={props.applyIntent}><Sparkles size={14} /> Generate geometry</button>
+          {props.intentSummary && <span className="intent-summary">{props.intentSummary}</span>}
+        </div>
         <div className="intent-foot">
           <span>Planner describes</span><i /><strong>Tools construct</strong><i /><span>Primitive seeds the solid, features sculpt it</span>
-          <button className="primary-subtle" type="button" onClick={props.applyIntent}><Sparkles size={14} /> Generate geometry</button>
         </div>
         <div className="parameter-grid">
-          <SelectField label="Primitive" value={props.geometry.kind} onChange={(value) => props.setGeometry({ kind: value as "box" | "cylinder" | "sphere" | "extrude" })} options={["box", "cylinder", "sphere", "extrude"]} />
-          <SelectField label="Material" value={props.material} onChange={props.setMaterial} options={["Al 6061-T6", "Ti-6Al-4V", "AISI 4140", "PA12-GF"]} />
+          <SelectField label="Primitive" value={props.geometry.kind} onChange={onKindChange} options={["box", "cylinder", "sphere", "extrude"]} />
+          <SelectField label="Material" value={props.material} onChange={props.setMaterial} options={[...CATALOG_MATERIALS]} />
           {props.geometry.kind === "box" ? (
             <>
               <NumberField label="Width" value={props.geometry.width ?? 4.8} onChange={(width) => props.setGeometry({ width })} />
@@ -338,8 +387,8 @@ function ForgeTheater(props: {
             </>
           ) : props.geometry.kind === "extrude" ? (
             <>
-              <NumberField label="Profile depth" value={props.geometry.height ?? 3.5} onChange={(height) => props.setGeometry({ height })} />
-              <div className="field"><span>Profile</span><div className="number-input"><small>Nozzle profile is generated from intent text</small></div></div>
+              <NumberField label="Extrude depth" value={props.geometry.height ?? 1.8} onChange={(height) => props.setGeometry({ height })} />
+              <div className="field"><span>Profile</span><div className="number-input"><small>{props.geometry.profile?.length ? `${props.geometry.profile.length} pts from intent` : "Generate geometry for profile"}</small></div></div>
             </>
           ) : (
             <>
@@ -363,6 +412,7 @@ function SolveTheater({ geometry, ghosts, verdict, running, solver, setSolver, r
   setSolver: (value: "fea" | "openfoam" | "mbd") => void;
   result: PipelineResult | null;
 }) {
+  const chartData = useMemo(() => residualSeries(result, running), [result, running]);
   return (
     <div className="solve-layout">
       <section className="solver-stage">
@@ -379,7 +429,7 @@ function SolveTheater({ geometry, ghosts, verdict, running, solver, setSolver, r
         <div className="panel-kicker"><Activity size={14} /> RESIDUAL PULSE</div>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={residualData}>
+            <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="residualFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#59b8ff" stopOpacity={0.42} />
@@ -395,9 +445,9 @@ function SolveTheater({ geometry, ghosts, verdict, running, solver, setSolver, r
           </ResponsiveContainer>
         </div>
         <div className="metric-row">
-          <Metric label="OBJECTIVE" value={formatMetric(result?.metrics.objective, "—")} />
-          <Metric label="ITERATIONS" value={formatMetric(result?.metrics.iterations, "—")} />
-          <Metric label="RESIDUAL" value={formatMetric(result?.metrics.residual, "—")} />
+          <Metric label="OBJECTIVE" value={formatMetric(result?.metrics.objective ?? result?.solver_result.objective, "—")} />
+          <Metric label="ITERATIONS" value={formatMetric(result?.metrics.iterations ?? result?.solver_result.iterations, "—")} />
+          <Metric label="RESIDUAL" value={formatMetric(result?.metrics.residual ?? result?.solver_result.residual, "—")} />
           <Metric label="MODE" value={String(result?.metrics.mode ?? "READY")} />
         </div>
       </section>
@@ -412,12 +462,13 @@ function VerifyTheater({ result, bootstrap }: { result: PipelineResult | null; b
         ["Closed solid", Boolean(result.metrics.watertight)],
         ["Valid topology", Boolean(result.verification.metrics.valid)],
         ["Solver completed", result.solver_result.status !== "failed"],
+        ["Material gate", result.material_eval?.passed ?? result.metrics.material_eval_passed ?? null],
         ["Provenance sealed", Boolean(result.run.provenance)],
         ["Promotion eligible", result.ok],
       ]
     : [
         ["Positive volume", null], ["Closed solid", null], ["Valid topology", null],
-        ["Solver completed", null], ["Provenance sealed", null], ["Promotion eligible", null],
+        ["Solver completed", null], ["Material gate", null], ["Provenance sealed", null], ["Promotion eligible", null],
       ];
   return (
     <div className="proof-layout">
@@ -472,10 +523,14 @@ function ProvenanceGraph({ result }: { result: PipelineResult | null }) {
   );
 }
 
-function AtlasTheater({ modelVersion }: { modelVersion: string }) {
+function AtlasTheater({ modelVersion, onSeed }: { modelVersion: string; onSeed: (family: string) => void }) {
   const [atlas, setAtlas] = useState<{ points: Array<{ id: string; family: string; x: number; y: number; score: number; verified: boolean }> } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => { bridgeRequest<typeof atlas>("latent_atlas").then(setAtlas); }, []);
+  const selectedPoint = atlas?.points.find((point) => point.id === selected);
+  const verifiedDensity = atlas?.points.length
+    ? Math.round((atlas.points.filter((point) => point.verified).length / atlas.points.length) * 100)
+    : 0;
   return (
     <div className="atlas-layout">
       <section className="atlas-field">
@@ -502,10 +557,14 @@ function AtlasTheater({ modelVersion }: { modelVersion: string }) {
         <p>Nearby points are JEPA-ranked proposals. Selecting one never emits raw geometry—it seeds a deterministic CadQuery construction plan.</p>
         <div className="atlas-stats">
           <Metric label="LATENTS" value={String(atlas?.points.length ?? 0)} />
-          <Metric label="VERIFIED DENSITY" value="74%" />
-          <Metric label="MODEL DELTA" value="+8.3%" />
+          <Metric label="VERIFIED DENSITY" value={`${verifiedDensity}%`} />
+          <Metric label="SELECTED" value={selectedPoint ? selectedPoint.family : "—"} />
         </div>
-        {selected && <button className="primary-subtle"><Sparkles size={14} /> Seed verified variant</button>}
+        {selectedPoint && (
+          <button className="primary-subtle" type="button" onClick={() => onSeed(selectedPoint.family)}>
+            <Sparkles size={14} /> Seed verified variant
+          </button>
+        )}
       </section>
     </div>
   );
@@ -552,6 +611,102 @@ function AutopilotTheater() {
   );
 }
 
+function MaterialsTheater({ bootstrap }: { bootstrap: BootstrapData | null }) {
+  const [materials, setMaterials] = useState<SpaceMaterialProps[]>([]);
+  const [suite, setSuite] = useState<MaterialEvalSuite | null>(null);
+  const [running, setRunning] = useState(false);
+  const [filter, setFilter] = useState("all");
+
+  useEffect(() => {
+    bridgeRequest<{ materials: SpaceMaterialProps[] }>("list_materials")
+      .then((payload) => setMaterials(payload.materials ?? []))
+      .catch(() => setMaterials([]));
+  }, []);
+
+  const runSuite = async () => {
+    setRunning(true);
+    try {
+      setSuite(await bridgeRequest<MaterialEvalSuite>("material_eval_suite", {}));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const categories = Array.from(new Set(materials.map((m) => m.category))).sort();
+  const visible = materials.filter((m) => filter === "all" || m.category === filter);
+
+  return (
+    <div className="materials-layout">
+      <section className="system-hero">
+        <div className={`system-orb ${suite ? (suite.failed <= 2 ? "ready" : "") : bootstrap?.materials ? "ready" : ""}`}>
+          <Layers3 size={54} strokeWidth={0.65} /><i />
+        </div>
+        <div>
+          <div className="eyebrow">MATERIAL EVAL FRAMEWORK</div>
+          <h2>Handbook properties + closed-form gates for JEPA feedback.</h2>
+          <p>
+            LatticeZero ships a materials catalog with density, E, allowables, CTE, and thermal limits,
+            then runs a golden eval suite so CAD→JEPA loops get accurate property conditioning — without
+            waiting on a full lab campaign. FEA stresses can attach when available.
+          </p>
+          <p className="materials-boot">
+            Bootstrapped catalog: {bootstrap?.stats.materialsCatalog ?? materials.length} grades ·
+            last suite pass rate{" "}
+            {(((suite?.pass_rate ?? bootstrap?.stats.materialEvalPassRate) ?? 0) * 100).toFixed(0)}%
+          </p>
+        </div>
+        <button className="scan-button" onClick={runSuite} disabled={running}>
+          <ShieldCheck size={16} className={running ? "spinning" : ""} /> {running ? "Evaluating…" : "Run material eval suite"}
+        </button>
+      </section>
+
+      <section className="glass-panel runtime-panel materials-catalog">
+        <div className="panel-kicker"><Database size={14} /> CATALOG FILTER</div>
+        <div className="materials-filter">
+          <SelectField
+            label="Category"
+            value={filter}
+            onChange={setFilter}
+            options={["all", ...categories]}
+          />
+        </div>
+        <div className="probe-grid materials-grid">
+          {visible.slice(0, 24).map((mat) => (
+            <article key={mat.material_id} className="probe-card ready">
+              <div className="probe-icon"><Atom /></div>
+              <div>
+                <small>{mat.category.toUpperCase()}</small>
+                <h3>{mat.name}</h3>
+                <p>
+                  ρ {mat.density_kg_m3} · E {mat.youngs_modulus_gpa} GPa · allow{" "}
+                  {mat.allowable_stress_mpa ?? "—"} MPa · Tmax {mat.max_service_temp_k} K
+                </p>
+              </div>
+              <span>{mat.material_id}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {suite && (
+        <section className="glass-panel runtime-panel">
+          <div className="panel-kicker"><Gauge size={14} /> EVAL SUITE · {suite.passed}/{suite.cases} PASSED</div>
+          <div className="loop-steps materials-suite">
+            {suite.reports.map((report) => (
+              <div key={report.case_id} className={report.passed ? "active" : ""}>
+                <span>{report.passed ? "OK" : "!!"}</span>
+                <strong>{report.case_id} · {report.material_name}</strong>
+                <i />
+              </div>
+            ))}
+          </div>
+          {suite.report_path && <pre>{suite.report_path}</pre>}
+        </section>
+      )}
+    </div>
+  );
+}
+
 function DoctorTheater({ bootstrap }: { bootstrap: BootstrapData | null }) {
   const [report, setReport] = useState(bootstrap?.doctor);
   const [scanning, setScanning] = useState(false);
@@ -588,30 +743,33 @@ function ProbeCard({ name, probe }: { name: string; probe: DoctorProbe }) {
   );
 }
 
-function Inspector({ theater, result, geometry, solver, bootstrap, running }: {
+function Inspector({ theater, result, geometry, solver, material, bootstrap, running, intentSummary }: {
   theater: Theater; result: PipelineResult | null; geometry: ReturnType<typeof useStudio.getState>["geometry"];
-  solver: string; bootstrap: BootstrapData | null; running: boolean;
+  solver: string; material: string; bootstrap: BootstrapData | null; running: boolean; intentSummary: string | null;
 }) {
   return (
     <>
       <div className="inspector-head"><span>LIVE EVIDENCE</span><CircleDot size={13} className={running ? "pulse" : ""} /></div>
       <div className="inspector-section">
         <h4>Current object</h4>
-        <div className="object-card"><Box size={24} /><div><strong>{geometry.kind.toUpperCase()} / 07</strong><span>Deterministic solid</span></div><ChevronRight size={14} /></div>
+        <div className="object-card"><Box size={24} /><div><strong>{geometry.kind.toUpperCase()}</strong><span>{material}</span></div><ChevronRight size={14} /></div>
+        {intentSummary && <p className="inspector-note">{intentSummary}</p>}
       </div>
       <div className="inspector-section">
         <h4>Engineering state</h4>
         <InspectorRow label="Theater" value={theater} />
         <InspectorRow label="Solver" value={solver.toUpperCase()} />
         <InspectorRow label="Backend" value={result?.verification.backend ?? "CADQUERY"} />
-        <InspectorRow label="Mode" value={String(result?.metrics.mode ?? "READY")} warn={result?.metrics.mode === "fallback"} />
+        <InspectorRow label="Mode" value={String(result?.metrics.mode ?? "READY")} warn={result?.metrics.mode === "fallback" || String(result?.metrics.mode ?? "").includes("fallback")} />
       </div>
       <div className="inspector-section">
         <h4>Proof telemetry</h4>
         <InspectorRow label="Volume" value={formatMetric(result?.metrics.volume, "—", " mm³")} />
         <InspectorRow label="Faces" value={formatMetric(result?.metrics.faces, "—")} />
         <InspectorRow label="Stress" value={formatMetric(result?.metrics.stress, "—", " MPa")} />
+        <InspectorRow label="Allowable" value={formatMetric(result?.metrics.allowable_stress_mpa ?? result?.material_eval?.allowable_mpa, "—", " MPa")} />
         <InspectorRow label="Watertight" value={result ? (result.metrics.watertight ? "YES" : "NO") : "—"} />
+        <InspectorRow label="Material gate" value={result ? ((result.material_eval?.passed ?? result.metrics.material_eval_passed) ? "PASS" : "FAIL") : "—"} />
       </div>
       <div className="inspector-section">
         <h4>Intelligence</h4>
@@ -645,7 +803,23 @@ function SelectField({ label, value, onChange, options }: { label: string; value
 }
 
 function NumberField({ label, value, onChange, step = 0.1 }: { label: string; value: number; onChange: (value: number) => void; step?: number }) {
-  return <label className="field"><span>{label}</span><div className="number-input"><input type="number" value={value} step={step} onChange={(e) => onChange(Number(e.target.value))} /><small>mm</small></div></label>;
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <div className="number-input">
+        <input
+          type="number"
+          value={Number.isFinite(value) ? value : 0}
+          step={step}
+          onChange={(e) => {
+            const next = Number(e.target.value);
+            if (Number.isFinite(next)) onChange(next);
+          }}
+        />
+        <small>mm</small>
+      </div>
+    </label>
+  );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

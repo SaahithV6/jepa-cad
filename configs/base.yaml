@@ -3,6 +3,10 @@
 # Data
 data:
   data_dir: "data/processed"
+  graph_path: null  # graph export JSON or directory containing the export
+  graph_data_root: null  # optional root used to resolve graph-referenced file paths
+  graph_limit: null
+  graph_metadata_dim: 124  # 9 legacy + 25 family + 23 physics + 11 geometry + 8 material + 16 params + 32 text
   num_points: 1024
   num_fields: 3  # e.g. pressure, temperature, von_mises_stress
   shard_format: "npz"  # npz | pt

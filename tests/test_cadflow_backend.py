@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import cadflow.backends as backends
 from cadflow.backends import CadQueryBackend, MockCadBackend, build_from_spec, get_backend
 
 
@@ -48,6 +50,31 @@ def test_mock_primitives_cylinder_sphere_extrude_and_sculpt(tmp_path: Path) -> N
     stl = backend.export_stl(sph, tmp_path / "sph.stl")
     assert step.exists() and "ISO-10303-21" in step.read_text()
     assert stl.exists() and "solid" in stl.read_text()
+
+
+def test_cadquery_fillet_falls_back_when_occ_fillet_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    class DummyWorkplane:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.solid = None
+
+        def newObject(self, solids: list[object]) -> "DummyWorkplane":
+            self.solid = solids[0]
+            return self
+
+        def edges(self) -> "DummyWorkplane":
+            return self
+
+        def fillet(self, _radius: float) -> "DummyWorkplane":
+            raise RuntimeError("simulated OCC fillet failure")
+
+    monkeypatch.setattr(backends, "cq", SimpleNamespace(Workplane=DummyWorkplane))
+    backend = CadQueryBackend()
+    solid = object()
+
+    result = backend.fillet(solid, 0.5)
+
+    assert isinstance(result, DummyWorkplane)
+    assert result.solid is solid
 
 
 def test_cadquery_primitives_and_export(tmp_path: Path) -> None:

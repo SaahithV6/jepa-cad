@@ -179,7 +179,7 @@ def main() -> None:
     parser.add_argument("--config", type=str, default="configs/base.yaml")
     parser.add_argument("--family", type=str, default=None, help="Optional config family overlay")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--data-source", choices=["real", "synthetic", "mixed"], default="synthetic")
+    parser.add_argument("--data-source", choices=["real", "synthetic", "mixed", "graph"], default="synthetic")
     parser.add_argument("--data-dir", type=str, default=None, help="Override data.data_dir for real or mixed datasets")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable output")
     args = parser.parse_args()

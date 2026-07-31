@@ -1,0 +1,32 @@
+{
+  "corpus": [
+    "artifacts/corpus-sweep-run/sweep/runs/3dd1816799996688/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/bcbc20a61398023f/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/6618b20bb6c291a1/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/44c82b204fa76a31/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/005ea79861d3d75c/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/d7c4b16b6b354a77/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/2eaf1b38614f69b5/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/0336f30b3720e032/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/116660c986573121/geometry.step",
+    "artifacts/corpus-sweep-run/sweep/runs/07edcef670aaa9f3/geometry.step"
+  ],
+  "downloads_step": [
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_EM_-Z_panel v19.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_EM_FAB_Simple v30.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_FM_+X_panel v1.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_MB1 v52.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_EM_RAB v21.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/CBSTSR2-6 v1.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_FM_+Y_panel v1.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_frame5A v29.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_frame7_updated_after_FM v2.step",
+    "data/raw/downloads/birds4/BIRDS-4 CAD/B4_EM_frame6X v14.step"
+  ],
+  "downloads_stl": [],
+  "totals": {
+    "corpus": 2108,
+    "step": 46,
+    "stl": 0
+  }
+}

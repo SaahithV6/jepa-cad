@@ -1,0 +1,12 @@
+{
+  "bodyfit_attempted": 20,
+  "bodyfit_ok": 20,
+  "failures": [],
+  "legacy_family_fea": 2031,
+  "legacy_bodyfit_cfd": 210,
+  "aero_bodyfit": 210,
+  "aero_total": 252,
+  "aero_bodyfit_rate": 0.833,
+  "channel_primary": 0,
+  "minifins_ok": 2
+}

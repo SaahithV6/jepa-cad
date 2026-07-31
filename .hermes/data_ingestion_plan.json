@@ -1,0 +1,169 @@
+{
+  "downloads": {
+    "OpenRocket": {
+      "repo": "https://github.com/OpenRocket/OpenRocket",
+      "path": "data/raw/downloads/openrocket",
+      "extract_pattern": "*.ork",
+      "description": "500+ parametric rocket designs"
+    },
+    "BIRDS4_CAD": {
+      "repo": "https://github.com/BIRDSOpenSource/BIRDS4-CAD",
+      "path": "data/raw/downloads/birds4",
+      "extract_pattern": "*.step",
+      "description": "University satellite CAD (flight-proven)"
+    },
+    "GrabCAD_Aerospace": {
+      "url": "https://grabcad.com/",
+      "path": "data/raw/downloads/grabcad",
+      "description": "Filter: rocket, aerospace, engine (expect 500+ models)",
+      "method": "manual_filter_or_api"
+    },
+    "ThingiVerse_Aerospace": {
+      "url": "https://www.thingiverse.com/",
+      "path": "data/raw/downloads/thingiverse",
+      "extract_pattern": "*.stl",
+      "description": "3D-printable rocket parts (parametric variants)",
+      "filter": "rocket OR aerospace OR engine"
+    },
+    "NASA_Artemis": {
+      "url": "https://nasa-public-data.s3.amazonaws.com/",
+      "path": "data/raw/downloads/nasa",
+      "description": "SLS, Orion STEP files (if public)",
+      "method": "s3_listing"
+    }
+  },
+  "generators": {
+    "RocketPy_sweep": {
+      "variants": 500,
+      "parameters": {
+        "fin_type": [
+          "trapezoidal",
+          "elliptical",
+          "tapered"
+        ],
+        "nosecone": [
+          "ogive",
+          "conical",
+          "parabolic"
+        ],
+        "diameter": [
+          20,
+          30,
+          50,
+          75,
+          100
+        ],
+        "length": [
+          200,
+          400,
+          600,
+          800
+        ]
+      },
+      "output_format": "STEP"
+    },
+    "FreeCAD_workbench": {
+      "variants": 1000,
+      "parameters": {
+        "motor_diameter": [
+          20,
+          30,
+          54,
+          75,
+          98
+        ],
+        "chamber_length": [
+          100,
+          200,
+          300
+        ],
+        "fin_count": [
+          3,
+          4,
+          5
+        ],
+        "material": [
+          "aluminum",
+          "carbon_fiber",
+          "composite"
+        ]
+      },
+      "output_format": "STEP"
+    },
+    "OpenSCAD_procedural": {
+      "variants": 2000,
+      "description": "Procedural geometric variations",
+      "output_format": "STL->STEP"
+    },
+    "Nozzle_design_sweep": {
+      "variants": 300,
+      "parameters": {
+        "chamber_pressure": [
+          1,
+          5,
+          10,
+          20,
+          50
+        ],
+        "expansion_ratio": [
+          5,
+          10,
+          20,
+          40,
+          100
+        ],
+        "throat_diameter": [
+          10,
+          20,
+          30,
+          50
+        ],
+        "material": [
+          "copper",
+          "tungsten",
+          "ceramic"
+        ]
+      },
+      "output_format": "mesh + properties"
+    },
+    "Tank_geometry_sweep": {
+      "variants": 400,
+      "parameters": {
+        "internal_pressure": [
+          1,
+          5,
+          10,
+          20
+        ],
+        "diameter": [
+          100,
+          200,
+          500,
+          1000
+        ],
+        "length": [
+          500,
+          1000,
+          2000
+        ],
+        "material_thickness": [
+          1,
+          2,
+          5,
+          10
+        ]
+      },
+      "output_format": "STEP + FEA properties"
+    }
+  },
+  "dataset_estimate": {
+    "Existing_corpus": 1768,
+    "OpenRocket": 500,
+    "BIRDS4_CAD": 300,
+    "GrabCAD_filtered": 500,
+    "Thingiverse": 400,
+    "NASA_Artemis": 100,
+    "Parametric_variants": 4200,
+    "Total_unique_geometries": 7768
+  }
+}

@@ -95,6 +95,43 @@ def _is_relevant(source: DatasetSource, keywords: Sequence[str]) -> bool:
     return False
 
 
+def _source_provider_bucket(source: DatasetSource) -> str:
+    text = " ".join((source.key, source.title, source.url, source.notes)).lower()
+    if "esa" in text or "scifleet" in text:
+        return "esa"
+    if "jaxa" in text or "isas" in text or "hayabusa" in text:
+        return "jaxa"
+    if "nasa" in text:
+        return "nasa"
+    return "other"
+
+
+def _diversify_sources(sources: Sequence[DatasetSource], max_sources: int) -> list[DatasetSource]:
+    buckets: dict[str, list[DatasetSource]] = {"esa": [], "jaxa": [], "other": [], "nasa": []}
+    for source in sorted(sources, key=lambda s: (s.key, s.title)):
+        buckets[_source_provider_bucket(source)].append(source)
+
+    selected: list[DatasetSource] = []
+    seen: set[str] = set()
+    order = ["esa", "jaxa", "nasa", "other"]
+    while len(selected) < max_sources:
+        progressed = False
+        for bucket in order:
+            while buckets[bucket]:
+                candidate = buckets[bucket].pop(0)
+                if candidate.key in seen:
+                    continue
+                seen.add(candidate.key)
+                selected.append(candidate)
+                progressed = True
+                break
+            if len(selected) >= max_sources:
+                break
+        if not progressed:
+            break
+    return selected
+
+
 def build_cloud_training_plan(
     manifest: JobManifest,
     *,
@@ -107,7 +144,10 @@ def build_cloud_training_plan(
     keywords = _keywords_from_manifest(manifest)
     selected = match_dataset_sources(tuple(keywords))
     if family == "space":
-        selected = [source for source in DATASET_REGISTRY.values() if _is_relevant(source, keywords)][: max_dataset_sources]
+        selected = _diversify_sources(
+            [source for source in DATASET_REGISTRY.values() if _is_relevant(source, keywords)],
+            max_dataset_sources,
+        )
     if provider_preference is not None:
         primary = provider_preference
         secondary = "Fireworks" if provider_preference.lower() == "modal" else "Modal"

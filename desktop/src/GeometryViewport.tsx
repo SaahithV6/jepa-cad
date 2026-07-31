@@ -31,6 +31,25 @@ const verdictColor: Record<Verdict, string> = {
   idle: "#55b5ff",
 };
 
+function boundsFor(spec: GeometrySpec): [number, number, number] {
+  if (spec.kind === "cylinder") {
+    const r = spec.radius ?? 1.5;
+    return [r * 2, spec.height ?? 3, r * 2];
+  }
+  if (spec.kind === "sphere") {
+    const d = (spec.radius ?? 1.7) * 2;
+    return [d, d, d];
+  }
+  if (spec.kind === "extrude" && spec.profile?.length) {
+    const xs = spec.profile.map(([x]) => x);
+    const ys = spec.profile.map(([, y]) => y);
+    const w = Math.max(...xs) - Math.min(...xs);
+    const h = Math.max(...ys) - Math.min(...ys);
+    return [Math.max(w, 0.5), Math.max(spec.height ?? 2, 0.5), Math.max(h, 0.5)];
+  }
+  return [spec.width ?? 4.8, spec.height ?? 1.25, spec.depth ?? 2.6];
+}
+
 function GeometryMesh({
   spec,
   color,
@@ -46,11 +65,7 @@ function GeometryMesh({
   wireframe?: boolean;
   fieldLens?: boolean;
 }) {
-  const dims: [number, number, number] = [
-    spec.width ?? (spec.radius ?? 1.5) * 2,
-    spec.height ?? (spec.radius ?? 1.5) * 2,
-    spec.depth ?? (spec.radius ?? 1.5) * 2,
-  ];
+  const dims = boundsFor(spec);
   const extrudeGeometry = useMemo(() => {
     if (spec.kind !== "extrude" || !spec.profile?.length) return null;
     const shape = new THREE.Shape(spec.profile.map(([x, y]) => new THREE.Vector2(x, y)));
@@ -58,6 +73,7 @@ function GeometryMesh({
     geometry.center();
     return geometry;
   }, [spec]);
+
   const material = fieldLens ? (
     <meshStandardMaterial
       color="#ec6f55"
@@ -83,13 +99,18 @@ function GeometryMesh({
     />
   );
 
+  // Extrude without a profile: show a thin placeholder plate so the viewport never goes blank.
+  const showPlaceholder = spec.kind === "extrude" && !extrudeGeometry;
+
   return (
     <mesh castShadow receiveShadow scale={scale} geometry={extrudeGeometry ?? undefined}>
       {spec.kind === "cylinder" ? (
         <cylinderGeometry args={[spec.radius ?? 1.5, spec.radius ?? 1.5, spec.height ?? 3, 64]} />
       ) : spec.kind === "sphere" ? (
         <sphereGeometry args={[spec.radius ?? 1.7, 64, 32]} />
-      ) : spec.kind === "extrude" ? null : (
+      ) : spec.kind === "extrude" ? (
+        showPlaceholder ? <boxGeometry args={dims} /> : null
+      ) : (
         <boxGeometry args={dims} />
       )}
       {material}
@@ -97,12 +118,12 @@ function GeometryMesh({
   );
 }
 
-function Aura({ color, running }: { color: string; running: boolean }) {
+function Aura({ spec, color, running }: { spec: GeometrySpec; color: string; running: boolean }) {
   const ref = useRef<THREE.Mesh>(null);
-  useMemo(() => undefined, []);
+  const [w, h, d] = boundsFor(spec);
   return (
-    <mesh ref={ref}>
-      <boxGeometry args={[4.88, 1.32, 2.68]} />
+    <mesh ref={ref} scale={1.02}>
+      <boxGeometry args={[w, h, d]} />
       <meshBasicMaterial color={color} transparent opacity={running ? 0.12 : 0.055} wireframe />
     </mesh>
   );
@@ -126,13 +147,16 @@ function ResidualRibbon({ running, color }: { running: boolean; color: string })
 }
 
 function DimensionLines({ spec }: { spec: GeometrySpec }) {
-  const w = spec.width ?? (spec.radius ?? 1.5) * 2;
-  const d = spec.depth ?? (spec.radius ?? 1.5) * 2;
+  const [w, , d] = boundsFor(spec);
+  const label =
+    spec.kind === "cylinder" || spec.kind === "sphere"
+      ? `⌀ ${((spec.radius ?? 1.5) * 2).toFixed(2)} mm`
+      : `${w.toFixed(2)} mm`;
   return (
     <group>
       <Line points={[[-w / 2, -1.15, d / 2 + 0.25], [w / 2, -1.15, d / 2 + 0.25]]} color="#718096" lineWidth={0.6} />
       <Html position={[0, -1.15, d / 2 + 0.25]} center distanceFactor={10}>
-        <span className="dimension-label">{w.toFixed(2)} mm</span>
+        <span className="dimension-label">{label}</span>
       </Html>
     </group>
   );
@@ -163,7 +187,7 @@ function Scene({ geometry, ghosts = [], showGhosts, fieldLens, verdict, running 
             />
           ))}
         <GeometryMesh spec={geometry} color="#a9c8dd" fieldLens={fieldLens} />
-        <Aura color={color} running={running} />
+        <Aura spec={geometry} color={color} running={running} />
         <DimensionLines spec={geometry} />
       </Float>
 

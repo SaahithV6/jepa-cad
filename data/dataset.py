@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from data.graph_dataset import GraphBackedCADDataset
 from data.synthetic import SyntheticConfig, generate_synthetic_sample
 
 
@@ -126,7 +127,7 @@ class MixedDataset(Dataset):
 
 
 def build_dataset(
-    data_source: Literal["real", "synthetic", "mixed"],
+    data_source: Literal["real", "synthetic", "mixed", "graph"],
     cfg: dict[str, Any],
 ) -> Dataset:
     """Factory for real / synthetic / mixed datasets."""
@@ -146,6 +147,21 @@ def build_dataset(
 
     if data_source == "synthetic":
         return synthetic_ds
+
+    if data_source == "graph":
+        graph_path = data_cfg.get("graph_path") or data_cfg.get("graph_bundle") or data_cfg.get("graph_json")
+        if graph_path is None:
+            raise FileNotFoundError("data.graph_path (or graph_bundle / graph_json) is required for graph data_source")
+        graph_root = data_cfg.get("graph_data_root") or data_cfg.get("data_dir")
+        return GraphBackedCADDataset(
+            graph_path=graph_path,
+            data_root=graph_root,
+            num_points=data_cfg["num_points"],
+            num_fields=data_cfg["num_fields"],
+            limit=data_cfg.get("graph_limit"),
+            prefer_physics_shards=bool(data_cfg.get("prefer_physics_shards", True)),
+            physics_shards_only=bool(data_cfg.get("physics_shards_only", False)),
+        )
 
     real_ds = CADSimulationDataset(
         data_dir=data_cfg["data_dir"],

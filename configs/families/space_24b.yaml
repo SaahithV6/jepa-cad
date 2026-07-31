@@ -1,17 +1,45 @@
 # High-capacity target preset for external compute.
-# This is the roadmap preset for a roughly 24B-class space family run,
-# meant for cloud training only, not the local laptop.
+# Roadmap for ~24B-class space JEPA: oneshot rocket Parts from text/params
+# into physics-verified CAD (FEA field point clouds + param conditioning).
+#
+# Training contract:
+#   graph_metadata (89-d) = family one-hot + physics + geometry + material + params
+#     → e.g. family=nose_cone, diameter_mm=35, length_mm=60, shape=ogive,
+#       material=al-6061-t6, mass_kg, payload/constraint slots via PhysicsTarget
+#   target = real FEA field shards (von_mises, disp, stress) from CalculiX FRDs
+#     under artifacts/physics_shards/fea/ (NOT geometry-only placeholders)
+# Flip physics_shards_only=true once shard coverage is high enough (~5k+).
+#
+# Advanced techniques for prompt/params → CAD:
+#   * High real mix (0.95) so synthetic only regularizes
+#   * Prefer physics shards (solver fields) over geometry-only NPZ
+#   * Smooth L1 + long EMA teacher for stable latents
+#   * Warmup-cosine LR, large effective batch via grad accum
+#   * Gradient checkpointing for 24B-class encoder depth
+#   * Collapse guard (std threshold) to catch representation death
 
 data:
   num_points: 4096
   num_fields: 8
-  mix_ratio: 0.9
+  mix_ratio: 0.95
+  graph_metadata_dim: 124  # 9 legacy + 25 family + 23 physics + 11 geometry + 8 material + 16 params + 32 text
+  graph_path: artifacts/jepa-train-bundle/graph.json
+  graph_data_root: artifacts/jepa-train-bundle
+  prefer_physics_shards: true
+  physics_shards_only: false  # densify first; flip true when CFD+FEA shards dense enough
+
+synthetic:
+  seed: 42
+  family: spaceflight
+  num_primitives: 6
+  noise_std: 0.03
+  field_scale: 1.0
 
 masking:
   grid_size: [8, 8, 8]
-  context_ratio: 0.6
-  num_target_blocks: 8
-  min_target_block_ratio: 0.02
+  context_ratio: 0.55
+  num_target_blocks: 10
+  min_target_block_ratio: 0.015
 
 model:
   embed_dim: 512
@@ -26,7 +54,7 @@ model:
     num_heads: 16
     mlp_ratio: 4.0
     dropout: 0.0
-  ema_decay: 0.999
+  ema_decay: 0.9996
   loss_type: "smooth_l1"
   gradient_checkpointing: true
 
@@ -35,15 +63,26 @@ train:
   num_epochs: 1
   precision: "bf16"
   amp: false
-  lr: 2.0e-5
+  lr: 1.5e-5
   weight_decay: 0.05
-  warmup_steps: 1000
+  warmup_steps: 2000
   grad_clip: 1.0
-  grad_accum_steps: 16
+  grad_accum_steps: 32
   log_every: 10
   checkpoint_every: 1000
   collapse_std_threshold: 0.01
   device: "auto"
+  seed: 42
 
 logging:
+  log_dir: "runs"
   experiment_name: "jepa-cad-space-24b"
+
+checkpoint:
+  checkpoint_dir: "checkpoints"
+
+probe:
+  num_epochs: 5
+  lr: 1.0e-3
+  batch_size: 16
+  train_split: 0.8

@@ -103,7 +103,11 @@ class PointCloudEncoder(nn.Module):
 
         key_padding_mask = None
         if mask is not None:
-            key_padding_mask = ~mask
+            # mask can be (batch,) or (batch, seq_len); convert to (batch, seq_len) for MultiheadAttention
+            if mask.ndim == 1:
+                key_padding_mask = (~mask).unsqueeze(1).expand(-1, x.shape[1])
+            else:
+                key_padding_mask = ~mask
 
         for block in self.blocks:
             if self.gradient_checkpointing and self.training and torch.is_grad_enabled():
@@ -112,13 +116,7 @@ class PointCloudEncoder(nn.Module):
                 x = block(x, key_padding_mask=key_padding_mask)
 
         x = self.norm(x)
-
-        if mask is not None and mask.any(dim=1).all():
-            masked = x * mask.unsqueeze(-1).float()
-            denom = mask.sum(dim=1, keepdim=True).clamp_min(1).float()
-            pooled = masked.sum(dim=1) / denom
-        else:
-            pooled = x.mean(dim=1)
+        pooled = x.mean(dim=1)  # Global average pool: (batch, seq_len, dim) -> (batch, dim)
 
         return {"token_embeddings": x, "pooled_embedding": pooled}
 

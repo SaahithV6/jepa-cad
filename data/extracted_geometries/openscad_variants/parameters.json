@@ -1,0 +1,647 @@
+{
+  "nose_cone.scad": [
+    {
+      "diameter": 50,
+      "length": 100,
+      "type": "ogive"
+    },
+    {
+      "diameter": 50,
+      "length": 100,
+      "type": "conical"
+    },
+    {
+      "diameter": 50,
+      "length": 100,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 50,
+      "length": 200,
+      "type": "ogive"
+    },
+    {
+      "diameter": 50,
+      "length": 200,
+      "type": "conical"
+    },
+    {
+      "diameter": 50,
+      "length": 200,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 50,
+      "length": 300,
+      "type": "ogive"
+    },
+    {
+      "diameter": 50,
+      "length": 300,
+      "type": "conical"
+    },
+    {
+      "diameter": 50,
+      "length": 300,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 75,
+      "length": 100,
+      "type": "ogive"
+    },
+    {
+      "diameter": 75,
+      "length": 100,
+      "type": "conical"
+    },
+    {
+      "diameter": 75,
+      "length": 100,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "type": "ogive"
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "type": "conical"
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 75,
+      "length": 300,
+      "type": "ogive"
+    },
+    {
+      "diameter": 75,
+      "length": 300,
+      "type": "conical"
+    },
+    {
+      "diameter": 75,
+      "length": 300,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 100,
+      "length": 100,
+      "type": "ogive"
+    },
+    {
+      "diameter": 100,
+      "length": 100,
+      "type": "conical"
+    },
+    {
+      "diameter": 100,
+      "length": 100,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "type": "ogive"
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "type": "conical"
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "type": "parabolic"
+    },
+    {
+      "diameter": 100,
+      "length": 300,
+      "type": "ogive"
+    },
+    {
+      "diameter": 100,
+      "length": 300,
+      "type": "conical"
+    },
+    {
+      "diameter": 100,
+      "length": 300,
+      "type": "parabolic"
+    }
+  ],
+  "fin.scad": [
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 100,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 150,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 50,
+      "chord": 200,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 100,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 150,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 100,
+      "chord": 200,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 100,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 150,
+      "thickness": 10,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 2,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 2,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 5,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 5,
+      "type": "elliptical"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 10,
+      "type": "trapezoidal"
+    },
+    {
+      "height": 150,
+      "chord": 200,
+      "thickness": 10,
+      "type": "elliptical"
+    }
+  ],
+  "tube.scad": [
+    {
+      "diameter": 50,
+      "length": 200,
+      "thickness": 2
+    },
+    {
+      "diameter": 50,
+      "length": 200,
+      "thickness": 5
+    },
+    {
+      "diameter": 50,
+      "length": 200,
+      "thickness": 10
+    },
+    {
+      "diameter": 50,
+      "length": 400,
+      "thickness": 2
+    },
+    {
+      "diameter": 50,
+      "length": 400,
+      "thickness": 5
+    },
+    {
+      "diameter": 50,
+      "length": 400,
+      "thickness": 10
+    },
+    {
+      "diameter": 50,
+      "length": 600,
+      "thickness": 2
+    },
+    {
+      "diameter": 50,
+      "length": 600,
+      "thickness": 5
+    },
+    {
+      "diameter": 50,
+      "length": 600,
+      "thickness": 10
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "thickness": 2
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "thickness": 5
+    },
+    {
+      "diameter": 75,
+      "length": 200,
+      "thickness": 10
+    },
+    {
+      "diameter": 75,
+      "length": 400,
+      "thickness": 2
+    },
+    {
+      "diameter": 75,
+      "length": 400,
+      "thickness": 5
+    },
+    {
+      "diameter": 75,
+      "length": 400,
+      "thickness": 10
+    },
+    {
+      "diameter": 75,
+      "length": 600,
+      "thickness": 2
+    },
+    {
+      "diameter": 75,
+      "length": 600,
+      "thickness": 5
+    },
+    {
+      "diameter": 75,
+      "length": 600,
+      "thickness": 10
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "thickness": 2
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "thickness": 5
+    },
+    {
+      "diameter": 100,
+      "length": 200,
+      "thickness": 10
+    },
+    {
+      "diameter": 100,
+      "length": 400,
+      "thickness": 2
+    },
+    {
+      "diameter": 100,
+      "length": 400,
+      "thickness": 5
+    },
+    {
+      "diameter": 100,
+      "length": 400,
+      "thickness": 10
+    },
+    {
+      "diameter": 100,
+      "length": 600,
+      "thickness": 2
+    },
+    {
+      "diameter": 100,
+      "length": 600,
+      "thickness": 5
+    },
+    {
+      "diameter": 100,
+      "length": 600,
+      "thickness": 10
+    },
+    {
+      "diameter": 150,
+      "length": 200,
+      "thickness": 2
+    },
+    {
+      "diameter": 150,
+      "length": 200,
+      "thickness": 5
+    },
+    {
+      "diameter": 150,
+      "length": 200,
+      "thickness": 10
+    },
+    {
+      "diameter": 150,
+      "length": 400,
+      "thickness": 2
+    },
+    {
+      "diameter": 150,
+      "length": 400,
+      "thickness": 5
+    },
+    {
+      "diameter": 150,
+      "length": 400,
+      "thickness": 10
+    },
+    {
+      "diameter": 150,
+      "length": 600,
+      "thickness": 2
+    },
+    {
+      "diameter": 150,
+      "length": 600,
+      "thickness": 5
+    },
+    {
+      "diameter": 150,
+      "length": 600,
+      "thickness": 10
+    }
+  ]
+}

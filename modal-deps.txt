@@ -1,0 +1,14 @@
+typing_extensions>=4.0.0
+aiohttp
+cbor2
+certifi
+click
+grpclib
+protobuf
+rich
+synchronicity
+toml
+types-certifi
+types-toml
+watchfiles
+modal>=1.5.2

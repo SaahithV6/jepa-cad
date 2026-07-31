@@ -1,0 +1,8 @@
+{
+  "pipeline": "legacy_snappyHexMesh_external_simpleFoam",
+  "total": 210,
+  "ok": 210,
+  "graph_linked": 0,
+  "cfd_root": "/home/best/jepa-cad/artifacts/cfd_bodyfit",
+  "failures": []
+}

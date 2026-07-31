@@ -31,16 +31,22 @@ class PromotionResult:
         }
 
 
+_PREFERRED_GEOMETRY_SUFFIXES = (".stl", ".obj", ".ply", ".npz", ".step", ".stp")
+
+
 def _geometry_artifact(entry: FlywheelEntry) -> Path | None:
-    for ref in entry.run.artifact_refs:
-        path = Path(ref)
-        if path.suffix.lower() in {".stl", ".obj", ".ply", ".step", ".stp", ".npz"} and path.exists():
-            return path
-    for ref in entry.manifest.artifacts:
-        path = Path(ref)
-        if path.suffix.lower() in {".stl", ".obj", ".ply", ".step", ".stp", ".npz"} and path.exists():
-            return path
-    return None
+    def _scan(refs: list[str] | tuple[str, ...]) -> Path | None:
+        for suffix in _PREFERRED_GEOMETRY_SUFFIXES:
+            for ref in refs:
+                path = Path(ref)
+                if path.suffix.lower() == suffix and path.exists():
+                    return path
+        return None
+
+    hit = _scan(entry.run.artifact_refs)
+    if hit is not None:
+        return hit
+    return _scan(entry.manifest.artifacts)
 
 
 def entry_to_shard_arrays(

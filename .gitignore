@@ -14,3 +14,19 @@ desktop/dist/
 desktop/release/
 desktop/python-dist/
 *.tsbuildinfo
+
+# Local Modal/torch shim (pure-Python deps live here; install via requirements on remote)
+pylibs/
+
+# Generated OpenRocket hardware corpus binaries (keep JSON manifests)
+data/openrocket_hardware_8k/**/*.stl
+data/openrocket_hardware_8k/**/*.ork
+
+# Oversized external downloads (GitHub 100MB limit)
+data/raw_downloads/external/jaxa_ryugu/SHAPE_SFM_3M_v20180804.csv
+data/raw_downloads/external/jaxa_ryugu/SHAPE_SFM_3M_v20180804.obj
+
+# Accidental CalculiX CLI dumps
+-help.cvg
+-help.dat
+-help.sta

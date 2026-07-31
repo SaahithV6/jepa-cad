@@ -18,14 +18,58 @@ import sys
 import traceback
 from typing import Any
 
-REPO_ROOT = Path(os.environ.get("LATTICEZERO_REPO_ROOT", Path(__file__).resolve().parents[2]))
+def _default_repo_root() -> Path:
+    """Resolve cadflow root for both repo-dev and AppImage layouts.
+
+    Dev:     desktop/python/bridge.py → repo root (parents[2])
+    Packaged: resources/python-bridge/bridge.py → resources (parents[1])
+    """
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[1], here.parents[2]):
+        if (candidate / "cadflow").is_dir():
+            return candidate
+    return here.parents[2]
+
+
+REPO_ROOT = Path(os.environ.get("LATTICEZERO_REPO_ROOT", _default_repo_root()))
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-APP_ROOT = Path(os.environ.get("LATTICEZERO_DATA_DIR", Path.home() / ".local/share/latticezero"))
+
+def _resolve_app_root() -> Path:
+    home = Path.home()
+    uid = os.getuid() if hasattr(os, "getuid") else "u"
+    candidates = []
+    env = os.environ.get("LATTICEZERO_DATA_DIR")
+    if env:
+        candidates.append(Path(env))
+    candidates.extend(
+        [
+            home / ".local/share/latticezero",
+            home / ".local/share/latticezero-user",
+            Path(f"/tmp/latticezero-data-{uid}"),
+        ]
+    )
+    for candidate in candidates:
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            probe = candidate / f".write-{os.getpid()}"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return candidate
+        except OSError:
+            continue
+    return candidates[-1]
+
+
+APP_ROOT = _resolve_app_root()
 RUN_ROOT = APP_ROOT / "runs"
 FLYWHEEL_PATH = APP_ROOT / "flywheel.jsonl"
-RUN_ROOT.mkdir(parents=True, exist_ok=True)
+try:
+    RUN_ROOT.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Keep import alive; run_pipeline will surface a clear error if writes fail.
+    pass
 
 
 def emit(event: str, payload: dict[str, Any]) -> None:
@@ -66,7 +110,20 @@ def _attr(module_name: str, attribute: str) -> Any:
 def bootstrap(_: dict[str, Any]) -> dict[str, Any]:
     build_doctor_report = _attr("cadflow.doctor", "build_doctor_report")
     data_flywheel = _attr("cadflow.flywheel", "DataFlywheel")
+    seed_app_materials = _attr("cadflow.material_eval", "seed_app_materials")
     doctor = build_doctor_report()
+    try:
+        materials = seed_app_materials(APP_ROOT)
+    except OSError as exc:
+        materials = {
+            "catalog_path": None,
+            "materials": 0,
+            "eval_report": None,
+            "suite_passed": 0,
+            "suite_failed": 0,
+            "pass_rate": 0,
+            "error": str(exc),
+        }
     entries = list(data_flywheel(FLYWHEEL_PATH).load_entries())
     verified = [entry for entry in entries if entry.verified]
     momentum = min(100, len(verified) * 8 + len(entries) * 2)
@@ -74,12 +131,15 @@ def bootstrap(_: dict[str, Any]) -> dict[str, Any]:
         "appRoot": str(APP_ROOT),
         "repoRoot": str(REPO_ROOT),
         "doctor": doctor,
+        "materials": materials,
         "stats": {
             "runs": len(entries),
             "verified": len(verified),
             "promoted": len([entry for entry in entries if "promoted" in entry.manifest.tags]),
             "momentum": momentum,
             "modelVersion": _model_version(),
+            "materialsCatalog": materials.get("materials", 0),
+            "materialEvalPassRate": materials.get("pass_rate", 0),
         },
         "recentRuns": [_entry_summary(entry) for entry in reversed(entries[-12:])],
     }
@@ -142,11 +202,14 @@ def run_pipeline(params: dict[str, Any]) -> dict[str, Any]:
     run_id = f"{name.lower().replace(' ', '-')}-{random.randint(1000, 9999)}"
 
     emit("run.stage", {"runId": run_id, "stage": "planning", "progress": 0.08, "message": "Freezing structured design intent"})
+    material_name = str(params.get("material", "Al 6061-T6"))
+    material_props = _resolve_material_props(material_name)
     manifest = job_manifest(
         name=name,
         inputs={
             "geometry": spec,
-            "materials": [params.get("material", "Al 6061-T6")],
+            "materials": [material_name],
+            "material_properties": material_props,
         },
         parameters={
             "solver": solver,
@@ -155,8 +218,11 @@ def run_pipeline(params: dict[str, Any]) -> dict[str, Any]:
             "max_stress_mpa": float(params.get("stressLimit", 240)),
             "Cd_guess": float(params.get("dragTarget", 0.24)),
             "peak_torque": float(params.get("torqueTarget", 38)),
+            "material_id": material_props.get("material_id"),
+            "youngs_modulus_gpa": material_props.get("youngs_modulus_gpa"),
+            "allowable_stress_mpa": material_props.get("allowable_stress_mpa"),
         },
-        tags=("desktop", "latticezero", "investor-demo"),
+        tags=("desktop", "latticezero", "investor-demo", "material-eval"),
         notes="Created by LatticeZero; geometry is deterministic and verification-gated.",
     )
     emit("run.stage", {"runId": run_id, "stage": "geometry", "progress": 0.24, "message": "Building deterministic B-rep"})
@@ -178,6 +244,39 @@ def run_pipeline(params: dict[str, Any]) -> dict[str, Any]:
     payload["geometry"] = spec
     payload["metrics"] = _result_metrics(payload)
     payload["ghosts"] = _ghost_variants(spec)
+    payload["material"] = material_props
+    # Attach material-property gate using FEA stress when present
+    try:
+        MaterialEvalCase = _attr("cadflow.material_eval", "MaterialEvalCase")
+        evaluate_case = _attr("cadflow.material_eval", "evaluate_case")
+        volume = payload["metrics"].get("volume")
+        volume_m3 = (float(volume) * 1e-9) if volume is not None else 1e-5  # mm³ → m³
+        fea_stress = payload["metrics"].get("stress")
+        # Prefer FEA stress; never treat the design stress *limit* as applied load.
+        fea_val = float(fea_stress) if fea_stress is not None else None
+        load_n = float(params.get("load", 1200))
+        # Rough screening stress from load / (bbox face area) when FEA is absent.
+        applied = None
+        if fea_val is None and volume is not None and float(volume) > 0:
+            face = max(float(volume) ** (2.0 / 3.0), 1e-6)
+            applied = (load_n / face) * 1e-3  # N/mm² ≈ MPa for mm-based mock volumes
+        mat_report = evaluate_case(
+            MaterialEvalCase(
+                case_id=run_id,
+                material_id=str(material_props.get("material_id") or "al-6061-t6"),
+                family="structure",
+                volume_m3=volume_m3,
+                applied_stress_mpa=applied,
+                service_temp_k=300.0,
+                fea_max_stress_mpa=fea_val,
+            )
+        ).to_dict()
+        payload["material_eval"] = mat_report
+        payload["metrics"]["material_eval_passed"] = mat_report.get("passed")
+        payload["metrics"]["allowable_stress_mpa"] = mat_report.get("allowable_mpa")
+        payload["metrics"]["mass_kg"] = mat_report.get("mass_kg")
+    except Exception as exc:  # noqa: BLE001
+        payload["material_eval"] = {"passed": False, "error": str(exc)}
     payload["momentumEarned"] = 12 if result.ok else 2
     emit(
         "run.stage",
@@ -213,12 +312,10 @@ def _result_metrics(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ghost_variants(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ghosts share the seed solid; viewport applies scale (avoid double-scaling dims)."""
     ghosts = []
     for index, scale in enumerate((0.82, 0.91, 1.06)):
         variant = json.loads(json.dumps(spec))
-        for key in ("width", "height", "depth", "radius"):
-            if isinstance(variant.get(key), (int, float)):
-                variant[key] *= scale
         ghosts.append({"iteration": index, "scale": scale, "geometry": variant})
     return ghosts
 
@@ -276,6 +373,72 @@ def promote(params: dict[str, Any]) -> dict[str, Any]:
     return result.to_dict()
 
 
+def list_materials(_: dict[str, Any]) -> dict[str, Any]:
+    enriched_properties = _attr("cadflow.material_eval", "enriched_properties")
+    iter_materials = _attr("cadflow.space_materials", "iter_materials")
+    materials = [enriched_properties(m) for m in iter_materials()]
+    return {"materials": materials, "count": len(materials)}
+
+
+def material_eval(params: dict[str, Any]) -> dict[str, Any]:
+    MaterialEvalCase = _attr("cadflow.material_eval", "MaterialEvalCase")
+    evaluate_case = _attr("cadflow.material_eval", "evaluate_case")
+    case = MaterialEvalCase(
+        case_id=str(params.get("caseId") or params.get("case_id") or "adhoc"),
+        material_id=str(params.get("materialId") or params.get("material_id") or "al-6061-t6"),
+        family=str(params.get("family", "structure")),
+        volume_m3=float(params.get("volume_m3") or params.get("volumeM3") or 1e-5),
+        applied_stress_mpa=_optional_float(params.get("applied_stress_mpa") or params.get("stressMpa")),
+        service_temp_k=_optional_float(params.get("service_temp_k") or params.get("tempK")),
+        join_material_id=params.get("join_material_id") or params.get("joinMaterialId"),
+        fea_max_stress_mpa=_optional_float(params.get("fea_max_stress_mpa") or params.get("feaStressMpa")),
+        notes=str(params.get("notes", "")),
+    )
+    return evaluate_case(case).to_dict()
+
+
+def material_eval_suite(params: dict[str, Any]) -> dict[str, Any]:
+    run_suite = _attr("cadflow.material_eval", "run_suite")
+    write_suite_report = _attr("cadflow.material_eval", "write_suite_report")
+    suite = run_suite()
+    out = APP_ROOT / "evals" / "materials"
+    path = write_suite_report(out, suite)
+    suite["report_path"] = str(path)
+    emit(
+        "eval.stage",
+        {
+            "stage": "material_suite",
+            "progress": 1,
+            "message": f"Material eval {suite['passed']}/{suite['cases']} passed",
+            "ok": suite["failed"] == 0 or suite["pass_rate"] >= 0.7,
+        },
+    )
+    return suite
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
+
+
+def _resolve_material_props(name_or_id: str) -> dict[str, Any]:
+    enriched_properties = _attr("cadflow.material_eval", "enriched_properties")
+    iter_materials = _attr("cadflow.space_materials", "iter_materials")
+    MATERIALS_BY_ID = _attr("cadflow.space_materials", "MATERIALS_BY_ID")
+    key = name_or_id.strip().lower()
+    if key in MATERIALS_BY_ID:
+        return enriched_properties(MATERIALS_BY_ID[key])
+    for mat in iter_materials():
+        if mat.name.lower() == key or mat.material_id.lower() == key:
+            return enriched_properties(mat)
+    # fuzzy contains
+    for mat in iter_materials():
+        if key in mat.name.lower() or key in mat.material_id.lower():
+            return enriched_properties(mat)
+    return enriched_properties(MATERIALS_BY_ID["al-6061-t6"])
+
+
 METHODS = {
     "health": health,
     "bootstrap": bootstrap,
@@ -286,6 +449,9 @@ METHODS = {
     "latent_atlas": latent_atlas,
     "run_autopilot": run_autopilot,
     "promote": promote,
+    "list_materials": list_materials,
+    "material_eval": material_eval,
+    "material_eval_suite": material_eval_suite,
 }
 
 

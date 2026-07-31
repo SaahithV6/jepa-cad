@@ -1,0 +1,11 @@
+{
+  "sources": {
+    "corpus_existing": 2108,
+    "openrocket": 24,
+    "birds4": 46,
+    "rocketpy_variants": 36,
+    "openscad_variants": 117
+  },
+  "total": 2331,
+  "extraction_date": "1784829985.9453385"
+}
