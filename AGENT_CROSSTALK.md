@@ -11,9 +11,10 @@ Confirmed by architecture audit + local counts:
 - Model: **~76.5M trainable / ~127M total** (not 24B)
 - Objective: latent JEPA only — **no CAD decoder**
 - Text: 32-d MD5 bag — **no semantic encoder**
-- Graph: flatten to 124-d — **no GNN**; Neo4j offline / unused at train time
-- Modal staging: uploads `jepa-train-bundle/` only → **misses 12,294 `artifacts/physics_shards/` refs**
+- Graph: flatten to conditioning vector — **no GNN**; Neo4j offline / unused at train time
+- Modal staging: **fixed 2026-07-31** to also stage `artifacts/physics_shards/` + `data/processed/nasa3d` via `extra_search_roots` (still verify portable package before launch)
 - FEA/CFD share one 8-ch tensor with per-shard [0,1] norm (magnitudes discarded)
+- Corpus coverage work: see `docs/corpus-full-coverage-roadmap.md` + `scripts/corpus_full_coverage.py`
 
 Before any cloud train: portable dataset package (bundle + physics_shards), Neo4j bulk load + Cypher parity,
 semantic text + graph encoders, modality-correct fields, CAD decoder, honest scale ladder.

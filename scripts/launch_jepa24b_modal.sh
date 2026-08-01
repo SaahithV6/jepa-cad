@@ -9,7 +9,10 @@
 #   * ~/.modal.toml token
 #   * ./pylibs shim (typing_extensions/pyparsing/multidict/yarl/protobuf)
 #   * artifacts/jepa-train-bundle/graph.json = live TAO graph
-#     (graph_metadata_dim=89 fix in configs + data/graph_dataset.py)
+#   * Prefer artifacts/portable-train-package/ after:
+#       ./scripts/prepare_portable_train_package.sh
+#     so physics_shards resolve (Modal staging also mounts them now).
+#   * graph_metadata_dim must match data.graph_dataset.GRAPH_METADATA_DIM
 
 set -euo pipefail
 cd /home/best/jepa-cad

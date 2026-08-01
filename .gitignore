@@ -30,3 +30,6 @@ data/raw_downloads/external/jaxa_ryugu/SHAPE_SFM_3M_v20180804.obj
 -help.cvg
 -help.dat
 -help.sta
+
+# /goal harness runtime state (keep hooks/skills/commands)
+.cursor/goal/

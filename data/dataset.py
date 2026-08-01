@@ -153,6 +153,13 @@ def build_dataset(
         if graph_path is None:
             raise FileNotFoundError("data.graph_path (or graph_bundle / graph_json) is required for graph data_source")
         graph_root = data_cfg.get("graph_data_root") or data_cfg.get("data_dir")
+        extra = data_cfg.get("extra_search_roots")
+        if isinstance(extra, str):
+            extra_roots = [extra]
+        elif isinstance(extra, (list, tuple)):
+            extra_roots = list(extra)
+        else:
+            extra_roots = None
         return GraphBackedCADDataset(
             graph_path=graph_path,
             data_root=graph_root,
@@ -161,6 +168,7 @@ def build_dataset(
             limit=data_cfg.get("graph_limit"),
             prefer_physics_shards=bool(data_cfg.get("prefer_physics_shards", True)),
             physics_shards_only=bool(data_cfg.get("physics_shards_only", False)),
+            extra_search_roots=extra_roots,
         )
 
     real_ds = CADSimulationDataset(

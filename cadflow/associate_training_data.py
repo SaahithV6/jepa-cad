@@ -49,7 +49,7 @@ def _as_float(value: Any) -> float | None:
 def _resolve_geometry_path(part: dict[str, Any]) -> Path | None:
     props = part.get("properties") or {}
     candidates: list[Path] = []
-    for key in ("geometry_ref", "stl"):
+    for key in ("geometry_ref", "stl", "cad_ref", "source_path", "path", "file_path", "local_path"):
         raw = props.get(key)
         if not raw:
             continue
@@ -58,6 +58,10 @@ def _resolve_geometry_path(part: dict[str, Any]) -> Path | None:
         if not p.is_absolute():
             candidates.append(ROOT / p)
             candidates.append(ROOT / "data/openrocket_hardware_8k" / p)
+            candidates.append(ROOT / "artifacts/jepa-train-bundle" / p)
+            candidates.append(ROOT / "artifacts/jepa-train-bundle/files" / Path(str(raw)).name)
+            if str(raw).startswith("files/"):
+                candidates.append(ROOT / "artifacts/jepa-train-bundle" / raw)
     raw_geom = props.get("raw_geometry")
     if isinstance(raw_geom, dict):
         for key in ("path", "path_rel"):
@@ -69,6 +73,7 @@ def _resolve_geometry_path(part: dict[str, Any]) -> Path | None:
             if not p.is_absolute():
                 candidates.append(ROOT / p)
                 candidates.append(ROOT / "data/openrocket_hardware_8k" / p)
+                candidates.append(ROOT / "artifacts/jepa-train-bundle" / p)
     seen: set[str] = set()
     for cand in candidates:
         key = str(cand)

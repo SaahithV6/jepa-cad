@@ -8,11 +8,11 @@ geometry/shard files the graph points to.
 Conditioning vector layout (``GRAPH_METADATA_DIM``):
   9  legacy file-node stats
   25 family one-hot (``FAMILY_VOCAB``)
-  23 physics targets / measured FEA-CFD / airflow overlays
-  11 geometry metrics
+  N  physics targets / measured FEA-CFD / airflow overlays (``CONDITIONING_QUANTITIES``)
+  11 geometry metrics (+ mesh structural slots folded into geom/text)
   8  material engineering props
-  16 generation params
-  32 hashed text bag (spec_prompt + Document excerpts)
+  P  generation params (``PARAM_QUANTITIES``)
+  32 hashed text bag (spec_prompt + Document excerpts + categorical params)
   = computed (see GRAPH_METADATA_DIM)
 """
 
@@ -149,7 +149,13 @@ PARAM_QUANTITIES: tuple[tuple[str, float], ...] = (
     ("side_mm", 1.0 / 500.0),
     ("width_mm", 1.0 / 1000.0),
     ("power", 1.0),
+    ("depth_mm", 1.0 / 500.0),
+    ("radial_width_mm", 1.0 / 500.0),
+    ("densified_cap_mm", 1.0 / 50.0),
+    ("fineness_ratio", 1.0 / 10.0),
 )
+# String params folded into the text bag (not numeric slots).
+_CATEGORICAL_PARAM_KEYS = ("shape", "nose_shape", "profile", "cross_section", "finish")
 
 _MATERIAL_CATEGORIES = (
     "aluminum",
@@ -213,7 +219,13 @@ def _load_graph_payload(graph_path: Path) -> dict[str, Any]:
     return json.loads(graph_path.read_text(encoding="utf-8"))
 
 
-def _candidate_paths(raw_value: str, *, graph_path: Path, graph_root: Path | None) -> list[Path]:
+def _candidate_paths(
+    raw_value: str,
+    *,
+    graph_path: Path,
+    graph_root: Path | None,
+    extra_roots: list[Path] | None = None,
+) -> list[Path]:
     raw = Path(raw_value)
     candidates: list[Path] = []
     if raw.is_absolute():
@@ -223,9 +235,17 @@ def _candidate_paths(raw_value: str, *, graph_path: Path, graph_root: Path | Non
             candidates.append((graph_root / raw).resolve())
         candidates.append((graph_path.parent / raw).resolve())
         # Walk upward from the graph export to cover repo-root-relative paths.
-        for parent in list(graph_path.resolve().parents)[:4]:
+        for parent in list(graph_path.resolve().parents)[:6]:
             candidates.append((parent / raw).resolve())
         candidates.append((Path.cwd() / raw).resolve())
+        # Common corpus roots (physics shards, processed NASA3D, raw CAD).
+        for root in extra_roots or []:
+            candidates.append((Path(root) / raw).resolve())
+        # nasa3d/*.npz historically stored without data/processed/ prefix
+        if raw_value.startswith("nasa3d/"):
+            for parent in list(graph_path.resolve().parents)[:6]:
+                candidates.append((parent / "data" / "processed" / raw_value).resolve())
+            candidates.append((Path.cwd() / "data" / "processed" / raw_value).resolve())
     seen: set[str] = set()
     unique: list[Path] = []
     for candidate in candidates:
@@ -237,13 +257,24 @@ def _candidate_paths(raw_value: str, *, graph_path: Path, graph_root: Path | Non
     return unique
 
 
-def _resolve_node_path(node: dict[str, Any], *, graph_path: Path, graph_root: Path | None) -> Path | None:
+def _resolve_node_path(
+    node: dict[str, Any],
+    *,
+    graph_path: Path,
+    graph_root: Path | None,
+    extra_roots: list[Path] | None = None,
+) -> Path | None:
     props = node.get("properties", {}) or {}
     for key in _PATH_KEYS:
         value = props.get(key)
         if not value:
             continue
-        candidates = _candidate_paths(str(value), graph_path=graph_path, graph_root=graph_root)
+        candidates = _candidate_paths(
+            str(value),
+            graph_path=graph_path,
+            graph_root=graph_root,
+            extra_roots=extra_roots,
+        )
         for candidate in candidates:
             if candidate.exists():
                 return candidate
@@ -359,6 +390,7 @@ class GraphBackedCADDataset(Dataset):
         limit: int | None = None,
         prefer_physics_shards: bool = True,
         physics_shards_only: bool = False,
+        extra_search_roots: list[str | Path] | None = None,
     ):
         self.graph_path = Path(graph_path)
         self.data_root = Path(data_root) if data_root is not None else None
@@ -367,6 +399,27 @@ class GraphBackedCADDataset(Dataset):
         self.node_types = set(node_types or tuple(_FILE_NODE_TYPES))
         self.prefer_physics_shards = prefer_physics_shards
         self.physics_shards_only = physics_shards_only
+        # Always search repo-ish roots so artifacts/physics_shards and data/processed resolve.
+        defaults: list[Path] = []
+        for parent in list(self.graph_path.resolve().parents)[:6]:
+            defaults.extend(
+                [
+                    parent,
+                    parent / "artifacts",
+                    parent / "data",
+                    parent / "data" / "processed",
+                ]
+            )
+        defaults.append(Path.cwd())
+        extras = [Path(p).expanduser().resolve() for p in (extra_search_roots or [])]
+        seen: set[str] = set()
+        self.extra_search_roots: list[Path] = []
+        for p in extras + defaults:
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            self.extra_search_roots.append(p)
         payload = _load_graph_payload(self.graph_path)
         metadata = payload.get("metadata", {}) if isinstance(payload, dict) else {}
         graph_root = self.data_root
@@ -389,7 +442,12 @@ class GraphBackedCADDataset(Dataset):
         for node in nodes:
             if node.get("type") not in self.node_types:
                 continue
-            path = _resolve_node_path(node, graph_path=self.graph_path, graph_root=self.graph_root)
+            path = _resolve_node_path(
+                node,
+                graph_path=self.graph_path,
+                graph_root=self.graph_root,
+                extra_roots=self.extra_search_roots,
+            )
             if path is None:
                 continue
             props = dict(node.get("properties", {}))
@@ -453,6 +511,33 @@ class GraphBackedCADDataset(Dataset):
                 val = _as_float(value)
                 if val is not None:
                     payload["params"][str(key)] = val
+                elif key in _CATEGORICAL_PARAM_KEYS and value is not None:
+                    payload.setdefault("text_parts", []).append(f"{key}={value}")
+        elif isinstance(params, dict):
+            for key in _CATEGORICAL_PARAM_KEYS:
+                if params.get(key) is not None:
+                    payload.setdefault("text_parts", []).append(f"{key}={params[key]}")
+
+        # Mesh / structural stats on Part props (faces, watertight, extents).
+        faces = _as_float(props.get("faces"))
+        if faces is not None and "face_count" not in payload["geometry"]:
+            payload["geometry"]["face_count"] = faces
+        extents = props.get("extents_mm")
+        if isinstance(extents, (list, tuple)) and len(extents) >= 3:
+            for i, axis in enumerate(("bbox_x", "bbox_y", "bbox_z")):
+                val = _as_float(extents[i])
+                if val is not None and axis not in payload["geometry"]:
+                    # extents are mm; geometry vector expects ~meters-ish scale via /10
+                    payload["geometry"][axis] = float(val) / 1000.0
+        if props.get("watertight") is not None:
+            payload.setdefault("text_parts", []).append(
+                f"watertight={1 if props.get('watertight') else 0}"
+            )
+        tags = props.get("tags")
+        if isinstance(tags, list) and tags:
+            payload.setdefault("text_parts", []).append(
+                "tags=" + ",".join(str(t) for t in tags[:12])
+            )
 
         # Material may live on Part props even without walking MADE_OF yet.
         if not payload["material"]:
@@ -497,15 +582,16 @@ class GraphBackedCADDataset(Dataset):
 
         fea = neighbor.get("simulation_results_fea")
         if isinstance(fea, dict):
-            for key in ("max_stress_mpa", "mean_stress_mpa", "safety_factor"):
+            for key in ("max_stress_mpa", "mean_stress_mpa", "max_displacement_mm", "safety_factor"):
                 val = _as_float(fea.get(key))
                 if val is not None and key not in payload["physics"]:
                     payload["physics"][key] = val
             parse = fea.get("parse")
             if isinstance(parse, dict):
-                val = _as_float(parse.get("max_stress_mpa"))
-                if val is not None and "max_stress_mpa" not in payload["physics"]:
-                    payload["physics"]["max_stress_mpa"] = val
+                for key in ("max_stress_mpa", "mean_stress_mpa", "max_displacement_mm"):
+                    val = _as_float(parse.get(key))
+                    if val is not None and key not in payload["physics"]:
+                        payload["physics"][key] = val
         cfd = neighbor.get("simulation_results_cfd")
         if isinstance(cfd, dict):
             for src, dst in (

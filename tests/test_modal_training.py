@@ -86,7 +86,12 @@ def test_launch_modal_training_uploads_and_syncs(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(
         modal_training,
         "_build_modal_runner",
-        lambda raw_dirs, run_id, graph_path=None: (remote, ("/root/staged_inputs/modal_20260722_120000/raw_00",), None),
+        lambda raw_dirs, run_id, graph_path=None: (
+            remote,
+            ("/root/staged_inputs/modal_20260722_120000/raw_00",),
+            None,
+            (),
+        ),
     )
     monkeypatch.setattr(modal_training.modal, "enable_output", lambda: contextlib.nullcontext())
     monkeypatch.setattr(modal_training.app, "run", lambda: contextlib.nullcontext())

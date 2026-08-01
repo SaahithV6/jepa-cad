@@ -250,6 +250,7 @@ def _build_modal_runner(
         staged_raw_dirs.append(str(remote_dir))
 
     staged_graph_path: str | None = None
+    staged_extra_roots: list[str] = []
     if graph_path is not None:
         graph_source = Path(graph_path)
         remote_graph_dir = REMOTE_STAGING_ROOT / run_id / "graph"
@@ -261,6 +262,31 @@ def _build_modal_runner(
             remote_graph = remote_graph_dir / graph_source.name
             image = image.add_local_file(str(graph_source), remote_path=str(remote_graph))
             staged_graph_path = str(remote_graph)
+
+        # Physics field shards live outside the bundle under artifacts/physics_shards/.
+        # Stage them so repo-relative shard_path values resolve on the remote image.
+        project_root = Path(__file__).resolve().parents[1]
+        remote_proj = REMOTE_STAGING_ROOT / run_id / "proj"
+        local_shards = project_root / "artifacts" / "physics_shards"
+        if local_shards.is_dir():
+            image = image.add_local_dir(
+                str(local_shards),
+                remote_path=str(remote_proj / "artifacts" / "physics_shards"),
+            )
+            staged_extra_roots.append(str(remote_proj))
+        local_nasa = project_root / "data" / "processed" / "nasa3d"
+        if local_nasa.is_dir():
+            image = image.add_local_dir(
+                str(local_nasa),
+                remote_path=str(remote_proj / "data" / "processed" / "nasa3d"),
+            )
+            if str(remote_proj) not in staged_extra_roots:
+                staged_extra_roots.append(str(remote_proj))
+        # Portable package already embeds artifacts/ + data/processed — prefer that root.
+        if (graph_source.parent / "artifacts" / "physics_shards").exists() or (
+            graph_source.parent / "data" / "processed" / "nasa3d"
+        ).exists():
+            staged_extra_roots.insert(0, str(remote_graph_dir))
 
     @app.function(
         image=image,
@@ -322,7 +348,7 @@ def _build_modal_runner(
         _commit_artifact_volume()
         return payload
 
-    return _run_dynamic_flywheel_cycle, tuple(staged_raw_dirs), staged_graph_path
+    return _run_dynamic_flywheel_cycle, tuple(staged_raw_dirs), staged_graph_path, tuple(staged_extra_roots)
 
 def _modal_volume_get(volume_name: str, remote_path: str, local_path: Path | str) -> None:
     """Download a file/directory from Modal volume to local."""
@@ -442,8 +468,11 @@ def launch_modal_training(
     plan = build_cloud_training_plan(manifest, family=family, provider_preference="Modal")
     run_id = _utc_run_id(manifest.name)
     staged_graph_path: str | None = None
+    staged_extra_roots: tuple[str, ...] = tuple()
     if raw_dirs or graph_path is not None:
-        runner, staged_raw_dirs, staged_graph_path = _build_modal_runner(raw_dirs, run_id, graph_path=graph_path)
+        runner, staged_raw_dirs, staged_graph_path, staged_extra_roots = _build_modal_runner(
+            raw_dirs, run_id, graph_path=graph_path
+        )
     else:
         runner = _run_flywheel_cycle
         staged_raw_dirs = tuple()
@@ -452,6 +481,10 @@ def launch_modal_training(
     if staged_graph_path is not None:
         effective_overrides.append(f"data.graph_path={staged_graph_path}")
         effective_overrides.append(f"data.graph_data_root={Path(staged_graph_path).parent}")
+    if staged_extra_roots:
+        # OmegaConf-style list override used by cadflow config merge.
+        joined = "[" + ",".join(staged_extra_roots) + "]"
+        effective_overrides.append(f"data.extra_search_roots={joined}")
     with app.run():
         remote_result = runner.remote(
             run_id,
