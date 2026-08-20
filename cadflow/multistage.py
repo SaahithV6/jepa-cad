@@ -23,6 +23,8 @@ from generate_propulsion_trajectory_corpus import (
     G0, R_EARTH, atmosphere, nozzle_performance,
 )
 
+MU_EARTH = 3.986004418e14
+
 
 @dataclass
 class Stage:
@@ -120,10 +122,45 @@ def integrate_stack(
             break
         if idx >= len(stages) - 1 and prop_left <= 1e-9 and v * math.sin(fpa) < 0.0:
             break
+        # Once the stack is out of propellant and above the sensible
+        # atmosphere, the rest of the arc is a two-body conic and the analytic
+        # apogee below is exact -- integrating further only accumulates step
+        # error. Stopping here also removes the dependence on t_max: high-energy
+        # flights used to run into the 4000 s limit and get extrapolated from
+        # whatever mid-flight state they happened to be in, which made apogee
+        # jump discontinuously (25,094 km at 1100 kg of propellant, escape at
+        # 1200 kg) and left targets in between unreachable.
+        if idx >= len(stages) - 1 and prop_left <= 1e-9 and h > 200_000.0:
+            break
 
-    # ballistic apogee from the state at burnout, so a suborbital arc that is
-    # still climbing when integration stops is not truncated
-    apogee_m = h + max(0.0, (v * math.sin(fpa)) ** 2 / (2 * 9.80665))
+    # Ballistic apogee from the state at cutoff, so an arc still climbing when
+    # integration stops is not truncated.
+    #
+    # This used h + v_vertical^2 / 2g, which assumes constant gravity and only
+    # counts the vertical component. Both fail high up: g falls as 1/r^2, and
+    # the horizontal component carries angular momentum that raises the apogee.
+    # It under-reported badly enough that near-escape missions looked
+    # unreachable.
+    #
+    # Conserve energy and angular momentum instead:
+    #   eps = v^2/2 - mu/r,   L = r v cos(fpa)
+    #   r_apo = (-mu + sqrt(mu^2 + 2 eps L^2)) / (2 eps)      for eps < 0
+    r = R_EARTH + max(h, 0.0)
+    eps = v * v / 2.0 - MU_EARTH / r
+    if eps >= 0.0:
+        apogee_m = float("inf")           # escape trajectory
+    else:
+        L = r * v * math.cos(fpa)
+        disc = MU_EARTH * MU_EARTH + 2.0 * eps * L * L
+        # Apsides are the roots of 2 eps r^2 + 2 mu r - L^2 = 0. For a bound
+        # orbit eps < 0, so the denominator is negative and the +sqrt root is
+        # PERIGEE while the -sqrt root is APOGEE. Taking +sqrt reported the
+        # perigee: apogee appeared pinned just above the current altitude and
+        # then jumped straight to escape, leaving every target in between
+        # unreachable. At r=6571 km and v=10.2 km/s the two roots are 6,571 km
+        # and 39,561 km -- the difference between "200 km" and "33,190 km".
+        r_apo = (-MU_EARTH - math.sqrt(max(0.0, disc))) / (2.0 * eps)
+        apogee_m = max(h, r_apo - R_EARTH)
     return {
         "apogee_m": apogee_m,
         "downrange_m": x,

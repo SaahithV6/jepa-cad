@@ -104,12 +104,19 @@ def separation_limited_ratio(chamber_pressure: float, ambient: float, gamma: flo
     pressure debt and reports absurd sea-level Isp -- e.g. 64 s for an eps=76
     nozzle that in reality would simply separate.
     """
-    if ambient <= 0.0:
+    # The exponential atmosphere underflows to a denormal at extreme altitude:
+    # nonzero, so a plain `<= 0` vacuum check passes it through, but small
+    # enough that the pressure ratio below underflows to exactly zero and
+    # `0 ** negative` raises ZeroDivisionError. Treat anything that small as
+    # vacuum, which is what it physically is.
+    if ambient <= 1e-12:
         return float("inf")
     p_sep = 0.4 * ambient
     if p_sep >= chamber_pressure:
         return 1.0
     pr = p_sep / chamber_pressure
+    if pr <= 1e-300:
+        return float("inf")
     m_sep = math.sqrt(max(0.0, (2.0 / (gamma - 1.0)) * (pr ** (-(gamma - 1.0) / gamma) - 1.0)))
     if m_sep <= 1.0:
         return 1.0

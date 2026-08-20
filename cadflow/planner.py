@@ -49,9 +49,25 @@ class Plan:
     rationale: list[str] = field(default_factory=list)
 
 
+# Earth gravitational parameter, for the energy form of the apogee relation.
+MU_EARTH = 3.986004418e14
+R_EARTH_M = 6.371e6
+
+
 def required_delta_v(apogee_km: float) -> float:
-    """Rough delta-v for a ballistic apogee, including gravity and drag losses."""
-    v = math.sqrt(2 * G0 * apogee_km * 1000.0)
+    """Delta-v for a ballistic apogee, including gravity and drag losses.
+
+    This used sqrt(2 g h), which assumes gravity is constant all the way up.
+    That is fine low down and badly wrong high up, because g falls as 1/r^2:
+    at 12,000 km it overstates the burnout speed by 1.7x and at 40,000 km by
+    2.7x. The planner then demanded architectures the mission did not need, and
+    declared reachable missions impossible.
+
+    The energy form is exact for a ballistic arc:
+        v = sqrt( 2 mu (1/R - 1/(R + h)) )
+    """
+    h = apogee_km * 1000.0
+    v = math.sqrt(2.0 * MU_EARTH * (1.0 / R_EARTH_M - 1.0 / (R_EARTH_M + h)))
     return v * 1.35
 
 
@@ -88,36 +104,96 @@ def build_stack_n(total_prop: float, fractions: list[float], payload: float,
 
 
 def fly_plan(total_prop: float, fractions: list[float], payload: float,
-             pc: float, prop: str):
+             pc: float, prop: str, pitchover_deg: float = 3.0):
     stages, gross, split = build_stack_n(total_prop, fractions, payload, pc, prop)
     dia = max(0.10, (gross / 1000.0) ** (1.0 / 3.0) * 0.55)
     r = integrate_stack(stages, payload, cd=CD,
-                        ref_area_m2=math.pi * (dia / 2) ** 2, dt=0.2)
+                        ref_area_m2=math.pi * (dia / 2) ** 2, dt=0.2,
+                        pitchover_angle=math.radians(pitchover_deg))
     return r["apogee_m"] / 1000.0, gross, stages, split, r
 
 
 def solve_for(target_km: float, fractions: list[float], payload: float,
-              pc: float, prop: str, tol: float = 0.02):
+              pc: float, prop: str, tol: float = 0.02,
+              pitchover_deg: float = 3.0):
     """Bisect total propellant until the stack flies the target."""
-    lo, hi = payload * 0.3, payload * 20000.0
-    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop)
-    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop)
+    # Near-escape missions need mass ratios around 95, so the upper bound has
+    # to allow a vehicle that heavy or the search reports no solution for a
+    # mission that is merely expensive. 40,000 km already needs ~650x payload.
+    lo, hi = payload * 0.3, payload * 400000.0
+    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg)
+    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg)
     if not (a_lo <= target_km <= a_hi):
         return None
+
+    # Coarse pre-scan to tighten the bracket before bisecting. The initial
+    # bracket spans six orders of magnitude in propellant while, near escape,
+    # the band that lands on a given apogee can be a few hundred kg wide:
+    # apogee climbs 2,761 -> 12,766 -> 25,228 km and then goes to escape
+    # between 1,000 and 2,000 kg. Bisection from the full bracket steps past
+    # that band. Walking a log grid first finds the last point below target and
+    # the first at or above it, which brackets the crossing tightly whatever
+    # its width.
+    n_scan = 40
+    prev_x, prev_a = lo, a_lo
+    for i in range(1, n_scan + 1):
+        x = lo * (hi / lo) ** (i / n_scan)
+        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg)
+        if a >= target_km:
+            lo, hi = prev_x, x
+            break
+        prev_x, prev_a = x, a
+    # Keep the closest iterate, not the latest. Bisection probes both sides, and
+    # a probe near the top of the bracket can be an escape trajectory with
+    # infinite apogee; keeping the last one then throws away a solve that had
+    # already converged.
+    # Near escape, apogee is extraordinarily sensitive to delta-v: for a 5 kg
+    # payload the four-stage bracket runs from 5.9 km to escape, so the band
+    # that lands on 40,000 km is very narrow and 26 bisection steps cannot
+    # resolve it. Each evaluation is a ~0.1 s trajectory, so more steps are
+    # cheap.
     best = None
-    for _ in range(26):
+    best_err = float("inf")
+    for _ in range(40):
         mid = math.sqrt(lo * hi)
-        a, gross, stages, split, r = fly_plan(mid, fractions, payload, pc, prop)
-        best = (mid, a, gross, stages, split, r)
-        if abs(a - target_km) / target_km < tol:
+        a, gross, stages, split, r = fly_plan(mid, fractions, payload, pc, prop,
+                                             pitchover_deg)
+        err = abs(a - target_km) / target_km if math.isfinite(a) else float("inf")
+        if err < best_err:
+            best_err, best = err, (mid, a, gross, stages, split, r)
+        if err < tol:
             break
         if a < target_km:
             lo = mid
         else:
             hi = mid
-    if best is None or abs(best[1] - target_km) / target_km > 0.10:
+    if best is None or best_err > 0.10:
         return None
     return best
+
+
+def _splits_for(n: int) -> list[list[float]]:
+    """Candidate propellant splits for an n-stage stack.
+
+    Previously this hardcoded one, two and "else three" entries, so a candidate
+    of four or five silently built a three-stage vehicle and missions needing
+    more than three stages reported no solution. Generalised: each stage takes a
+    geometric share of what remains, swept over the ratio, which brackets the
+    usual optimum without an exhaustive search.
+    """
+    if n <= 1:
+        return [[1.0]]
+    out: list[list[float]] = []
+    for ratio in (0.50, 0.58, 0.66, 0.74, 0.82):
+        fr: list[float] = []
+        remaining = 1.0
+        for i in range(n - 1):
+            take = remaining * ratio
+            fr.append(take)
+            remaining -= take
+        fr.append(remaining)
+        out.append(fr)
+    return out
 
 
 def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
@@ -146,21 +222,26 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
         rationale.append(
             f"that exceeds the {MAX_STAGE_MR:.2f} a stage can close, so at least "
             f"{n_needed} stages are required")
-        candidates = [n_needed, n_needed + 1]
+        candidates = [n_needed, n_needed + 1, n_needed + 2]
 
     best_plan = None
     for n in candidates:
         # search the split; equal-ish splits with more in the booster are the
         # usual optimum, so sample around that rather than exhaustively
-        if n == 1:
-            splits = [[1.0]]
-        elif n == 2:
-            splits = [[f, 1 - f] for f in (0.60, 0.66, 0.72, 0.78, 0.84)]
-        else:
-            splits = [[f, (1 - f) * 0.65, (1 - f) * 0.35]
-                      for f in (0.55, 0.62, 0.70, 0.76)]
+        splits = _splits_for(n)
         for fr in splits:
-            got = solve_for(target_km, fr, payload_kg, pc, propellant)
+          # The ascent profile is part of the design, not a constant. A 3 deg
+          # pitchover suits a sounding rocket; on a high-energy flight it turns
+          # the vehicle horizontal early, so beyond some point extra propellant
+          # buys downrange instead of altitude and apogee stops responding --
+          # non-monotonic, which no amount of bisection resolves. Steeper
+          # profiles are searched alongside the mass.
+          # Steeper first: high-energy missions need a more vertical profile,
+          # and stopping at the first profile that closes keeps the search from
+          # multiplying out to thousands of trajectory integrations.
+          for pitch in (1.5, 3.0, 6.0):
+            got = solve_for(target_km, fr, payload_kg, pc, propellant,
+                            pitchover_deg=pitch)
             if got is None:
                 continue
             tp, achieved, gross, stages, split, r = got
@@ -173,6 +254,7 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
                 best_plan = Plan(stages=len(fr), split=fr, gross_kg=gross,
                                  achieved_km=achieved, stack=stages,
                                  trajectory=r, rationale=list(rationale))
+            break   # this profile closed the mission; move to the next split
         if best_plan is not None and n == candidates[0]:
             best_plan.rationale.append(
                 f"{best_plan.stages} stage(s) closes the mission at "
