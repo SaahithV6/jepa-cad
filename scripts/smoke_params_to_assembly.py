@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Smoke: user params/constraints → CAD assembly → solid verify → solver.
+
+This is the non-neural MVP path (CadQuery/Mock + FEA/CFD adapter).
+Does not claim JEPA text→CAD decode; proves the classical assembly loop.
+
+Usage:
+  python3 scripts/smoke_params_to_assembly.py
+  python3 scripts/smoke_params_to_assembly.py --out artifacts/smoke_params_assembly
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from cadflow.manifest import JobManifest  # noqa: E402
+from cadflow.pipeline import run_pipeline  # noqa: E402
+
+
+def constraints_to_geometry(constraints: dict) -> dict:
+    """Map typed constraints → assembly spec (not free-form NL)."""
+    body_r = float(constraints.get("body_radius_mm", 40.0))
+    body_h = float(constraints.get("body_height_mm", 200.0))
+    nose_r = float(constraints.get("nose_radius_mm", body_r))
+    nose_h = float(constraints.get("nose_height_mm", body_r * 1.5))
+    fin_span = float(constraints.get("fin_span_mm", body_r * 0.8))
+    fin_thick = float(constraints.get("fin_thickness_mm", 3.0))
+    fin_chord = float(constraints.get("fin_chord_mm", body_r * 1.2))
+    # Assembly: body cylinder ∪ nose cylinder ∪ fin box (boolean union proxy)
+    return {
+        "kind": "assembly",
+        "parts": [
+            {"kind": "cylinder", "params": {"radius": body_r, "height": body_h}},
+            {"kind": "cylinder", "params": {"radius": nose_r * 0.85, "height": nose_h}},
+            {
+                "kind": "box",
+                "params": {
+                    "width": fin_chord,
+                    "height": fin_thick,
+                    "depth": fin_span,
+                },
+            },
+        ],
+        "features": [
+            {"op": "fillet", "params": {"radius": min(1.5, fin_thick * 0.4)}},
+        ],
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", type=Path, default=ROOT / "artifacts" / "smoke_params_assembly")
+    ap.add_argument("--solver", default="fea", choices=["fea", "cfd", "none"])
+    ap.add_argument("--no-fallback", action="store_true")
+    args = ap.parse_args()
+
+    constraints = {
+        "family": "rocket_stack_proxy",
+        "body_radius_mm": 42.0,
+        "body_height_mm": 220.0,
+        "nose_height_mm": 70.0,
+        "fin_span_mm": 55.0,
+        "fin_thickness_mm": 3.0,
+        "max_stress_mpa": 120.0,
+        "material": "Al6061",
+        "text_prompt": "small aluminum sounding-rocket body with nose and single fin stub",
+    }
+    geometry = constraints_to_geometry(constraints)
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / "constraints.json").write_text(json.dumps(constraints, indent=2) + "\n")
+    (args.out / "geometry_spec.json").write_text(json.dumps(geometry, indent=2) + "\n")
+
+    manifest = JobManifest(
+        name="smoke_params_to_assembly",
+        inputs={"geometry": geometry, "materials": [constraints["material"]]},
+        parameters={
+            "solver": args.solver if args.solver != "none" else "fea",
+            "family": constraints["family"],
+            "constraints": constraints,
+            "text_prompt": constraints["text_prompt"],
+            "max_stress_mpa": constraints["max_stress_mpa"],
+        },
+        tags=("smoke", "params_to_assembly"),
+        notes="Classical params→assembly→verify fixture",
+    )
+
+    t0 = time.time()
+    result = run_pipeline(
+        manifest,
+        workdir=args.out,
+        source="scripts.smoke_params_to_assembly",
+        solver_kind=None if args.solver != "none" else "fea",
+        allow_solver_fallback=not args.no_fallback,
+        prefer_real_cad=True,
+    )
+    elapsed = time.time() - t0
+
+    report = {
+        "ok": bool(result.ok),
+        "status": result.run.status,
+        "elapsed_s": round(elapsed, 3),
+        "backend": (result.run.provenance.details or {}).get("backend")
+        if result.run.provenance
+        else None,
+        "solver_mode": result.solver_result.metadata.get("mode")
+        if result.solver_result
+        else None,
+        "verification_passed": bool(result.verification.passed),
+        "artifacts": list(result.artifacts),
+        "workdir": str(args.out / manifest.fingerprint),
+        "note": (
+            "Classical params→assembly→verify path. "
+            "JEPA still lacks semantic text encoder + CAD decoder for neural oneshot."
+        ),
+    }
+    out_path = args.out / "SMOKE_REPORT.json"
+    out_path.write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

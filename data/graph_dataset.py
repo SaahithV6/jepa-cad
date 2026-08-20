@@ -13,6 +13,7 @@ Conditioning vector layout (``GRAPH_METADATA_DIM``):
   8  material engineering props
   P  generation params (``PARAM_QUANTITIES``)
   32 hashed text bag (spec_prompt + Document excerpts + categorical params)
+  S  solver-process provenance (SimulationCase / SolverRun case trees)
   = computed (see GRAPH_METADATA_DIM)
 """
 
@@ -84,6 +85,7 @@ _ASSOC_NODE_TYPES = {
     "Dimension",
     "Document",
     "SimulationCase",
+    "SolverRun",
     "Source",
 }
 
@@ -99,6 +101,7 @@ _ASSOC_LEAF_TYPES = {
     "Document",
     "Source",
     "SimulationCase",
+    "SolverRun",
 }
 
 # Prefer typed training edges; avoid wandering through COMPOSED_OF assemblies.
@@ -125,11 +128,16 @@ _ASSOC_EDGE_TYPES = {
     "SOURCE_OF_TRUTH_FOR",
     "HAS_SHARD",
     "VERIFIED_BY",
+    "HAS_SIMULATION",
+    "HAS_SOLVER_RUN",
+    "PRODUCED_SHARD",
 }
 
 # Fixed hashed bag-of-tokens from linked Document text + Part spec_prompt
 # for hybrid text→CAD conditioning (appended after structured metadata).
 TEXT_META_DIM = 32
+# Solver case-tree provenance (disk FEA/CFD process nodes linked into TAO).
+PROCESS_META_DIM = 12
 
 # Canonical generation-param slots (mm-scale dims + a few dimensionless).
 PARAM_QUANTITIES: tuple[tuple[str, float], ...] = (
@@ -191,6 +199,7 @@ GRAPH_METADATA_DIM = (
     + _MATERIAL_META_DIM
     + len(PARAM_QUANTITIES)
     + TEXT_META_DIM
+    + PROCESS_META_DIM
 )
 
 
@@ -635,6 +644,19 @@ class GraphBackedCADDataset(Dataset):
             "material": {},
             "params": {},
             "text_parts": [],
+            "process": {
+                "n_sims": 0,
+                "n_completed": 0,
+                "n_failed": 0,
+                "has_fea": 0.0,
+                "has_cfd": 0.0,
+                "process_provenance": 0.0,
+                "max_frd_bytes": 0.0,
+                "max_artifact_bytes": 0.0,
+                "has_calculix": 0.0,
+                "has_openfoam": 0.0,
+                "has_case_dir": 0.0,
+            },
         }
         # Seed from the file node itself (associated Samples carry params/family).
         seed = self._node_by_id.get(node_id)
@@ -691,10 +713,47 @@ class GraphBackedCADDataset(Dataset):
                                 payload.setdefault("text_parts", []).append(excerpt.strip()[:2000])
                         if ntype == "SimulationCase":
                             sprops = neighbor.get("properties", {}) or {}
-                            for key in ("kind", "solver", "status"):
+                            for key in ("kind", "solver", "status", "corpus", "case_id"):
                                 val = sprops.get(key)
                                 if isinstance(val, str) and val:
                                     payload.setdefault("text_parts", []).append(f"{key}={val}")
+                            proc = payload["process"]
+                            proc["n_sims"] = int(proc.get("n_sims", 0)) + 1
+                            status = str(sprops.get("status") or "").lower()
+                            if "completed" in status:
+                                proc["n_completed"] = int(proc.get("n_completed", 0)) + 1
+                            if "fail" in status or "incomplete" in status:
+                                proc["n_failed"] = int(proc.get("n_failed", 0)) + 1
+                            kind = str(sprops.get("kind") or "").lower()
+                            if kind == "fea":
+                                proc["has_fea"] = 1.0
+                            if kind == "cfd":
+                                proc["has_cfd"] = 1.0
+                            if sprops.get("process_provenance"):
+                                proc["process_provenance"] = 1.0
+                            if sprops.get("case_dir"):
+                                proc["has_case_dir"] = 1.0
+                            solver = str(sprops.get("solver") or "").lower()
+                            if "calculix" in solver:
+                                proc["has_calculix"] = 1.0
+                            if "openfoam" in solver or "foam" in solver:
+                                proc["has_openfoam"] = 1.0
+                            arts = sprops.get("artifacts") if isinstance(sprops.get("artifacts"), dict) else {}
+                            frd = arts.get("case.frd") if isinstance(arts.get("case.frd"), dict) else {}
+                            frd_b = float(frd.get("bytes") or 0.0)
+                            if frd_b > float(proc.get("max_frd_bytes") or 0.0):
+                                proc["max_frd_bytes"] = frd_b
+                            total_b = float(sprops.get("total_artifact_bytes") or 0.0)
+                            if total_b > float(proc.get("max_artifact_bytes") or 0.0):
+                                proc["max_artifact_bytes"] = total_b
+                        if ntype == "SolverRun":
+                            rprops = neighbor.get("properties", {}) or {}
+                            for key in ("kind", "solver", "status", "corpus"):
+                                val = rprops.get(key)
+                                if isinstance(val, str) and val:
+                                    payload.setdefault("text_parts", []).append(f"run_{key}={val}")
+                            if rprops.get("case_dir"):
+                                payload["process"]["has_case_dir"] = 1.0
                         if ntype in ("TuningGuidance", "DesignTarget", "PhysicsTarget"):
                             targets = props.get("targets")
                             if isinstance(targets, dict):
@@ -825,8 +884,27 @@ class GraphBackedCADDataset(Dataset):
             s = sum(text_vec) or 1.0
             text_vec = [min(v / s * 4.0, 1.0) for v in text_vec]
 
+        proc = assoc.get("process") or {}
+        n_sims = float(proc.get("n_sims") or 0.0)
+        n_completed = float(proc.get("n_completed") or 0.0)
+        process_vec = [
+            1.0 if n_sims > 0 else 0.0,
+            min(n_sims / 10.0, 1.0),
+            (n_completed / n_sims) if n_sims > 0 else 0.0,
+            float(proc.get("has_fea") or 0.0),
+            float(proc.get("has_cfd") or 0.0),
+            float(proc.get("process_provenance") or 0.0),
+            min(float(np.log1p(float(proc.get("max_frd_bytes") or 0.0))) / 20.0, 1.0),
+            min(float(np.log1p(float(proc.get("max_artifact_bytes") or 0.0))) / 20.0, 1.0),
+            float(proc.get("has_calculix") or 0.0),
+            float(proc.get("has_openfoam") or 0.0),
+            float(proc.get("has_case_dir") or 0.0),
+            1.0 if float(proc.get("n_failed") or 0.0) > 0 else 0.0,
+        ]
+        assert len(process_vec) == PROCESS_META_DIM
+
         return torch.tensor(
-            family_vec + physics_vec + geometry_vec + material_vec + param_vec + text_vec,
+            family_vec + physics_vec + geometry_vec + material_vec + param_vec + text_vec + process_vec,
             dtype=torch.float32,
         )
 

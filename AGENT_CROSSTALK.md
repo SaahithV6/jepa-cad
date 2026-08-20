@@ -4,6 +4,30 @@
 
 **Updated:** 2026-07-25 ~09:45 PDT
 
+## GENERATIVE HEAD (2026-08-01) — local evidence
+
+- `models/text_encoder.py` SemanticTextEncoder + `models/cad_decoder.py` CadAssemblyDecoder
+- `model.enable_generative: true` path in `JEPAModel`
+- Local train: `artifacts/text_cad_local_train/TRAIN_METRICS.json` (30 steps CPU)
+- Infer+solid verify: `artifacts/text_cad_infer/INFER_REPORT.json`
+- Offline export: `artifacts/offline-export-*.tar.zst` + `jepa-export-core.tar.zst`
+- Full Modal/TAO-scale train still optional; do not launch without GPU budget confirm
+
+## MODAL GATE (2026-08-01) — physics-confirmed unlock
+
+User expects **params → physics-confirmed designs** (native CalculiX). Modal **not allowed**
+until `artifacts/train_gate` exists.
+
+Unlock (`train_gate`) only when ALL hold:
+1. `scripts/doctor_native_fea.py` exits 0 (`solver_mode=native`)
+2. `scripts/params_to_physics_confirmed.py` exits 0 with `CONFIRMED_REPORT.json` `solver_mode=native`
+3. `scripts/request_rocket_assembly.py --no-fallback` fails closed unless native-confirmed
+4. Local train on real graph + generative head: `artifacts/text_cad_confirmed_train/TRAIN_METRICS.json`
+5. Offline export refreshed including confirmed report
+
+Out of scope for unlock: fake 24B scale, freeform mate graphs, Modal launch itself
+(stop at train_gate unless user explicitly launches).
+
 ## ARCHITECTURE GATE (2026-07-25 ~09:50 PDT) — DO NOT MODAL-TRAIN
 
 Confirmed by architecture audit + local counts:

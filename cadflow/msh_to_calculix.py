@@ -262,6 +262,53 @@ def run_calculix_case(
     )
 
 
+def prepare_fea_workdir_from_stl(
+    stl_path: Path | str,
+    workdir: Path | str,
+    *,
+    cl_max_mm: float = 6.0,
+    cl_min_mm: float = 1.5,
+    total_load_n: float = 1_000.0,
+    youngs_modulus: float = 70e9,
+    poisson: float = 0.33,
+    mesh_timeout_s: int = 180,
+    scale_to_meters: bool = True,
+) -> FEASetupResult:
+    """Mesh an STL (mm) → MSH2 (meters) → CalculiX ``case.inp`` in ``workdir``."""
+    from cadflow.rocket_physics_suite import mesh_stl_volume
+
+    case_path = Path(workdir)
+    case_path.mkdir(parents=True, exist_ok=True)
+    stl = Path(stl_path)
+    if not stl.exists():
+        raise FileNotFoundError(f"geometry STL missing: {stl}")
+
+    # Keep a local copy so case dirs are self-contained.
+    local_stl = case_path / "geometry.stl"
+    if stl.resolve() != local_stl.resolve():
+        local_stl.write_bytes(stl.read_bytes())
+
+    msh = case_path / "mesh.msh"
+    mesh_result = mesh_stl_volume(
+        local_stl,
+        msh,
+        cl_max_mm=cl_max_mm,
+        cl_min_mm=cl_min_mm,
+        scale_to_meters=scale_to_meters,
+        mesh_timeout_s=mesh_timeout_s,
+        allow_hull_fallback=True,
+    )
+    if not mesh_result.success or not msh.exists():
+        raise RuntimeError(f"gmsh mesh failed: {mesh_result.error}")
+
+    return generate_fea_case_inp(
+        case_path,
+        total_load=float(total_load_n),
+        youngs_modulus=float(youngs_modulus),
+        poisson=float(poisson),
+    )
+
+
 def convert_and_run_case(
     case_dir: Path | str,
     ccx_binary: Path | str = DEFAULT_CCX,

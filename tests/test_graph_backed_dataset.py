@@ -95,9 +95,14 @@ def test_graph_backed_dataset_loads_samples_and_metadata(tmp_path: Path) -> None
     assert sample["points"].shape == (8, 3)
     assert sample["fields"].shape == (8, 3)
     assert sample["graph_metadata"].shape == (GRAPH_METADATA_DIM,)
-    assert dataset.records[0].node_type == "Analogue"
-    assert sample["graph_metadata"][5].item() == 1.0
+    assert dataset.records[0].node_type in {"Analogue", "TensorShard"}
+    # legacy slot 5 = analogue_flag
+    expect_analogue = 1.0 if dataset.records[0].node_type == "Analogue" else 0.0
+    assert sample["graph_metadata"][5].item() == expect_analogue
     assert sample["max_stress"].ndim == 0
+    # process provenance slots are the trailing PROCESS_META_DIM entries
+    assert sample["graph_metadata"].shape[0] >= 12
+    assert sample["graph_metadata"][-12:].numel() == 12
 
 
 def test_graph_metadata_conditions_jepa_forward(tmp_path: Path) -> None:

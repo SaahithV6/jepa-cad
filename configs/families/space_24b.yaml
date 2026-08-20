@@ -3,9 +3,10 @@
 # into physics-verified CAD (FEA field point clouds + param conditioning).
 #
 # Training contract:
-#   graph_metadata (141-d) = family one-hot + physics + geometry + material + params + text bag
+#   graph_metadata (153-d) = family + physics + geometry + material + params + text bag + solver-process
 #     → e.g. family=nose_cone, diameter_mm=35, length_mm=60, shape=ogive,
 #       material=al-6061-t6, mass_kg, payload/constraint slots via PhysicsTarget
+#       + SimulationCase/SolverRun provenance (case_dir, FEA/CFD status)
 #   target = real FEA field shards (von_mises, disp, stress) from CalculiX FRDs
 #     under artifacts/physics_shards/fea/ (NOT geometry-only placeholders)
 # Flip physics_shards_only=true once shard coverage is high enough (~5k+).
@@ -22,7 +23,7 @@ data:
   num_points: 4096
   num_fields: 8
   mix_ratio: 0.95
-  graph_metadata_dim: 141  # 9 legacy + 25 family + 36 physics + 11 geometry + 8 material + 20 params + 32 text
+  graph_metadata_dim: 153  # 9 legacy + 25 family + 36 physics + 11 geometry + 8 material + 20 params + 32 text + 12 process
   graph_path: artifacts/jepa-train-bundle/graph.json
   graph_data_root: artifacts/jepa-train-bundle
   # Prefer repo root so artifacts/physics_shards/... and data/processed/nasa3d resolve.

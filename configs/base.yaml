@@ -6,7 +6,7 @@ data:
   graph_path: null  # graph export JSON or directory containing the export
   graph_data_root: null  # optional root used to resolve graph-referenced file paths
   graph_limit: null
-  graph_metadata_dim: 141  # 9 legacy + 25 family + 36 physics + 11 geometry + 8 material + 20 params + 32 text
+  graph_metadata_dim: 153  # 9 legacy + 25 family + 36 physics + 11 geometry + 8 material + 20 params + 32 text + 12 process
   num_points: 1024
   num_fields: 3  # e.g. pressure, temperature, von_mises_stress
   shard_format: "npz"  # npz | pt
@@ -45,6 +45,18 @@ model:
   ema_decay: 0.996
   loss_type: "smooth_l1"  # smooth_l1 | cosine
   gradient_checkpointing: false  # save memory on larger models
+  # Generative text→assembly head (off by default so JEPA-only train stays lean)
+  enable_generative: false
+  generative_loss_weight: 1.0
+  text_encoder:
+    vocab_size: 4096
+    max_tokens: 64
+    num_layers: 2
+    num_heads: 4
+    mlp_ratio: 2.0
+    dropout: 0.1
+  cad_decoder:
+    param_dim: 8  # models.cad_decoder.ASSEMBLY_PARAM_DIM
 
 # Training
 train:

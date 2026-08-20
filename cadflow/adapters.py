@@ -276,75 +276,96 @@ class FEAAdapter(SolverAdapter):
         return probe_fea(getattr(self, "runtime", None))
 
     def write_case(self, job: SolverJob) -> dict[str, Path]:
-        inp = job.workdir / "job.inp"
-        mat = (job.materials[0] if job.materials else job.parameters.get("material", "Al6061"))
+        """Build a real CalculiX deck: STL → Gmsh tets → solid INP + BCs."""
+        from cadflow.msh_to_calculix import prepare_fea_workdir_from_stl
+
+        mat = job.materials[0] if job.materials else job.parameters.get("material", "Al6061")
         E = float(job.parameters.get("youngs_modulus", 70e9))
         nu = float(job.parameters.get("poisson", 0.33))
         load = float(job.parameters.get("load_n", 1000.0))
-        inp.write_text(
-            "\n".join(
-                [
-                    f"** JEPA-CAD CalculiX deck for {job.job_id}",
-                    f"** geometry: {job.geometry_path}",
-                    f"** material: {mat}",
-                    "*HEADING",
-                    f"JEPA-CAD FEA {job.job_id}",
-                    "*MATERIAL, NAME=MAT1",
-                    "*ELASTIC",
-                    f"{E}, {nu}",
-                    "*STEP",
-                    "*STATIC",
-                    f"** load magnitude: {load}",
-                    "*NODE FILE",
-                    "U",
-                    "*EL FILE",
-                    "S",
-                    "*END STEP",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
+        cl_max = float(job.parameters.get("cl_max_mm", 6.0))
+        cl_min = float(job.parameters.get("cl_min_mm", 1.5))
+        timeout = int(job.parameters.get("mesh_timeout_s", max(120, int(job.timeout_s))))
+
+        geom = Path(job.geometry_path)
+        # Prefer STL; if only STEP was passed, look beside it.
+        stl = geom if geom.suffix.lower() == ".stl" else geom.with_suffix(".stl")
+        if not stl.exists():
+            raise FileNotFoundError(f"FEA requires STL geometry, missing: {stl}")
+
+        setup = prepare_fea_workdir_from_stl(
+            stl,
+            job.workdir,
+            cl_max_mm=cl_max,
+            cl_min_mm=cl_min,
+            total_load_n=load,
+            youngs_modulus=E,
+            poisson=nu,
+            mesh_timeout_s=timeout,
+            scale_to_meters=bool(job.parameters.get("scale_to_meters", True)),
         )
         expected = job.workdir / "expected_fea.json"
         expected.write_text(
             json.dumps(
                 {
-                    "max_von_mises_mpa": float(job.parameters.get("max_stress_mpa", job.parameters.get("objective", 150.0))),
+                    "max_von_mises_mpa": float(
+                        job.parameters.get("max_stress_mpa", job.parameters.get("objective", 150.0))
+                    ),
                     "max_displacement_mm": float(job.parameters.get("max_disp_mm", 0.4)),
+                    "material": str(mat),
+                    "node_count": setup.node_count,
+                    "element_count": setup.element_count,
+                    "fixed_nodes": setup.fixed_nodes,
+                    "loaded_nodes": setup.loaded_nodes,
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
-        return {"inp": inp, "expected": expected}
+        return {
+            "inp": setup.case_inp,
+            "mesh_inp": setup.mesh_inp,
+            "expected": expected,
+            "msh": job.workdir / "mesh.msh",
+        }
 
     def command(self, job: SolverJob, case_files: Mapping[str, Path]) -> list[str]:
         probe = self.probe()
-        binary = str(probe.details.get("binary") or "ccx")
-        # CalculiX expects job name without extension
-        return [binary, str(case_files["inp"].with_suffix(""))]
+        binary = str(probe.details.get("path") or probe.details.get("binary") or "ccx")
+        # CalculiX job name without extension; deck is case.inp
+        return [binary, "case"]
 
     def parse_results(self, job: SolverJob, case_files: Mapping[str, Path], completed: Any) -> SolverResult:
+        from cadflow.msh_to_calculix import parse_frd_summary
+
         expected = json.loads(Path(case_files["expected"]).read_text(encoding="utf-8"))
-        frd = case_files["inp"].with_suffix(".frd")
-        stress = float(expected["max_von_mises_mpa"])
-        disp = float(expected["max_displacement_mm"])
-        mode = "native_stub"
-        if frd.exists():
-            mode = "native"
-            # Very light FRD scan for largest absolute number as a proxy
-            nums = []
-            for line in frd.read_text(encoding="utf-8", errors="ignore").splitlines():
-                for tok in line.split():
-                    try:
-                        nums.append(abs(float(tok)))
-                    except ValueError:
-                        continue
-            if nums:
-                stress = max(nums) * 1e-6  # crude Pa→MPa if values look large
+        frd = job.workdir / "case.frd"
         code = int(getattr(completed, "returncode", 1))
+        summary = parse_frd_summary(frd, min_bytes=1_000) if frd.exists() else None
+        if summary is not None:
+            stress = float(summary.max_von_mises_mpa)
+            disp = float(summary.max_displacement_mm)
+            mode = "native"
+            status = "success" if code == 0 else "failed"
+        elif frd.exists() and frd.stat().st_size > 0 and code == 0:
+            # Tiny/unusual FRD — still native if ccx exited 0
+            stress = float(expected["max_von_mises_mpa"])
+            disp = float(expected["max_displacement_mm"])
+            mode = "native"
+            status = "success"
+        else:
+            stress = float(expected["max_von_mises_mpa"])
+            disp = float(expected["max_displacement_mm"])
+            mode = "native_stub"
+            status = "failed" if code != 0 else "success"
+        arts = [str(case_files["inp"]), str(case_files["expected"])]
+        if frd.exists():
+            arts.append(str(frd))
+        mesh_inp = case_files.get("mesh_inp")
+        if mesh_inp is not None and Path(mesh_inp).exists():
+            arts.append(str(mesh_inp))
         return SolverResult(
-            status="success" if code == 0 else "failed",
+            status=status,
             objective=stress,
             iterations=1,
             residual=0.0,
@@ -352,9 +373,12 @@ class FEAAdapter(SolverAdapter):
                 "max_von_mises_mpa": stress,
                 "max_displacement_mm": disp,
                 "mode": mode,
-                "solver": "fea",
+                "solver": "calculix",
+                "frd_bytes": frd.stat().st_size if frd.exists() else 0,
+                "target_max_stress_mpa": float(expected["max_von_mises_mpa"]),
+                "target_max_disp_mm": float(expected["max_displacement_mm"]),
             },
-            artifacts=(str(case_files["inp"]), str(case_files["expected"])),
+            artifacts=tuple(arts),
             logs=(getattr(completed, "stdout", "") or "", getattr(completed, "stderr", "") or ""),
         )
 

@@ -100,6 +100,7 @@ def run_pipeline(
         solver_result = wrap_solver_result(solver_payload)
     else:
         materials = tuple(manifest.inputs.get("materials") or manifest.parameters.get("materials") or [])
+        default_timeout = 600.0 if kind in {"fea", "structural"} else 120.0
         solver_result = run_solver(
             kind,
             job_id=manifest.fingerprint,
@@ -108,6 +109,7 @@ def run_pipeline(
             parameters=dict(manifest.parameters),
             materials=materials,
             allow_fallback=allow_solver_fallback,
+            timeout_s=float(manifest.parameters.get("solver_timeout_s", default_timeout)),
             runtime=runtime,
         )
         artifacts.extend(list(solver_result.artifacts))
