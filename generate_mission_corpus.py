@@ -50,10 +50,18 @@ def sample_vehicle(rng: random.Random) -> dict:
     gamma, tc, mol = PROPELLANTS[prop]
 
     m0 = rng.uniform(20.0, 500.0)                 # gross liftoff, kg
-    payload = m0 * rng.uniform(0.01, 0.10)
-    struct_coeff = rng.uniform(0.10, 0.25)        # small vehicles are heavier fractionally
+    # Wide payload and structural fractions on purpose. Narrow ranges
+    # (payload 1-10%, structure 10-25%) only ever produce high mass ratios, so
+    # every vehicle is energetic and the corpus has no low-apogee designs to
+    # learn from -- a 95 km request then has almost no neighbours. Heavy
+    # payload or heavy structure gives genuinely low-delta-v vehicles.
+    payload = m0 * rng.uniform(0.01, 0.35)
+    struct_coeff = rng.uniform(0.10, 0.50)
     m_struct = struct_coeff * (m0 - payload)
     m_prop = m0 - payload - m_struct
+    if m_prop <= 0.05 * m0:
+        m_prop = 0.05 * m0
+        m_struct = m0 - payload - m_prop
 
     pc = rng.uniform(1.5e6, 8.0e6)
     eps = rng.uniform(4.0, 25.0)                  # sea-level-ish stages
@@ -132,14 +140,44 @@ def main() -> int:
     load_coupling()
     rng = random.Random(args.seed)
     rows: list[str] = []
-    n_ok = n_nofly = n_struct = n_err = 0
+    n_ok = n_nofly = n_struct = n_err = n_binfull = 0
     t0 = time.time()
 
-    for i in range(args.count):
+    # Rejection-sample so mission outcomes are roughly uniform in log apogee.
+    #
+    # Sampling designs uniformly and keeping whatever mission falls out gives a
+    # corpus skewed across 2.6 decades -- 12.6 to 5,219 km, median 437 -- which
+    # puts a 95 km request at the 7.9th percentile with almost no neighbours to
+    # learn from. The head then answers such requests from the bulk of the
+    # distribution and overshoots by 7-10x. Going from design->outcome data to
+    # outcome->design capability requires the outcomes to be covered evenly,
+    # not the design parameters.
+    #
+    # The trajectory integration is cheap and runs first, so rejected designs
+    # cost no solver time.
+    n_bins = 12
+    lo_l, hi_l = math.log10(15.0), math.log10(3000.0)
+    per_bin = max(1, args.count // n_bins)
+    bins: dict[int, int] = {}
+    attempts = 0
+    max_attempts = args.count * 40
+
+    while n_ok < args.count and attempts < max_attempts:
+        attempts += 1
+        i = n_ok
         v = sample_vehicle(rng)
         o = fly(v)
         if o is None:
             n_nofly += 1
+            continue
+
+        apo = o["apogee_km"]
+        if not (15.0 <= apo <= 3000.0):
+            n_binfull += 1
+            continue
+        b = min(n_bins - 1, int((math.log10(apo) - lo_l) / (hi_l - lo_l) * n_bins))
+        if bins.get(b, 0) >= per_bin:
+            n_binfull += 1
             continue
 
         # structural check on the airframe under the vehicle's own thrust
@@ -192,12 +230,17 @@ def main() -> int:
             },
         }))
         n_ok += 1
-        if (i + 1) % 20 == 0:
-            print(f"  {i+1}/{args.count} ok={n_ok} nofly={n_nofly} struct={n_struct} "
-                  f"err={n_err}  {(i+1)/max(time.time()-t0,1e-6):.2f}/s")
+        bins[b] = bins.get(b, 0) + 1
+        if n_ok % 20 == 0:
+            print(f"  {n_ok}/{args.count} attempts={attempts} nofly={n_nofly} "
+                  f"struct={n_struct} binfull={n_binfull} err={n_err}  "
+                  f"{n_ok/max(time.time()-t0,1e-6):.2f}/s")
 
     args.out.write_text("\n".join(rows) + ("\n" if rows else ""))
     print(f"\nverified missions : {n_ok}")
+    print(f"attempts          : {attempts}")
+    print(f"rejected (bin full/range): {n_binfull}")
+    print("apogee bin counts : " + ", ".join(f"{k}:{v}" for k, v in sorted(bins.items())))
     print(f"could not lift off: {n_nofly}")
     print(f"structure failed  : {n_struct}")
     print(f"errors            : {n_err}")
