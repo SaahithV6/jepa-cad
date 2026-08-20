@@ -1,4 +1,5 @@
 .venv/
+.venv-sim/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -33,3 +34,12 @@ data/raw_downloads/external/jaxa_ryugu/SHAPE_SFM_3M_v20180804.obj
 
 # /goal harness runtime state (keep hooks/skills/commands)
 .cursor/goal/
+
+# Host-local solver stack, extracted from .debs (see env.sh). ~375MB of
+# binaries; rebuildable from colab/solver-env.tar.gz, so not tracked.
+solver-env/
+colab/solver-env.tar.gz
+
+# Environment captured from the decommissioned VM (apt/pip manifests,
+# dotfiles, git state). Reference material, not source.
+_vm_environment/

@@ -24,7 +24,7 @@ _GMSH_NODE_COUNTS: dict[int, int] = {
     15: 1,  # point
 }
 
-DEFAULT_CCX = Path("/home/best/.local/bin/ccx")
+DEFAULT_CCX = Path.home() / ".local" / "bin" / "ccx"
 
 
 @dataclass(frozen=True, slots=True)
