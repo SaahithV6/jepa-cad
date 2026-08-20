@@ -390,3 +390,101 @@ Mean absolute error 0.041 decades across a 120x span of requested altitude,
 | v14 | solved | 2 | **0.041 dec** |
 
 Reproduce the evaluation with `scripts/eval_mission_targeting.py <checkpoint>`.
+
+---
+
+## Correction pass: physics bugs found by researching the failures
+
+Every one of these produced plausible numbers, which is why they survived.
+
+### Trajectory
+
+1. **Wrong root for apogee.** Apsides solve `2 eps r^2 + 2 mu r - L^2 = 0`. For a
+   bound orbit `eps < 0`, so the denominator is negative and the `+sqrt` root is
+   *perigee* while `-sqrt` is *apogee*. The code took `+sqrt` and reported the
+   perigee. At r = 6,571 km and v = 10.2 km/s that is 200 km instead of
+   33,190 km, so apogee looked pinned just above current altitude and then
+   jumped to escape, leaving every target between unreachable.
+
+2. **Flat-earth delta-v.** `sqrt(2 g h)` assumes constant gravity: it overstates
+   burnout speed by 1.7x at 12,000 km and 2.7x at 40,000 km. The planner then
+   escalated to architectures the mission did not need and declared reachable
+   missions impossible. Replaced with the exact energy form.
+
+3. **Integration truncated by t_max.** High-energy flights hit the 4,000 s limit
+   and were extrapolated from whatever mid-flight state they were in, making
+   apogee discontinuous in propellant. Integration now stops once the stack is
+   ballistic and above 200 km, where the conic result is exact.
+
+4. **Denormal ambient pressure.** The exponential atmosphere underflows to a
+   denormal at extreme altitude: nonzero, so the vacuum guard passed it, but
+   small enough that the pressure ratio underflowed to zero and `0 ** negative`
+   raised.
+
+### Search
+
+5. **Bisection kept the last iterate, not the closest** (in two solvers). A probe
+   landing on an escape trajectory has infinite apogee and discarded converged
+   solves.
+
+6. **Stage count hardcoded to "one, two, else three"**, so candidates of four or
+   five silently built three-stage vehicles.
+
+7. **Ascent profile fixed at 3 degrees.** Tuned for sounding rockets; on a
+   high-energy flight it turns the vehicle horizontal early, so beyond a point
+   extra propellant buys downrange rather than altitude and apogee stops
+   responding at all -- non-monotonic, which no amount of bisection resolves.
+   Now searched.
+
+8. **Two solvers for one problem.** The corpus generator carried its own
+   simplified solver -- fixed two stages, fixed split, fixed profile, narrow
+   bracket -- and could not solve above ~6,000 km while the planner reached
+   200,000 km. The trained model then failed exactly at that corpus edge:
+   12,000 km asked, 318 km flown. The corpus is now generated *through* the
+   planner, so there is one implementation.
+
+### Data
+
+9. **Throat area was a `0.0` placeholder** with a "filled below" comment that
+   never filled, so all 414 records taught the decoder that throat area is zero.
+   The evaluation missed it because the flight path recomputed the throat and
+   ignored the prediction -- a vestigial output is exactly where a silent zero
+   survives.
+
+10. **Throat area spans four decades** (16.5 to 140,672 mm2, median 758), so a
+    linear scale put the median at 0.038. Log-scaled.
+
+### Structure
+
+11. **Structural coefficient was a constant 0.14** and the CAD components were
+    *solid* cylinders, which is why FEA margins came out at 200-300x. Structure
+    is now sized from load: for a thin cylinder in axial compression the wall is
+    set by buckling, not yield, with the NASA SP-8007 knockdown iterated for
+    imperfection sensitivity. Yield-only sizing is out by 40x at 5 kN.
+    `planner.plan_sized` runs the fixed point this creates -- structural mass
+    depends on loads, loads on vehicle mass, vehicle mass on structural mass --
+    converging in 4-8 damped iterations. For 20 kg to 400 km the coefficient
+    converges 0.140 -> 0.086 and gross mass falls 172 -> 130 kg. The assumption
+    was changing architecture decisions: 25 kg to 4,000 km closes on two stages
+    where the assumed value forced three.
+
+## Result
+
+Planner chooses the architecture, model sizes the vehicle, vehicle flown with
+its own predicted engine:
+
+| asked | stages | flown | ratio |
+|---|---|---|---|
+| 50 km | 1 | 50.3 | 1.01x |
+| 100 km | 1 | 78.4 | 0.78x |
+| 200 km | 1 | 192.1 | 0.96x |
+| 400 km | 1 | 373.9 | 0.93x |
+| 800 km | 2 | 677.3 | 0.85x |
+| 1500 km | 2 | 1552.9 | 1.04x |
+| 3000 km | 2 | 2937.1 | 0.98x |
+| 6000 km | 3 | 5950.7 | 0.99x |
+| 12000 km | 3 | 8766.7 | 0.73x |
+| 25000 km | 3 | 20151.3 | 0.81x |
+| 50000 km | 3 | 41488.7 | 0.83x |
+
+Mean 0.051 decades over a 1,000x span, 11 of 11 within 2x, five within 4%.
