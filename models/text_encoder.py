@@ -8,6 +8,7 @@ not the 32-d non-learned hash bag used only as JEPA conditioning.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Any
 
@@ -19,9 +20,39 @@ from models.encoder import TransformerBlock, sinusoidal_positions
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_./\-]+|[^\s]", re.UNICODE)
 
 
+# Ids [1, _NUM_BUCKETS] are reserved for numbers; hashed word tokens start
+# above them. Hashing destroys magnitude: "42" and "44" blake2b to unrelated
+# slots, so nothing in the model can learn that they are close, that they are
+# numbers at all, or what an unseen "43" should mean. For a specification like
+# "42 mm radius ... below 200 MPa" that is the whole signal. Numbers are
+# therefore bucketed on a log scale, so nearby magnitudes share or neighbour a
+# bucket and unseen values land sensibly between trained ones.
+_NUM_BUCKETS = 256
+_NUM_LOG_MIN = -2.0   # 0.01
+_NUM_LOG_MAX = 7.0    # 10,000,000
+_NUMERIC_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+
+
+def _numeric_token_id(value: float) -> int:
+    """Log-scale bucket, so ordinal structure survives tokenisation."""
+    if value == 0.0:
+        return 1
+    mag = math.log10(abs(value))
+    frac = (mag - _NUM_LOG_MIN) / (_NUM_LOG_MAX - _NUM_LOG_MIN)
+    frac = min(1.0, max(0.0, frac))
+    return 1 + min(_NUM_BUCKETS - 1, int(frac * (_NUM_BUCKETS - 1)))
+
+
 def _stable_token_id(tok: str, vocab_size: int) -> int:
+    if _NUMERIC_RE.match(tok):
+        try:
+            return _numeric_token_id(float(tok))
+        except ValueError:
+            pass
     digest = hashlib.blake2b(tok.encode("utf-8"), digest_size=8).digest()
-    return int.from_bytes(digest, "little") % (vocab_size - 1) + 1
+    # offset past the reserved numeric range
+    span = vocab_size - 1 - _NUM_BUCKETS
+    return _NUM_BUCKETS + 1 + int.from_bytes(digest, "little") % span
 
 
 def tokenize_text(text: str, *, max_tokens: int = 64, vocab_size: int = 4096) -> torch.Tensor:
