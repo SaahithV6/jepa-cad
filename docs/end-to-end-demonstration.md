@@ -296,3 +296,62 @@ in increasing cost:
 
 Both are physics-in-the-loop training. Neither is a corpus or capacity change,
 which is why neither of those two fixes could substitute for it.
+
+### 4. The target was a relation, not a function (fixed)
+
+The deepest cause, and the one that explains why the previous three fixes each
+helped and none sufficed.
+
+Rejection sampling gave uniform coverage of mission outcomes, but each
+specification was still paired with *one of many* vehicles that happen to reach
+that altitude. At a given apogee, log mass ratio spanned 0.41 to 2.18, because
+payload, propellant, chamber pressure and drag all varied independently.
+
+Mean-squared error converges to the conditional mean of that set. Apogee is
+nonlinear in the parameters, so the mean of designs that each achieve X does not
+itself achieve X. The model was being asked to predict a set and was returning
+its average, which is not a member of it. No loss function repairs that, and it
+is why better coverage, more capacity and log-space reparameterisation each
+moved the needle without fixing the behaviour.
+
+`solve_mission_corpus.py` makes the target a function. Everything that varies is
+stated in the prompt, and the one remaining degree of freedom -- mass ratio --
+is solved by bisection until the vehicle actually flies the requested altitude.
+Apogee is monotonic in mass ratio at fixed everything-else, so bisection
+converges: 290 of 300 specifications solved in 1.7 minutes, 290 unique prompts,
+no prompt with more than one design, targeting error 0.93% mean and 1.99% worst.
+
+Result, asking for 8 kg to a swept altitude and flying what came back:
+
+| asked | flown | ratio | mass ratio |
+|---|---|---|---|
+| 20 km | 20.9 | 1.05x | 1.76 |
+| 35 km | 33.3 | 0.95x | 2.15 |
+| 60 km | 51.8 | 0.86x | 2.54 |
+| 95 km | 72.6 | 0.76x | 2.83 |
+| 150 km | 108.1 | 0.72x | 3.19 |
+| 250 km | 187.2 | 0.75x | 3.68 |
+| 400 km | 330.9 | 0.83x | 4.25 |
+| 650 km | 669.9 | 1.03x | 5.19 |
+| 1000 km | 1022.4 | 1.02x | 5.88 |
+| 1600 km | 398.5 | 0.25x | 6.29 |
+
+Mean absolute error 0.120 decades, against 0.647 before -- a 5.4x improvement --
+with 9 of 10 within 2x of target and three within 5%. Mass ratio rises
+monotonically with the request, so the model has learned the physical
+relationship rather than the corpus average.
+
+Held-out generative loss fell to 1.0e-4, an order of magnitude below anything
+the sampled corpora produced, with train and validation within 25% of each
+other.
+
+The remaining failure is the top of the range: 1600 km returns 398 km. That
+specification sits at the edge of the solved grid, and the vehicle it implies
+(1009 kg gross) is heavier than anything else in the corpus.
+
+**The lesson generalises beyond this project.** When a specification admits many
+valid answers, regression on the parameters learns the average answer, and for
+any nonlinear system the average answer is not a valid one. Either the
+specification must determine the design, or the loss must score the outcome.
+Making the corpus a function was far cheaper here than putting physics in the
+loss, and it is what actually worked.
