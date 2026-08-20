@@ -7,7 +7,7 @@ parameters (parametric primitives, extrusions, and simple sculpt offsets).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import pi, prod
 from pathlib import Path
 from typing import Any, Protocol, Sequence
@@ -34,6 +34,8 @@ class CadBackend(Protocol):
     ) -> Any: ...
 
     def sculpt_offset(self, shape: Any, distance: float) -> Any: ...
+
+    def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any: ...
 
     def boolean_cut(self, target: Any, tool: Any) -> Any: ...
 
@@ -104,6 +106,11 @@ class MockCadBackend:
 
     def sphere(self, radius: float) -> MockCadSolid:
         return MockCadSolid(kind="sphere", dimensions=(_require_positive("radius", radius),))
+
+    def translate(self, shape: MockCadSolid, dx: float, dy: float, dz: float) -> MockCadSolid:
+        # Position does not change the mock's volume estimate; record the move
+        # so op history stays faithful.
+        return replace(shape, ops=shape.ops + (f"translate({dx},{dy},{dz})",))
 
     def extrude_profile(
         self,
@@ -361,6 +368,20 @@ class CadQueryBackend:
                 (zmax - zmin) + 2 * pad,
             )
 
+    def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any:
+        """Move a part into place.
+
+        Parts were all built at the origin and unioned, which only produced a
+        single solid because they overlapped. Hollowing them made the inner
+        parts float free inside the void and the assembly stopped being one
+        watertight body, so nothing could be meshed. Real assemblies need
+        positions.
+        """
+        cadquery = cq
+        assert cadquery is not None
+        moved = self._solid(shape).translate(cq.Vector(float(dx), float(dy), float(dz)))
+        return cadquery.Workplane("XY").newObject([moved])
+
     def boolean_cut(self, target: Any, tool: Any) -> Any:
         cadquery = cq
         assert cadquery is not None
@@ -436,12 +457,27 @@ class CadQueryBackend:
         cadquery.exporters.export(shape, str(path))
         return path
 
-    def export_stl(self, shape: Any, path: str | Path) -> Path:
+    def export_stl(self, shape: Any, path: str | Path,
+                   tolerance: float = 0.02, angular_tolerance: float = 0.15) -> Path:
+        """Tessellate to STL.
+
+        The default tolerance is far too coarse for thin-walled parts: a 1.11 mm
+        wall on a 40 mm radius tessellated into near-coincident facets and gmsh
+        rejected the result with "Invalid boundary mesh (overlapping facets)".
+        Tolerance here is in millimetres, so 0.02 keeps the inner and outer
+        surfaces cleanly separated at the wall thicknesses this produces.
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         cadquery = cq
         assert cadquery is not None
-        cadquery.exporters.export(shape, str(path))
+        try:
+            cadquery.exporters.export(
+                shape, str(path), tolerance=tolerance,
+                angularTolerance=angular_tolerance)
+        except TypeError:
+            # older cadquery without tolerance kwargs
+            cadquery.exporters.export(shape, str(path))
         return path
 
     def describe(self, shape: Any) -> dict[str, Any]:
@@ -528,4 +564,13 @@ def build_from_spec(spec: dict[str, Any], backend: CadBackend | None = None) -> 
             shape = backend.sculpt_offset(shape, float(fparams.get("distance", fparams.get("offset", 0.0))))
         else:
             raise ValueError(f"unsupported feature op: {fkind}")
+
+    # Placement last. A part's features are authored in its own frame -- a cut
+    # tool for a tube is a coaxial cylinder at the part's origin -- so moving
+    # the part first would leave those tools cutting empty space where the part
+    # used to be. Building in local coordinates and placing afterwards is what
+    # makes per-part hollowing work in an assembly.
+    at = params.get("at") or spec.get("at")
+    if at is not None:
+        shape = backend.translate(shape, float(at[0]), float(at[1]), float(at[2]))
     return shape

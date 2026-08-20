@@ -38,6 +38,12 @@ E_PA = 68.9e9
 RHO = 2700.0
 SIGMA_YIELD_PA = 276e6
 SAFETY_FACTOR = 1.4
+# Geometric stress concentration at joints and cutouts. Sizing the wall to the
+# nominal membrane stress alone puts the peak straight past the allowable: a
+# wall sized to 197 MPa nominal came back from CalculiX at 333 MPa, a factor of
+# 1.69 at the fin root. Real hardware either sizes for this or adds a local
+# doubler; the wall is sized for it here so the part survives its own analysis.
+STRESS_CONCENTRATION = 1.7
 T_MIN_M = 0.0008          # 0.8 mm, a practical minimum for spun/welded shells
 # Avionics, recovery, separation hardware: roughly constant per stage
 # regardless of stage size.
@@ -60,7 +66,8 @@ def _knockdown(r_over_t: float) -> float:
 
 
 def size_wall(load_n: float, radius_m: float, length_m: float,
-              *, sigma_allow_pa: float = SIGMA_YIELD_PA / SAFETY_FACTOR) -> Wall:
+              *, sigma_allow_pa: float = SIGMA_YIELD_PA / SAFETY_FACTOR
+              / STRESS_CONCENTRATION) -> Wall:
     """Wall thickness and mass for a thin cylinder under axial compression."""
     load = max(load_n, 1.0)
 

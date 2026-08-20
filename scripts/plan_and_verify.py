@@ -98,13 +98,25 @@ def main() -> int:
     results = []
     for name, why, load, geo in component_specs(
             body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
+        # Size the wall first, then mesh THAT shell. Previously the component
+        # was meshed solid and the FEA reported margins of 200-300x, which is a
+        # property of a billet rather than of the structure being designed.
+        wall = size_wall(load, geo["body_radius_mm"] / 1000.0,
+                         geo["body_height_mm"] / 1000.0)
         geom = {"body_radius_mm": geo["body_radius_mm"],
                 "body_height_mm": geo["body_height_mm"],
                 "nose_radius_mm": geo["body_radius_mm"],
                 "nose_height_mm": geo["nose_height_mm"],
                 "fin_span_mm": 14.0, "fin_thickness_mm": geo["fin_thickness_mm"],
                 "fin_chord_mm": 18.0, "fillet_radius_mm": 2.5,
-                "cl_max_mm": 8.0, "cl_min_mm": 2.0}
+                "wall_thickness_mm": wall.thickness_m * 1000.0,
+                # Mesh sizing has to follow the wall: a thin shell needs about
+                # three elements through the thickness or gmsh fails with
+                # "PLC Error: a segment and a facet intersect". At 8/2 mm on a
+                # 1.11 mm wall it failed outright; at 1.5/0.4 it meshes to
+                # 51,403 nodes.
+                "cl_max_mm": max(0.8, wall.thickness_m * 1000.0 * 1.4),
+                "cl_min_mm": max(0.25, wall.thickness_m * 1000.0 / 3.0)}
         try:
             rep = run_confirmed(params_mm=geom,
                 out=args.out / "components" / name.replace(" ", "_").replace("/", "-"),
@@ -112,17 +124,18 @@ def main() -> int:
                 load_n=load, prompt=name)
             acc = rep.get("accepted") or {}
             vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
+            # If the mesher fell back to a convex hull the geometry solved was a
+            # solid billet, not this shell, so the stress means nothing here.
+            comp_dir = args.out / "components" / name.replace(" ", "_").replace("/", "-")
+            if any(comp_dir.rglob("MESH_IS_CONVEX_HULL")):
+                vm, ok, hulled = None, False, True
+            else:
+                hulled = False
         except Exception as exc:  # noqa: BLE001
-            vm, ok = None, False
-        # The CAD path builds solid cylinders, so the CalculiX result above is
-        # a solid coupon under the same load -- not the flight structure, which
-        # is a thin shell. Its margin is therefore enormous and says little.
-        # The governing check for a thin-walled cylinder in compression is
-        # buckling, so size the wall and report that margin alongside.
-        wall = size_wall(load, geo["body_radius_mm"] / 1000.0,
-                         geo["body_height_mm"] / 1000.0)
+            vm, ok, hulled = None, False, False
         results.append({"name": name, "why": why, "load_n": load,
-                        "coupon_von_mises_mpa": vm, "coupon_passed": ok,
+                        "mesh_was_hull": hulled,
+                        "shell_von_mises_mpa": vm, "coupon_passed": ok,
                         "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
                         "wall_mm": wall.thickness_m * 1000.0,
                         "wall_mass_kg": wall.mass_kg,
@@ -150,20 +163,19 @@ def main() -> int:
              f"separations {seps}.\n")
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
-             " coupon FEA | status |")
+             " shell FEA | status |")
     L.append("|---|---|---|---|---|---|---|---|")
     for r in results:
-        vm = (f"{r['coupon_von_mises_mpa']:.1f} MPa"
-              if r["coupon_von_mises_mpa"] else "-")
+        vm = (f"{r['shell_von_mises_mpa']:.1f} MPa"
+              if r["shell_von_mises_mpa"] else "-")
         L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | "
                  f"{r['wall_mm']:.2f} mm | {r['wall_driver']} | "
                  f"{r['buckling_margin']:.2f}x | {vm} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
-    L.append("\nWall thickness and buckling margin size the real thin-shell "
-             "structure. The coupon FEA column is CalculiX on the solid "
-             "cylinder the CAD path builds, under the same load -- it confirms "
-             "the load path but is not the flight structure, which is why its "
-             "margins are large.")
+    L.append("\nWall thickness and buckling margin size the thin shell; the "
+             "shell FEA column is CalculiX on that same hollow geometry, so the "
+             "meshed part is the part being designed rather than a solid billet "
+             "with the same outer dimensions.")
     allp = all(r["passed"] for r in results)
     L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
              f"All {len(results)} components passed: **{allp}**\n")

@@ -121,12 +121,35 @@ def _nset_lines(name: str, node_ids: Iterable[int], per_line: int = 16) -> list[
     return lines
 
 
+def longest_axis(nodes: dict[int, tuple[float, float, float]]) -> str:
+    """Axis with the largest extent -- the part's load-carrying direction.
+
+    Airframe sections are axial members: a tank carries thrust along its length.
+    Loading one transversely instead bends it as a cantilever, which for a thin
+    shell is a completely different (and far more severe) problem.
+    """
+    xs = [p[0] for p in nodes.values()]
+    ys = [p[1] for p in nodes.values()]
+    zs = [p[2] for p in nodes.values()]
+    spans = {"x": max(xs) - min(xs), "y": max(ys) - min(ys), "z": max(zs) - min(zs)}
+    return max(spans, key=spans.get)
+
+
 def pick_face_boundary_nodes(
     nodes: dict[int, tuple[float, float, float]],
-    axis: str = "x",
+    axis: str | None = None,
     tol_fraction: float = 0.01,
 ) -> tuple[list[int], list[int]]:
-    """Return node ids on the min/max faces along ``axis`` (default: x)."""
+    """Return node ids on the min/max faces along ``axis``.
+
+    Defaults to the longest axis. It used to default to x regardless of how the
+    part was oriented, so a tube lying along z was gripped at one side and
+    pushed on the other -- bending rather than compressing it. On a 1.1 mm shell
+    that reported 75,935 MPa and 178 mm of deflection against a nominal wall
+    stress of 197 MPa.
+    """
+    if axis is None:
+        axis = longest_axis(nodes)
     axis_idx = {"x": 0, "y": 1, "z": 2}[axis]
     coords = {nid: pos[axis_idx] for nid, pos in nodes.items()}
     min_val = min(coords.values())
@@ -171,9 +194,12 @@ def generate_fea_case_inp(
     mesh_inp = case_path / mesh_filename
     write_solid_mesh_inp(mesh, mesh_inp)
 
-    fixed, loaded = pick_face_boundary_nodes(mesh.nodes)
+    axis = longest_axis(mesh.nodes)
+    fixed, loaded = pick_face_boundary_nodes(mesh.nodes, axis=axis)
     if not fixed or not loaded:
         raise ValueError(f"Could not derive boundary nodes for {case_path}")
+    # CalculiX degrees of freedom are 1=x, 2=y, 3=z; load along the part's axis.
+    load_dof = {"x": 1, "y": 2, "z": 3}[axis]
 
     load_per_node = total_load / len(loaded)
     lines = [
@@ -191,7 +217,7 @@ def generate_fea_case_inp(
     lines.extend(_nset_lines("LOADED", loaded))
     lines.extend(["*BOUNDARY", "FIXED, 1, 3, 0.0", "*CLOAD"])
     for node_id in loaded:
-        lines.append(f"{node_id}, 1, {load_per_node:.6f}")
+        lines.append(f"{node_id}, {load_dof}, {load_per_node:.6f}")
     lines.extend(["*NODE FILE", "U", "*EL FILE", "S", "*END STEP"])
 
     case_inp = case_path / case_filename
@@ -273,6 +299,7 @@ def prepare_fea_workdir_from_stl(
     poisson: float = 0.33,
     mesh_timeout_s: int = 180,
     scale_to_meters: bool = True,
+    allow_hull_fallback: bool = True,
 ) -> FEASetupResult:
     """Mesh an STL (mm) → MSH2 (meters) → CalculiX ``case.inp`` in ``workdir``."""
     from cadflow.rocket_physics_suite import mesh_stl_volume
@@ -296,10 +323,20 @@ def prepare_fea_workdir_from_stl(
         cl_min_mm=cl_min_mm,
         scale_to_meters=scale_to_meters,
         mesh_timeout_s=mesh_timeout_s,
-        allow_hull_fallback=True,
+        allow_hull_fallback=allow_hull_fallback,
     )
     if not mesh_result.success or not msh.exists():
         raise RuntimeError(f"gmsh mesh failed: {mesh_result.error}")
+
+    # Record when the mesh is a convex-hull proxy rather than the real
+    # geometry. For a thin-walled part the hull is a solid billet, so the
+    # stresses that come back describe something else entirely and must not be
+    # reported as verifying the shell.
+    if getattr(mesh_result, "used_hull", False):
+        (case_path / "MESH_IS_CONVEX_HULL").write_text(
+            "The volume mesh came from a convex-hull proxy, not the actual "
+            "geometry. For a hollow part this is a solid of the same envelope, "
+            "so any stress result describes a billet rather than the shell.\n")
 
     return generate_fea_case_inp(
         case_path,

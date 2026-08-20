@@ -55,6 +55,12 @@ class MeshResult:
     node_count: int = 0
     tet_count: int = 0
     error: str | None = None
+    # True when the mesh came from the convex-hull proxy rather than the actual
+    # geometry. This matters for thin-walled parts: the convex hull of a tube is
+    # a solid cylinder, so a hull-substituted result reports the stresses of a
+    # billet and says nothing about the shell. Callers that care about the
+    # structure must check this rather than just `success`.
+    used_hull: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +250,7 @@ def mesh_stl_volume(
         msh_path=out,
         node_count=int(payload2.get("node_count") or 0),
         tet_count=int(payload2.get("tet_count") or 0),
+        used_hull=True,
     )
 
 

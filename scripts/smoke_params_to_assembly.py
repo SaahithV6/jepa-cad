@@ -34,18 +34,55 @@ def constraints_to_geometry(constraints: dict) -> dict:
     fin_span = float(constraints.get("fin_span_mm", body_r * 0.8))
     fin_thick = float(constraints.get("fin_thickness_mm", 3.0))
     fin_chord = float(constraints.get("fin_chord_mm", body_r * 1.2))
-    # Assembly: body cylinder ∪ nose cylinder ∪ fin box (boolean union proxy)
+
+    # Wall thickness. Airframe sections are thin shells, not billets. Building
+    # them solid made every FEA margin 200-300x -- a solid cylinder under an
+    # axial load is barely stressed, so the result said nothing about the
+    # flight structure. Each cylinder is now hollowed by cutting a coaxial
+    # cylinder, which build_from_spec applies per part.
+    #
+    # Shelling via sculpt_offset does not work here: CadQuery's Solid has no
+    # usable shell for this case, the backend silently falls back to an
+    # expanded bounding box, and the "shelled" body came out at 135% of the
+    # solid volume. A boolean cut is exact -- 0.00% against the analytic tube
+    # volume.
+    wall = float(constraints.get("wall_thickness_mm", 0.0))
+
+    def tube(radius: float, height: float, at=None) -> dict:
+        params = {"radius": radius, "height": height}
+        if at is not None:
+            params["at"] = at
+        part = {"kind": "cylinder", "params": params}
+        if wall > 0.0 and radius - wall > 0.5:
+            part["features"] = [{
+                "op": "cut",
+                "params": {"tool": {"kind": "cylinder", "params": {
+                    "radius": radius - wall, "height": height * 1.05}}},
+            }]
+        return part
+
+    # Parts are now placed, not all stacked at the origin. Concentric parts at
+    # one origin only ever formed a single solid because they overlapped; once
+    # hollowed, the inner ones floated free inside the void and the assembly
+    # stopped being one watertight body, so nothing could be meshed. Nose sits
+    # on top of the body, fins attach to the outside of the wall at the aft end.
+    nose_z = (body_h + nose_h) / 2.0
+    fin_x = body_r + fin_span / 2.0 - min(2.0, wall + 1.0)
+    fin_z = -body_h / 2.0 + fin_chord / 2.0
+
     return {
         "kind": "assembly",
         "parts": [
-            {"kind": "cylinder", "params": {"radius": body_r, "height": body_h}},
-            {"kind": "cylinder", "params": {"radius": nose_r * 0.85, "height": nose_h}},
+            tube(body_r, body_h),
+            tube(nose_r, nose_h, at=[0.0, 0.0, nose_z]),
             {
                 "kind": "box",
                 "params": {
-                    "width": fin_chord,
+                    # x radial (span), y thickness, z axial (chord)
+                    "width": fin_span,
                     "height": fin_thick,
-                    "depth": fin_span,
+                    "depth": fin_chord,
+                    "at": [fin_x, 0.0, fin_z],
                 },
             },
         ],

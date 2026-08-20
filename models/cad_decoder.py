@@ -94,6 +94,10 @@ def assembly_params_to_constraints(params_mm: dict[str, float]) -> dict[str, Any
         "struct_mass_kg": float(params_mm.get("struct_mass_kg", 800.0)),
         "payload_kg": float(params_mm.get("payload_kg", 200.0)),
         "log_throat_area_mm2": float(params_mm.get("log_throat_area_mm2", 7.6)),
+        # Wall thickness reaches the CAD path so the geometry that gets meshed
+        # is the shell the structural sizing actually specified, rather than a
+        # solid billet with the same outer dimensions.
+        "wall_thickness_mm": float(params_mm.get("wall_thickness_mm", 0.0)),
         "material": "Al6061",
     }
 
