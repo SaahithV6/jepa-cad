@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
@@ -108,6 +109,22 @@ def main() -> int:
         limit=64,
     )
     accepted = _load_accepted_params(ROOT / "artifacts/physics_confirmed/CONFIRMED_REPORT.json")
+
+    # Hold out a slice for validation. Without this there is no way to tell
+    # whether the generative head has learned to map a specification onto
+    # geometry or has simply memorised the training designs -- and the training
+    # loss looks equally good either way. With only three targets (the previous
+    # behaviour) the distinction was moot; with a real corpus it is the whole
+    # question.
+    holdout: list[dict] = []
+    if len(accepted) >= 20:
+        rng = random.Random(0)
+        shuffled = list(accepted)
+        rng.shuffle(shuffled)
+        n_val = max(2, len(shuffled) // 10)
+        holdout, accepted = shuffled[:n_val], shuffled[n_val:]
+        print(f"[train_text_cad] train={len(accepted)} holdout={len(holdout)}")
+
     if not accepted:
         accepted = [
             {
@@ -140,8 +157,16 @@ def main() -> int:
             MaskingConfig(grid_size=(2, 2, 2), num_target_blocks=2, context_ratio=0.5),
             generator=torch.Generator().manual_seed(step),
         )
-        # Generative targets from accepted physics-confirmed params (cycle through)
-        gens = [accepted[i % len(accepted)] for i in range(args.batch_size)]
+        # Generative targets from accepted physics-confirmed params.
+        # This indexed by `i` alone, which is the position *within the batch*,
+        # so every step drew accepted[0..batch_size-1] and the rest of the
+        # corpus was never sampled -- with 104 designs and batch 8, 96 of them
+        # were dead weight and the head memorised the same 8. Advance by step,
+        # matching how `idxs` walks the dataset directly above.
+        gens = [
+            accepted[((step - 1) * args.batch_size + i) % len(accepted)]
+            for i in range(args.batch_size)
+        ]
         tokens = batch_tokenize_texts([g["prompt"] for g in gens]).to(device)
         targets = torch.stack([constraints_to_target_tensor(g["params"]) for g in gens], dim=0).to(device)
 
@@ -168,6 +193,31 @@ def main() -> int:
             "grad_norm": float(grad_norm),
             "graph_metadata_dim": int(meta.shape[-1]),
         }
+        # Held-out generative loss. Training loss alone cannot distinguish a
+        # head that has learned spec -> geometry from one that has memorised
+        # the corpus; on designs it has never seen, only the former holds up.
+        if holdout and (step % 25 == 0 or step == args.steps):
+            model.eval()
+            with torch.no_grad():
+                hg = [holdout[i % len(holdout)] for i in range(args.batch_size)]
+                h_tokens = batch_tokenize_texts([g["prompt"] for g in hg]).to(device)
+                h_targets = torch.stack(
+                    [constraints_to_target_tensor(g["params"]) for g in hg], dim=0
+                ).to(device)
+                h_out = model(
+                    points, fields,
+                    masks["context_mask"].to(device),
+                    masks["target_masks"].to(device),
+                    masks["target_block_ids"].to(device),
+                    graph_metadata=meta,
+                    text_tokens=h_tokens,
+                    assembly_targets=h_targets,
+                )
+                row["val_generative_loss"] = float(
+                    h_out.get("generative_loss", torch.tensor(0.0)).item()
+                )
+            model.train()
+
         history.append(row)
         if step == 1 or step % 10 == 0 or step == args.steps:
             print(json.dumps(row))
