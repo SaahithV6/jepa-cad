@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Arbitrary mission specification -> architecture -> vehicle -> verified packet.
+
+Chains every layer that exists:
+
+  planner       chooses stage count and split from the mission's delta-v
+  sizing        bisects propellant until the stack flies the requested altitude
+  decomposition splits the vehicle into major structural components
+  simulation    solves each component in CalculiX under the load it carries
+  verification  margin and pass/fail per component, plus the whole-assembly flight
+  reporting     writes the packet
+
+Unlike the grid-trained path this takes any payload and altitude, because the
+architecture is decided and the vehicle solved at request time.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from cadflow.planner import plan  # noqa: E402
+from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
+from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
+
+ALLOWABLE_MPA = 200.0
+
+
+def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
+                    payload_kg: float):
+    frontal = math.pi * (body_r_mm / 1000.0) ** 2
+    thrust1 = gross_kg * 9.80665 * 4.5
+    specs = [
+        ("nose cone", "aerodynamic pressure at max-Q",
+         max(200.0, max_q_pa * frontal * 1.8),
+         dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 1.2,
+              nose_height_mm=body_r_mm * 1.6, fin_thickness_mm=4.0)),
+        ("thrust structure", "engine thrust into the aft ring",
+         thrust1 * 1.3,
+         dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 1.2,
+              nose_height_mm=body_r_mm * 0.5, fin_thickness_mm=6.5)),
+        ("fin set", "aerodynamic side load at max-Q",
+         max(200.0, max_q_pa * frontal * 0.9),
+         dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 2.0,
+              nose_height_mm=body_r_mm * 0.7, fin_thickness_mm=5.0)),
+    ]
+    # one tank and one interstage per stage
+    for i, st in enumerate(stages):
+        supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
+                                     for s in stages[i:])
+        specs.append((f"stage {i+1} tank",
+                      f"carries {st.prop_mass_kg:.1f} kg propellant under thrust",
+                      supported * 9.80665 * 4.5,
+                      dict(body_radius_mm=body_r_mm * (1.0 - 0.08 * i),
+                           body_height_mm=body_r_mm * 3.5,
+                           nose_height_mm=body_r_mm * 0.8,
+                           fin_thickness_mm=5.5)))
+        if i < len(stages) - 1:
+            specs.append((f"interstage {i+1}/{i+2}",
+                          "transmits lower-stage thrust to the stage above",
+                          supported * 9.80665 * 4.5,
+                          dict(body_radius_mm=body_r_mm * (1.0 - 0.08 * i),
+                               body_height_mm=body_r_mm * 1.5,
+                               nose_height_mm=body_r_mm * 0.6,
+                               fin_thickness_mm=5.5)))
+    return specs
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--payload-kg", type=float, required=True)
+    ap.add_argument("--apogee-km", type=float, required=True)
+    ap.add_argument("--propellant", type=str, default="lox_rp1")
+    ap.add_argument("--chamber-bar", type=float, default=55.0)
+    ap.add_argument("--out", type=Path, default=ROOT / "artifacts/plan_packet")
+    args = ap.parse_args()
+    args.out.mkdir(parents=True, exist_ok=True)
+    load_coupling()
+
+    spec = (f"deliver {args.payload_kg:.0f} kg payload to {args.apogee_km:.0f} km "
+            f"apogee using {args.propellant.replace('_','/')} at "
+            f"{args.chamber_bar:.0f} bar chamber pressure")
+
+    p = plan(args.apogee_km, args.payload_kg,
+             propellant=args.propellant, chamber_bar=args.chamber_bar)
+    if p is None:
+        print(f"# Design packet\n\n**Specification:** {spec}\n")
+        print("No architecture up to 3 stages closes this mission.")
+        return 1
+
+    body_r = max(20.0, min(50.0, 16.0 * (p.gross_kg / 100.0) ** (1 / 3)))
+    results = []
+    for name, why, load, geo in component_specs(
+            body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
+        geom = {"body_radius_mm": geo["body_radius_mm"],
+                "body_height_mm": geo["body_height_mm"],
+                "nose_radius_mm": geo["body_radius_mm"],
+                "nose_height_mm": geo["nose_height_mm"],
+                "fin_span_mm": 14.0, "fin_thickness_mm": geo["fin_thickness_mm"],
+                "fin_chord_mm": 18.0, "fillet_radius_mm": 2.5,
+                "cl_max_mm": 8.0, "cl_min_mm": 2.0}
+        try:
+            rep = run_confirmed(params_mm=geom,
+                out=args.out / "components" / name.replace(" ", "_").replace("/", "-"),
+                max_stress_mpa=ALLOWABLE_MPA, max_disp_mm=3.0, max_iters=1,
+                load_n=load, prompt=name)
+            acc = rep.get("accepted") or {}
+            vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
+        except Exception as exc:  # noqa: BLE001
+            vm, ok = None, False
+        results.append({"name": name, "why": why, "load_n": load,
+                        "von_mises_mpa": vm, "passed": ok,
+                        "margin": (ALLOWABLE_MPA / vm) if vm else None})
+
+    L = [f"# Design packet\n", f"**Specification:** {spec}\n", "## Architecture\n"]
+    for line in p.rationale:
+        L.append(f"- {line}")
+    L.append(f"\n## Vehicle: {p.stages} stage(s)\n")
+    L.append("| stage | propellant | structure | expansion |")
+    L.append("|---|---|---|---|")
+    for i, st in enumerate(p.stack):
+        L.append(f"| {i+1} | {st.prop_mass_kg:.2f} kg | "
+                 f"{st.struct_mass_kg:.2f} kg | {st.expansion_ratio:.0f} |")
+    L.append(f"\npayload {args.payload_kg:.1f} kg, gross {p.gross_kg:.1f} kg\n")
+    L.append("## Mission verification\n")
+    err = abs(p.achieved_km - args.apogee_km) / args.apogee_km * 100
+    seps = ", ".join(f"{s:.1f} s" for s in p.trajectory["separations"]) or "none"
+    L.append(f"Flown apogee **{p.achieved_km:.1f} km** against "
+             f"{args.apogee_km:.0f} km requested (**{err:.1f}%** error); "
+             f"downrange {p.trajectory['downrange_m']/1000:.1f} km, "
+             f"max-Q {p.trajectory['max_q_pa']/1000:.1f} kPa, "
+             f"separations {seps}.\n")
+    L.append("## Component verification\n")
+    L.append("| component | load case | load | von Mises | margin | status |")
+    L.append("|---|---|---|---|---|---|")
+    for r in results:
+        vm = f"{r['von_mises_mpa']:.2f} MPa" if r["von_mises_mpa"] else "-"
+        mg = f"{r['margin']:.1f}x" if r["margin"] else "-"
+        L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | {vm} | {mg} | "
+                 f"{'PASS' if r['passed'] else 'FAIL'} |")
+    allp = all(r["passed"] for r in results)
+    L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
+             f"All {len(results)} components passed: **{allp}**\n")
+
+    (args.out / "PACKET.md").write_text("\n".join(L))
+    (args.out / "PACKET.json").write_text(json.dumps({
+        "specification": spec, "stages": p.stages, "split": p.split,
+        "gross_kg": p.gross_kg, "achieved_km": p.achieved_km,
+        "error_pct": err, "rationale": p.rationale,
+        "components": results, "all_passed": allp}, indent=2))
+    print("\n".join(L))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
