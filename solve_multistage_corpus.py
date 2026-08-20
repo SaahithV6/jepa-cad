@@ -122,7 +122,11 @@ def main() -> int:
     load_coupling()
 
     payloads = [1.0, 3.0, 8.0, 20.0, 45.0, 100.0]
-    apogees = [50, 100, 200, 400, 800, 1500, 3000, 6000, 12000]
+    # Extended past 12,000 km. The trained model failed badly exactly at the
+    # old top of range (12,000 km asked, 318 km flown) because that point was
+    # the edge of the corpus and it was extrapolating. Everything inside the
+    # range landed within 22%.
+    apogees = [50, 100, 200, 400, 800, 1500, 3000, 6000, 12000, 25000, 50000]
     pressures = [35.0, 55.0, 80.0]
     props = ["lox_rp1", "lox_ch4", "solid_apcp"]
 
