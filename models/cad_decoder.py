@@ -22,6 +22,15 @@ ASSEMBLY_PARAM_KEYS: tuple[str, ...] = (
     "fin_thickness_mm",
     "fin_chord_mm",
     "fillet_radius_mm",
+    # Vehicle-level outputs. Without these the decoder emits an airframe
+    # section and nothing else, so a mission specification -- "x kg to y km" --
+    # has no representable answer: the propulsion sizing and mass budget that
+    # decide whether the mission closes are simply not in the output.
+    "chamber_pressure_bar",
+    "expansion_ratio",
+    "prop_mass_kg",
+    "struct_mass_kg",
+    "payload_kg",
 )
 ASSEMBLY_PARAM_DIM = len(ASSEMBLY_PARAM_KEYS)
 
@@ -35,6 +44,11 @@ _ASSEMBLY_SCALES: tuple[float, ...] = (
     10.0,   # fin_thickness
     120.0,  # fin_chord
     5.0,    # fillet
+    250.0,      # chamber_pressure_bar
+    100.0,      # expansion_ratio
+    300_000.0,  # prop_mass_kg
+    60_000.0,   # struct_mass_kg
+    25_000.0,   # payload_kg
 )
 
 
@@ -49,6 +63,15 @@ def assembly_params_to_constraints(params_mm: dict[str, float]) -> dict[str, Any
         "fin_thickness_mm": float(params_mm.get("fin_thickness_mm", 3.0)),
         "fin_chord_mm": float(params_mm.get("fin_chord_mm", 50.0)),
         "fillet_radius_mm": float(params_mm.get("fillet_radius_mm", 1.0)),
+        # Vehicle-level fields pass through untouched. The CAD path ignores
+        # them -- geometry is built from the airframe dimensions above -- but
+        # they are part of the design the decoder is asked to produce, so they
+        # must survive the round trip to be scored against.
+        "chamber_pressure_bar": float(params_mm.get("chamber_pressure_bar", 60.0)),
+        "expansion_ratio": float(params_mm.get("expansion_ratio", 20.0)),
+        "prop_mass_kg": float(params_mm.get("prop_mass_kg", 5_000.0)),
+        "struct_mass_kg": float(params_mm.get("struct_mass_kg", 800.0)),
+        "payload_kg": float(params_mm.get("payload_kg", 200.0)),
         "material": "Al6061",
     }
 

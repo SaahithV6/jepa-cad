@@ -28,8 +28,21 @@ from models.text_encoder import batch_tokenize_texts  # noqa: E402
 from utils.config import load_yaml_with_family  # noqa: E402
 
 
-def _load_accepted_params(path: Path) -> list[dict]:
+def _load_accepted_params(path: Path, corpus_override: Path | None = None) -> list[dict]:
     rows: list[dict] = []
+
+    # Explicit corpus wins, so the mission corpus (specification -> whole
+    # vehicle) and the confirmed-design corpus (specification -> airframe) can
+    # be trained against without editing this file.
+    if corpus_override is not None and corpus_override.exists():
+        for line in corpus_override.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            if isinstance(rec.get("params"), dict) and rec.get("prompt"):
+                rows.append({"params": rec["params"], "prompt": rec["prompt"]})
+        print(f"[train_text_cad] loaded {len(rows)} records from {corpus_override}")
+        return rows
 
     # Preferred source: the swept corpus of physics-confirmed designs. Each
     # CONFIRMED_REPORT.json below holds exactly one accepted design, so before
@@ -80,6 +93,8 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--out", type=Path, default=ROOT / "artifacts/text_cad_confirmed_train")
     ap.add_argument("--graph", type=Path, default=ROOT / "artifacts/jepa-train-bundle/graph.json")
+    ap.add_argument("--corpus", type=Path, default=None,
+                    help="jsonl of {prompt, params} records; overrides the default search")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -108,7 +123,8 @@ def main() -> int:
         extra_search_roots=[ROOT],
         limit=64,
     )
-    accepted = _load_accepted_params(ROOT / "artifacts/physics_confirmed/CONFIRMED_REPORT.json")
+    accepted = _load_accepted_params(
+        ROOT / "artifacts/physics_confirmed/CONFIRMED_REPORT.json", args.corpus)
 
     # Hold out a slice for validation. Without this there is no way to tell
     # whether the generative head has learned to map a specification onto
