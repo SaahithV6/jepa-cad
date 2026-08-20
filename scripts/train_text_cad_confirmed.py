@@ -29,6 +29,26 @@ from utils.config import load_yaml_with_family  # noqa: E402
 
 def _load_accepted_params(path: Path) -> list[dict]:
     rows: list[dict] = []
+
+    # Preferred source: the swept corpus of physics-confirmed designs. Each
+    # CONFIRMED_REPORT.json below holds exactly one accepted design, so before
+    # this existed the head trained on three parameter vectors cycled by
+    # `gens = [accepted[i % len(accepted)] ...]`. Its generative loss reached
+    # ~1e-5 within 60 steps, which is memorisation of three targets rather than
+    # learning to design -- and indistinguishable from success on a loss curve.
+    corpus = ROOT / "artifacts/confirmed_designs/corpus.jsonl"
+    if corpus.exists():
+        for line in corpus.read_text().splitlines():
+            if not line.strip():
+                continue
+            rec = json.loads(line)
+            params = rec.get("params")
+            if isinstance(params, dict) and rec.get("prompt"):
+                rows.append({"params": params, "prompt": rec["prompt"]})
+        if rows:
+            print(f"[train_text_cad] loaded {len(rows)} confirmed designs from {corpus.name}")
+            return rows
+
     for candidate in (
         path,
         ROOT / "artifacts/physics_confirmed/CONFIRMED_REPORT.json",
