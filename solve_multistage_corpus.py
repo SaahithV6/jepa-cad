@@ -74,23 +74,28 @@ def solve(target_km: float, payload: float, pc: float, prop: str,
     a_hi, *_ = fly(hi, payload, pc, prop)
     if not (a_lo <= target_km <= a_hi):
         return None
+    # Keep the closest iterate, not the latest: a probe landing on an escape
+    # trajectory has infinite apogee and would otherwise discard a converged
+    # solve.
     best = None
-    for _ in range(24):
+    best_err = float("inf")
+    for _ in range(30):
         mid = math.sqrt(lo * hi)            # geometric bisection: mass spans decades
         a, gross, split, r = fly(mid, payload, pc, prop)
-        best = (mid, a, gross, split, r)
-        if abs(a - target_km) / target_km < tol:
+        err = abs(a - target_km) / target_km if math.isfinite(a) else float("inf")
+        if err < best_err:
+            best_err, best = err, (mid, a, gross, split, r)
+        if err < tol:
             break
         if a < target_km:
             lo = mid
         else:
             hi = mid
-    if best is None:
+    if best is None or best_err > 0.10:
         return None
     tp, achieved, gross, split, r = best
-    if abs(achieved - target_km) / target_km > 0.10:
-        return None
     p1, s1, p2, s2 = split
+    stages_built, _, _ = build_stack(tp, payload, pc, prop)
     return {
         "total_prop_kg": tp, "achieved_km": achieved, "gross_kg": gross,
         "stage1_prop_kg": p1, "stage1_struct_kg": s1,
@@ -98,6 +103,13 @@ def solve(target_km: float, payload: float, pc: float, prop: str,
         "log_mass_ratio": math.log(gross / max(gross - tp, 1e-6)),
         "downrange_km": r["downrange_m"] / 1000.0,
         "separations": r["separations"],
+        # Real throat areas. These were emitted as a 0.0 placeholder with a
+        # "filled below" comment and never filled, so every record in the
+        # corpus taught the decoder that the throat area is zero. The
+        # evaluation did not catch it because the flight path recomputes the
+        # throat from thrust-to-weight and ignores the predicted value.
+        "stage1_throat_mm2": stages_built[0].throat_area_m2 * 1e6,
+        "stage2_throat_mm2": stages_built[1].throat_area_m2 * 1e6,
     }
 
 
@@ -149,7 +161,8 @@ def main() -> int:
                             "log_mass_ratio": r["log_mass_ratio"],
                             "struct_mass_kg": r["stage1_struct_kg"] + r["stage2_struct_kg"],
                             "payload_kg": pay,
-                            "throat_area_mm2": 0.0,   # filled below
+                            "log_throat_area_mm2": math.log(
+                                max(r["stage1_throat_mm2"], 1e-6)),
                             "stage1_prop_kg": r["stage1_prop_kg"],
                             "stage2_prop_kg": r["stage2_prop_kg"],
                         },

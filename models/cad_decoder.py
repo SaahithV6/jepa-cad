@@ -40,7 +40,11 @@ ASSEMBLY_PARAM_KEYS: tuple[str, ...] = (
     # Without throat area the design cannot be flown from its own parameters:
     # thrust-to-weight has to be assumed, and it drives apogee strongly. A
     # vehicle you cannot integrate is not a complete answer to a mission spec.
-    "throat_area_mm2",
+    # log of throat area, not the area. It spans four decades across the
+    # corpus (16.5 to 140,672 mm2, median 758), so a linear scale crushes the
+    # median into the bottom few percent of the sigmoid -- the same failure the
+    # mass outputs had.
+    "log_throat_area_mm2",
 )
 ASSEMBLY_PARAM_DIM = len(ASSEMBLY_PARAM_KEYS)
 
@@ -65,7 +69,7 @@ _ASSEMBLY_SCALES: tuple[float, ...] = (
     3.5,     # log_mass_ratio        (MR up to ~33)
     150.0,   # struct_mass_kg        (corpus 3-117)
     60.0,    # payload_kg            (corpus 0.5-46)
-    20_000.0,  # throat_area_mm2     (corpus 68-17167)
+    12.0,      # log_throat_area_mm2 (ln of 16.5-140,672 spans 2.8-11.9)
 )
 
 
@@ -89,7 +93,7 @@ def assembly_params_to_constraints(params_mm: dict[str, float]) -> dict[str, Any
         "log_mass_ratio": float(params_mm.get("log_mass_ratio", 1.2)),
         "struct_mass_kg": float(params_mm.get("struct_mass_kg", 800.0)),
         "payload_kg": float(params_mm.get("payload_kg", 200.0)),
-        "throat_area_mm2": float(params_mm.get("throat_area_mm2", 2000.0)),
+        "log_throat_area_mm2": float(params_mm.get("log_throat_area_mm2", 7.6)),
         "material": "Al6061",
     }
 
