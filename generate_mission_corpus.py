@@ -212,6 +212,10 @@ def main() -> int:
             "prop_mass_kg": v["prop_mass_kg"],
             "struct_mass_kg": v["struct_mass_kg"],
             "payload_kg": v["payload_kg"],
+            # Without throat area the vehicle cannot be flown from its own
+            # parameters -- thrust-to-weight has to be assumed, and it drives
+            # apogee strongly.
+            "throat_area_mm2": v["throat_area_m2"] * 1e6,
         })
 
         rows.append(json.dumps({

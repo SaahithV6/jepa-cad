@@ -95,16 +95,24 @@ def main() -> int:
     ap.add_argument("--graph", type=Path, default=ROOT / "artifacts/jepa-train-bundle/graph.json")
     ap.add_argument("--corpus", type=Path, default=None,
                     help="jsonl of {prompt, params} records; overrides the default search")
+    # These were hardcoded to a smoke-test size (embed 64, one text layer) while
+    # the script's defaults were 40 steps at batch 2. Running a real corpus
+    # through it left the text -> parameter path far too small to invert mission
+    # physics: a 100x change in requested apogee moved the design by 2.9%.
+    ap.add_argument("--embed-dim", type=int, default=64)
+    ap.add_argument("--text-layers", type=int, default=1)
+    ap.add_argument("--encoder-layers", type=int, default=2)
+    ap.add_argument("--lr", type=float, default=2e-4)
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
     cfg = load_yaml_with_family(ROOT / "configs/base.yaml")
     cfg["model"]["enable_generative"] = True
-    cfg["model"]["embed_dim"] = 64
-    cfg["model"]["encoder"]["num_layers"] = 2
+    cfg["model"]["embed_dim"] = args.embed_dim
+    cfg["model"]["encoder"]["num_layers"] = args.encoder_layers
     cfg["model"]["encoder"]["num_heads"] = 4
     cfg["model"]["predictor"]["num_layers"] = 1
-    cfg["model"]["text_encoder"]["num_layers"] = 1
+    cfg["model"]["text_encoder"]["num_layers"] = args.text_layers
     cfg["model"]["text_encoder"]["num_heads"] = 4
     cfg["data"]["num_fields"] = 3
     cfg["data"]["graph_metadata_dim"] = GRAPH_METADATA_DIM
@@ -113,7 +121,7 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = JEPAModel.from_config(cfg).to(device)
     assert model.has_generative_head
-    opt = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=0.01)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
 
     ds = GraphBackedCADDataset(
         args.graph,
