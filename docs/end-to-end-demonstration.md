@@ -181,3 +181,72 @@ designs so that mission outcomes are roughly uniform in log space, rather than
 accepting whatever apogee falls out of a uniform sweep over design parameters.
 That is the next piece of work, and it is corpus design rather than model
 capacity.
+
+---
+
+## Mission conditioning: three causes, two fixed
+
+Asked to deliver a payload to a stated apogee, the head initially overshot by
+7-10x. Three separate causes, diagnosed by measurement rather than guessed.
+
+### 1. Corpus outcome coverage (fixed)
+
+Designs were sampled uniformly and labelled with whatever mission resulted, so
+outcomes were skewed across 2.6 decades: apogee 12.6-5,219 km, median 437, a
+95 km request at the 7.9th percentile. Rejection sampling into 12 log-spaced
+apogee bins fixed the coverage exactly -- 50 per bin from 15 to 3,000 km, at
+17,643 attempts for 600 accepted, with rejects costing no solver time because
+the trajectory runs before CalculiX.
+
+Effect: a 95 km request went from 929 km flown to 559 km.
+
+### 2. Model capacity (fixed)
+
+`scripts/train_text_cad_confirmed.py` hardcoded a smoke-test model -- embed_dim
+64, one text-encoder layer -- matching its own defaults of 40 steps at batch 2.
+A real corpus was being pushed through a text->parameter path far too small.
+
+Sweeping the requested apogee over 100x moved the design by 2.9%:
+
+```
+asked   20 km -> mass ratio 3.83, gross 255.0 kg
+asked 2000 km -> mass ratio 3.94, gross 246.9 kg
+```
+
+At embed_dim 256 with 4 text layers, propellant mass responds monotonically and
+by 72.5% over the same sweep, and flown apogee crosses the requested value
+between 400 and 2000 km. Model size is now a flag.
+
+### 3. The training objective (not fixed)
+
+What remains is structural. The head is trained on mean-squared error over
+normalised *design parameters*, but apogee depends on mass ratio
+*exponentially*. Physics requires, for LOX/RP-1 at Isp 300 s:
+
+| apogee | delta-v | required mass ratio |
+|---|---|---|
+| 20 km | 0.85 km/s | 1.33 |
+| 95 km | 1.84 km/s | 1.87 |
+| 400 km | 3.78 km/s | 3.62 |
+| 2000 km | 8.46 km/s | 17.71 |
+
+A 13x span. The model produces 3.03-4.29, a 1.4x span, and 100x of requested
+apogee compresses into roughly 2x of flown outcome (431-855 km).
+
+This is what minimising parameter MSE *should* do. The MSE-optimal predictor is
+the conditional mean, and in a space where the outcome is exponential in the
+parameter, the conditional mean of the parameters is nowhere near the parameter
+that achieves the mean outcome. Better coverage and more capacity both help,
+and neither addresses it, because the loss cannot see the physics.
+
+Two ways out, neither attempted here:
+
+- **Reparameterise so the target is linear in the outcome.** Predict delta-v or
+  log mass ratio and derive the masses from it, instead of predicting masses
+  directly. Cheap, and it makes parameter error proportional to mission error.
+- **Put the physics in the loss.** Score the achieved apogee, not the parameter
+  vector -- a differentiable trajectory, or a policy-gradient estimator over the
+  existing integrator.
+
+The first is the obvious next step and is a small change to the corpus and the
+decode path.
