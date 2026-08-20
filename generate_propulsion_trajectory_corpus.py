@@ -340,6 +340,44 @@ PROPELLANTS = {
 }
 
 
+# Yield strength of Al-6061-T6, the default airframe material in the corpus.
+ALLOWABLE_MPA = 276.0
+
+_COUPLING: dict | None = None
+
+
+def load_coupling(path: Path | None = None) -> dict:
+    """Load solver-derived aero/structural distributions, if extracted.
+
+    Without this the generator invents its own drag coefficient and structural
+    coefficient from uniform distributions, leaving the disciplines running in
+    parallel: thousands of CFD and FEA shards exist but nothing in the
+    trajectory depends on either. With it, drag comes from CFD-derived Cd and
+    the structural mass fraction is driven by real CalculiX von Mises results.
+    """
+    global _COUPLING
+    if _COUPLING is not None:
+        return _COUPLING
+    p = path or Path("artifacts/coupling/aero_structural_library.json")
+    if p.exists():
+        _COUPLING = json.loads(p.read_text())
+        n_cd = len(_COUPLING.get("cd", {}).get("values", []))
+        n_vm = len(_COUPLING.get("fea_max_von_mises_mpa", {}).get("values", []))
+        print(f"coupling library: {n_cd} Cd values, {n_vm} FEA von Mises values")
+    else:
+        _COUPLING = {}
+        print("coupling library absent -- falling back to uncoupled sampling")
+    return _COUPLING
+
+
+def _draw(rng: random.Random, key: str, fallback_lo: float, fallback_hi: float) -> tuple[float, bool]:
+    """Draw from a harvested distribution; report whether it was coupled."""
+    vals = load_coupling().get(key, {}).get("values") or []
+    if vals:
+        return float(rng.choice(vals)), True
+    return rng.uniform(fallback_lo, fallback_hi), False
+
+
 def sample_design(rng: random.Random, idx: int) -> dict:
     prop = rng.choice(list(PROPELLANTS))
     gamma, tc, mol = PROPELLANTS[prop]
@@ -353,7 +391,18 @@ def sample_design(rng: random.Random, idx: int) -> dict:
     m0 = 10.0 ** rng.uniform(3.0, 5.5)            # 1 t .. ~300 t gross
     payload_frac = rng.uniform(0.004, 0.070)      # payload as fraction of gross
     payload = m0 * payload_frac
-    struct_coeff = rng.uniform(0.06, 0.16)        # structure vs (structure+prop)
+
+    # STRUCTURAL COUPLING: the structural mass coefficient is driven by real
+    # CalculiX results rather than drawn at random. A part running closer to
+    # the material allowable needs more material to carry its load, so higher
+    # utilisation buys a heavier structure and eats propellant mass.
+    #
+    # von Mises in the corpus spans five orders of magnitude (p10 0.095 MPa,
+    # p90 2776 MPa); the upper tail is mesh singularities at re-entrant
+    # corners rather than real load, so utilisation is clamped before use.
+    vm_mpa, vm_coupled = _draw(rng, "fea_max_von_mises_mpa", 10.0, 200.0)
+    utilisation = min(1.0, max(0.05, vm_mpa / ALLOWABLE_MPA))
+    struct_coeff = 0.06 + 0.10 * utilisation      # spans the same 0.06-0.16 band
 
     m_struct = struct_coeff * (m0 - payload)
     m_prop = m0 - payload - m_struct
@@ -362,6 +411,11 @@ def sample_design(rng: random.Random, idx: int) -> dict:
 
     diameter = max(0.2, (m0 / 1000.0) ** (1.0 / 3.0) * rng.uniform(0.5, 1.2))
     ref_area = math.pi * (diameter / 2.0) ** 2
+
+    # AERO COUPLING: drag comes from the CFD corpus rather than a guess.
+    # Only the slender-body band is used -- see extract_coupling_library.py for
+    # why the raw Cd_proxy distribution cannot be taken at face value.
+    cd, cd_coupled = _draw(rng, "cd", 0.25, 0.55)
 
     pc = rng.uniform(2.0e6, 20.0e6)
     # Expansion ratio is a design choice tied to where the stage operates.
@@ -401,7 +455,11 @@ def sample_design(rng: random.Random, idx: int) -> dict:
         "expansion_ratio": float(eps),
         "throat_area_m2": float(throat_area),
         "target_twr": float(twr),
-        "cd": float(rng.uniform(0.25, 0.55)),
+        "cd": float(cd),
+        "cd_coupled": bool(cd_coupled),
+        "fea_max_von_mises_mpa": float(vm_mpa),
+        "structural_utilisation": float(utilisation),
+        "struct_coupled": bool(vm_coupled),
         "pitchover_time_s": float(rng.uniform(8.0, 25.0)),
         "pitchover_angle_deg": float(rng.uniform(1.0, 6.0)),
     }
