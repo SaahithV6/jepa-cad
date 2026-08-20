@@ -355,3 +355,38 @@ any nonlinear system the average answer is not a valid one. Either the
 specification must determine the design, or the loss must score the outcome.
 Making the corpus a function was far cheaper here than putting physics in the
 loss, and it is what actually worked.
+
+### 5. Staging (fixed)
+
+Two stages, solved the same way -- specification determines the design, total
+mass ratio bisected until the stack flies the requested altitude, spent
+structure jettisoned at separation. 414 of 486 specifications solved in 1.5
+minutes.
+
+Asking for 8 kg to a swept altitude on lox/rp1 at 55 bar, and flying what came
+back:
+
+| asked | flown | ratio | gross | separation |
+|---|---|---|---|---|
+| 50 km | 59.3 | 1.19x | 27.4 kg | 26 s |
+| 100 km | 105.5 | 1.05x | 33.6 kg | 28 s |
+| 200 km | 228.0 | 1.14x | 44.1 kg | 31 s |
+| 400 km | 408.4 | 1.02x | 60.5 kg | 33 s |
+| 800 km | 759.8 | 0.95x | 93.2 kg | 35 s |
+| 1500 km | 1571.5 | 1.05x | 169.0 kg | 36 s |
+| 3000 km | 2783.5 | 0.93x | 362.0 kg | 37 s |
+| 6000 km | 4920.1 | 0.82x | 1109.8 kg | 38 s |
+
+Mean absolute error 0.041 decades across a 120x span of requested altitude,
+8 of 8 within 2x and 7 of 8 within 20%.
+
+## Progression
+
+| model | corpus | stages | mean error |
+|---|---|---|---|
+| v11 | sampled | 1 | 0.698 dec |
+| v12 | sampled, log mass ratio | 1 | 0.647 dec |
+| v13 | solved | 1 | 0.120 dec |
+| v14 | solved | 2 | **0.041 dec** |
+
+Reproduce the evaluation with `scripts/eval_mission_targeting.py <checkpoint>`.
