@@ -44,11 +44,17 @@ _ASSEMBLY_SCALES: tuple[float, ...] = (
     10.0,   # fin_thickness
     120.0,  # fin_chord
     5.0,    # fillet
-    250.0,      # chamber_pressure_bar
-    100.0,      # expansion_ratio
-    300_000.0,  # prop_mass_kg
-    60_000.0,   # struct_mass_kg
-    25_000.0,   # payload_kg
+    # Scales must bracket the corpus, not the ambition. Set for orbital-class
+    # vehicles (300 t propellant, 25 t payload) against a sounding-rocket
+    # corpus, the mass targets normalised to 0.00002-0.00195 -- the bottom 0.2%
+    # of the sigmoid's range, where the head cannot resolve them at all. A
+    # 0.0076 output then denormalises to 2,281 kg for a 12 kg request. The loss
+    # barely notices, because in normalised units the error is tiny.
+    100.0,   # chamber_pressure_bar  (corpus 15-80)
+    30.0,    # expansion_ratio       (corpus 4-25)
+    500.0,   # prop_mass_kg          (corpus 16-424)
+    150.0,   # struct_mass_kg        (corpus 3-117)
+    60.0,    # payload_kg            (corpus 0.5-46)
 )
 
 
