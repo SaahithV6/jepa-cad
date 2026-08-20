@@ -60,7 +60,7 @@ model:
     # constant: widening the decoder to vehicle level took the real value to 13
     # while this stayed at 8, and the mismatch only surfaced deep in the
     # training step as "size of tensor a (8) must match tensor b (13)".
-    param_dim: 13  # 8 airframe + chamber_pressure, expansion_ratio, prop/struct/payload mass
+    param_dim: 14  # 8 airframe + chamber_pressure, expansion_ratio, prop/struct/payload mass, throat area
 
 # Training
 train:

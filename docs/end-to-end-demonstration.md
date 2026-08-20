@@ -137,3 +137,47 @@ A payload-and-range specification is *conditionable* -- `payload_kg`,
 conditioning slots populated from 1,500 propulsion/trajectory shards -- but the
 generative head maps text to one part family's geometry. Going from "x kg to
 y km" to a staged vehicle is not implemented.
+
+---
+
+## Mission-level: what works and where it stops
+
+The airframe result above answers "build me a section with these dimensions".
+The harder question is "deliver x kg to y km", which needs the propulsion
+sizing and mass budget too. `generate_mission_corpus.py` builds 681 such pairs,
+each verified twice: flown through a gravity turn, and structurally solved in
+CalculiX under its own liftoff thrust. The decoder was widened from 8 airframe
+dimensions to 14 (adding chamber pressure, expansion ratio, propellant,
+structural and payload mass, and throat area).
+
+Asked to *deliver 12 kg to 95 km apogee using LOX/RP-1 at 55 bar*:
+
+| quantity | requested | designed | flown |
+|---|---|---|---|
+| chamber pressure | 55 bar | 55.6 bar (v8) | - |
+| payload | 12 kg | 14.3 kg | - |
+| apogee | 95 km | - | **703-929 km** |
+
+**Directly stated design parameters are followed** -- chamber pressure to 1.1%,
+payload to within a few kg, and the vehicle it produces is coherent: 167 kg
+propellant, 42 kg structure, 224 kg gross, a credible sounding rocket.
+
+**Stated mission outcomes are not achieved.** Apogee comes out 7-10x high.
+
+Two things this is *not*: it is not underdetermination (adding throat area so
+the vehicle can be flown from its own parameters changed nothing), and it is
+not a shortage of training signal in the usual sense.
+
+It is the corpus construction. Designs are sampled forward and labelled with
+whatever mission results, so mission outcomes are extremely skewed: apogee
+spans 12.6 to 5,219 km -- 415x, 2.6 decades -- with a median of 437 km. A 95 km
+request sits at the 7.9th percentile, and only 15.6% of the corpus lies below
+150 km. Asked for something in that sparse tail, the head returns something
+near the bulk of the distribution.
+
+Going from "design -> outcome" data to "outcome -> design" capability is an
+inverse problem, and the corpus has to be built for it: rejection-sample
+designs so that mission outcomes are roughly uniform in log space, rather than
+accepting whatever apogee falls out of a uniform sweep over design parameters.
+That is the next piece of work, and it is corpus design rather than model
+capacity.

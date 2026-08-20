@@ -31,6 +31,10 @@ ASSEMBLY_PARAM_KEYS: tuple[str, ...] = (
     "prop_mass_kg",
     "struct_mass_kg",
     "payload_kg",
+    # Without throat area the design cannot be flown from its own parameters:
+    # thrust-to-weight has to be assumed, and it drives apogee strongly. A
+    # vehicle you cannot integrate is not a complete answer to a mission spec.
+    "throat_area_mm2",
 )
 ASSEMBLY_PARAM_DIM = len(ASSEMBLY_PARAM_KEYS)
 
@@ -55,6 +59,7 @@ _ASSEMBLY_SCALES: tuple[float, ...] = (
     500.0,   # prop_mass_kg          (corpus 16-424)
     150.0,   # struct_mass_kg        (corpus 3-117)
     60.0,    # payload_kg            (corpus 0.5-46)
+    20_000.0,  # throat_area_mm2     (corpus 68-17167)
 )
 
 
@@ -78,6 +83,7 @@ def assembly_params_to_constraints(params_mm: dict[str, float]) -> dict[str, Any
         "prop_mass_kg": float(params_mm.get("prop_mass_kg", 5_000.0)),
         "struct_mass_kg": float(params_mm.get("struct_mass_kg", 800.0)),
         "payload_kg": float(params_mm.get("payload_kg", 200.0)),
+        "throat_area_mm2": float(params_mm.get("throat_area_mm2", 2000.0)),
         "material": "Al6061",
     }
 
