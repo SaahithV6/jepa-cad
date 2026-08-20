@@ -18,6 +18,17 @@ export CADFLOW_SOLVER_ROOT="$HOME/.local/cadflow-solvers"
 # 'controlDict'" without this.
 export WM_PROJECT_DIR="$CADFLOW_SOLVER_ROOT/openfoam_1912.200626-2build3_amd64/usr/share/openfoam"
 
+# Only 4 wrapper scripts exist in ~/.local/bin (ccx, cgx, simpleFoam, blockMesh),
+# but the extracted .deb carries the full OpenFOAM toolset -- snappyHexMesh,
+# surfaceFeatureExtract, checkMesh, decomposePar and ~200 more. The body-fitted
+# CFD path needs snappyHexMesh, so put the real bin dirs on PATH and source the
+# library environment directly rather than wrapping each binary.
+if [[ -f "$HOME/.local/bin/cadflow-solver-env.sh" ]]; then
+  source "$HOME/.local/bin/cadflow-solver-env.sh"
+fi
+export PATH="$CADFLOW_SOLVER_ROOT/openfoam_1912.200626-2build3_amd64/usr/bin:$PATH"
+export PATH="$CADFLOW_SOLVER_ROOT/calculix-ccx_2.21-1_amd64/usr/bin:$PATH"
+
 # CalculiX parallelism: prefer many concurrent cases over threads-per-case.
 # Raise this only if you are running a single large solve.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"

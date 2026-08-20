@@ -62,15 +62,22 @@ model:
   gradient_checkpointing: true
 
 train:
-  batch_size: 1
+  # batch_size was 1 with grad_accum_steps 32, sized for a 24B-class encoder.
+  # The actual model is 76.5M trainable, so batch 1 both wastes the GPU and
+  # breaks the collapse guard: embed_std is std(dim=0) over the batch, which
+  # is NaN for a single sample, so collapse_std_threshold could never fire.
+  # 8 x 4 keeps the effective batch at 32 while making embed_std meaningful.
+  batch_size: 8
   num_epochs: 1
+  # bf16 requires Ampere or newer. On a Colab T4 (Turing, SM 7.5) override with
+  # --set train.precision=fp16.
   precision: "bf16"
   amp: false
   lr: 1.5e-5
   weight_decay: 0.05
   warmup_steps: 2000
   grad_clip: 1.0
-  grad_accum_steps: 32
+  grad_accum_steps: 4
   log_every: 10
   checkpoint_every: 1000
   collapse_std_threshold: 0.01

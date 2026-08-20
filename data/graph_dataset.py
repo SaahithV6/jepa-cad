@@ -30,7 +30,21 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from data.parsers import ParseError, parse_raw_file
+from data.parsers import (
+    CAD_SUFFIXES,
+    FIELD_SUFFIXES,
+    MESH_SUFFIXES,
+    SHARD_SUFFIXES,
+    ParseError,
+    parse_raw_file,
+)
+
+# Formats _load_sample_arrays can actually read. The TAO graph also references
+# proprietary CAD pulled in by the external-download ingest (.SLDPRT/.SLDASM/
+# .SLDDRW) plus docs (.pdf/.txt/.md/.csv). Those can never be parsed, and
+# hitting one mid-epoch used to raise ParseError and kill the run, so drop
+# them when records are built rather than when they are sampled.
+_LOADABLE_SUFFIXES = SHARD_SUFFIXES | MESH_SUFFIXES | CAD_SUFFIXES | FIELD_SUFFIXES
 
 _GRAPH_FILE_CANDIDATES = (
     "spaceflight-graph.json",
@@ -448,6 +462,7 @@ class GraphBackedCADDataset(Dataset):
             incoming.setdefault(edge.get("target", ""), []).append(edge)
 
         records: list[GraphDatasetRecord] = []
+        skipped_unloadable = 0
         for node in nodes:
             if node.get("type") not in self.node_types:
                 continue
@@ -458,6 +473,9 @@ class GraphBackedCADDataset(Dataset):
                 extra_roots=self.extra_search_roots,
             )
             if path is None:
+                continue
+            if path.suffix.lower() not in _LOADABLE_SUFFIXES:
+                skipped_unloadable += 1
                 continue
             props = dict(node.get("properties", {}))
             # Prefer real solver-field shards (FEA FRD / CFD volume extracts) over
@@ -478,6 +496,12 @@ class GraphBackedCADDataset(Dataset):
                     properties=props,
                 )
             )
+        if skipped_unloadable:
+            print(
+                f"[graph_dataset] skipped {skipped_unloadable} node(s) with unreadable "
+                f"formats (SolidWorks/docs); {len(records)} loadable record(s) remain"
+            )
+
         # Physics-field TensorShards first so batch sampling hits real FEA/CFD
         # signal before geometry placeholders (critical for oneshot rocket specs).
         def _rank(rec: GraphDatasetRecord) -> tuple:
