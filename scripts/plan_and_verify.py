@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from cadflow.planner import plan  # noqa: E402
+from cadflow.structural_sizing import size_wall  # noqa: E402
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
@@ -113,9 +114,21 @@ def main() -> int:
             vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
         except Exception as exc:  # noqa: BLE001
             vm, ok = None, False
+        # The CAD path builds solid cylinders, so the CalculiX result above is
+        # a solid coupon under the same load -- not the flight structure, which
+        # is a thin shell. Its margin is therefore enormous and says little.
+        # The governing check for a thin-walled cylinder in compression is
+        # buckling, so size the wall and report that margin alongside.
+        wall = size_wall(load, geo["body_radius_mm"] / 1000.0,
+                         geo["body_height_mm"] / 1000.0)
         results.append({"name": name, "why": why, "load_n": load,
-                        "von_mises_mpa": vm, "passed": ok,
-                        "margin": (ALLOWABLE_MPA / vm) if vm else None})
+                        "coupon_von_mises_mpa": vm, "coupon_passed": ok,
+                        "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
+                        "wall_mm": wall.thickness_m * 1000.0,
+                        "wall_mass_kg": wall.mass_kg,
+                        "wall_driver": wall.driver,
+                        "buckling_margin": wall.margin_buckling,
+                        "passed": ok and wall.margin_buckling >= 1.0})
 
     L = [f"# Design packet\n", f"**Specification:** {spec}\n", "## Architecture\n"]
     for line in p.rationale:
@@ -136,13 +149,21 @@ def main() -> int:
              f"max-Q {p.trajectory['max_q_pa']/1000:.1f} kPa, "
              f"separations {seps}.\n")
     L.append("## Component verification\n")
-    L.append("| component | load case | load | von Mises | margin | status |")
-    L.append("|---|---|---|---|---|---|")
+    L.append("| component | load case | load | wall | driver | buckling margin |"
+             " coupon FEA | status |")
+    L.append("|---|---|---|---|---|---|---|---|")
     for r in results:
-        vm = f"{r['von_mises_mpa']:.2f} MPa" if r["von_mises_mpa"] else "-"
-        mg = f"{r['margin']:.1f}x" if r["margin"] else "-"
-        L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | {vm} | {mg} | "
+        vm = (f"{r['coupon_von_mises_mpa']:.1f} MPa"
+              if r["coupon_von_mises_mpa"] else "-")
+        L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | "
+                 f"{r['wall_mm']:.2f} mm | {r['wall_driver']} | "
+                 f"{r['buckling_margin']:.2f}x | {vm} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
+    L.append("\nWall thickness and buckling margin size the real thin-shell "
+             "structure. The coupon FEA column is CalculiX on the solid "
+             "cylinder the CAD path builds, under the same load -- it confirms "
+             "the load path but is not the flight structure, which is why its "
+             "margins are large.")
     allp = all(r["passed"] for r in results)
     L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
              f"All {len(results)} components passed: **{allp}**\n")
