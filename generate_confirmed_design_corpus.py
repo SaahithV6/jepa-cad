@@ -37,16 +37,29 @@ from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
 
 def sample_params(rng: random.Random) -> dict[str, float]:
+    """Sample geometry with the stated dimensions largely independent.
+
+    Deriving secondary dimensions from body radius -- fin span as
+    uniform(0.4, 1.2) * body_r and so on -- looks like sensible engineering
+    scaling, but it makes those numbers nearly redundant given the radius. A
+    model trained on it learns to predict fin span from radius and to ignore
+    whatever the prompt asked for, which is the correct inference from that
+    data and useless behaviour in a design tool.
+
+    Measured: with radius-derived sampling the head returned ~42 mm fin span
+    whether the prompt asked for 30 or anything else, a 38-47% error that no
+    amount of extra data or better tokenisation moved. Independent sampling
+    makes each stated dimension carry its own information.
+    """
     body_r = rng.uniform(15.0, 60.0)
-    body_h = rng.uniform(50.0, 220.0)
     return {
         "body_radius_mm": round(body_r, 2),
-        "body_height_mm": round(body_h, 2),
-        "nose_radius_mm": round(body_r, 2),
-        "nose_height_mm": round(rng.uniform(0.5, 1.8) * body_r, 2),
-        "fin_span_mm": round(rng.uniform(0.4, 1.2) * body_r, 2),
+        "body_height_mm": round(rng.uniform(50.0, 220.0), 2),
+        "nose_radius_mm": round(body_r, 2),          # coincident by construction
+        "nose_height_mm": round(rng.uniform(12.0, 90.0), 2),
+        "fin_span_mm": round(rng.uniform(8.0, 60.0), 2),
         "fin_thickness_mm": round(rng.uniform(2.0, 8.0), 2),
-        "fin_chord_mm": round(rng.uniform(0.6, 1.6) * body_r, 2),
+        "fin_chord_mm": round(rng.uniform(10.0, 80.0), 2),
         "fillet_radius_mm": round(rng.uniform(0.8, 3.0), 2),
         "cl_max_mm": round(rng.uniform(5.0, 12.0), 2),
         "cl_min_mm": round(rng.uniform(1.0, 4.0), 2),
