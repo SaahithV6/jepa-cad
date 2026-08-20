@@ -51,16 +51,23 @@ def sample_params(rng: random.Random) -> dict[str, float]:
     amount of extra data or better tokenisation moved. Independent sampling
     makes each stated dimension carry its own information.
     """
-    body_r = rng.uniform(15.0, 60.0)
+    # Ranges are independent but bounded. Fully independent wide ranges produce
+    # extreme aspect ratios -- an 80 mm chord on a 15 mm radius, or a 0.8 mm
+    # fillet on a 60 mm body -- and the tet count explodes: one such case sat in
+    # CalculiX for over ten minutes against a normal solve time near two
+    # seconds. These bounds overlap enough that each stated dimension still
+    # carries its own information, without generating geometry that cannot be
+    # meshed at sane cost.
+    body_r = rng.uniform(20.0, 50.0)
     return {
         "body_radius_mm": round(body_r, 2),
-        "body_height_mm": round(rng.uniform(50.0, 220.0), 2),
+        "body_height_mm": round(rng.uniform(70.0, 200.0), 2),
         "nose_radius_mm": round(body_r, 2),          # coincident by construction
-        "nose_height_mm": round(rng.uniform(12.0, 90.0), 2),
-        "fin_span_mm": round(rng.uniform(8.0, 60.0), 2),
-        "fin_thickness_mm": round(rng.uniform(2.0, 8.0), 2),
-        "fin_chord_mm": round(rng.uniform(10.0, 80.0), 2),
-        "fillet_radius_mm": round(rng.uniform(0.8, 3.0), 2),
+        "nose_height_mm": round(rng.uniform(20.0, 70.0), 2),
+        "fin_span_mm": round(rng.uniform(12.0, 45.0), 2),
+        "fin_thickness_mm": round(rng.uniform(3.0, 8.0), 2),
+        "fin_chord_mm": round(rng.uniform(15.0, 55.0), 2),
+        "fillet_radius_mm": round(rng.uniform(1.2, 3.0), 2),
         "cl_max_mm": round(rng.uniform(5.0, 12.0), 2),
         "cl_min_mm": round(rng.uniform(1.0, 4.0), 2),
     }
