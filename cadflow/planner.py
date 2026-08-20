@@ -189,3 +189,61 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
             f"{[round(f,2) for f in best_plan.split]}, "
             f"{best_plan.gross_kg:.1f} kg gross")
     return best_plan
+
+
+def plan_sized(target_km: float, payload_kg: float, *,
+               propellant: str = "lox_rp1", chamber_bar: float = 55.0,
+               max_iters: int = 8, tol: float = 0.01):
+    """Plan a mission with structural mass solved rather than assumed.
+
+    STRUCT_COEFF is a constant asserted in the source. Real structural mass
+    depends on the loads the stage carries and the radius it carries them at,
+    and those depend on the vehicle's mass -- which depends on the structural
+    mass. It is a fixed point, so iterate it: size the vehicle at the current
+    coefficient, size the walls from the resulting loads, recompute the
+    coefficient, repeat.
+
+    Returns the plan plus the coefficient it converged to, which is the number
+    that was previously guessed.
+    """
+    import math as _m
+
+    from cadflow.structural_sizing import stage_structural_mass
+
+    coeff = STRUCT_COEFF
+    history = []
+    p = None
+    for it in range(max_iters):
+        globals()["STRUCT_COEFF"] = coeff
+        globals()["MAX_STAGE_MR"] = 1.0 / coeff * 0.62
+        p = plan(target_km, payload_kg, propellant=propellant,
+                 chamber_bar=chamber_bar)
+        if p is None:
+            return None, coeff, history
+
+        radius_m = max(0.05, (p.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
+        total_struct = 0.0
+        total_prop = 0.0
+        for i, st in enumerate(p.stack):
+            supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
+                                         for s in p.stack[i:])
+            thrust = supported * G0 * (4.5 if i == 0 else 3.0)
+            m_struct, _parts = stage_structural_mass(
+                st.prop_mass_kg, radius_m, thrust)
+            total_struct += m_struct
+            total_prop += st.prop_mass_kg
+
+        new_coeff = total_struct / max(total_struct + total_prop, 1e-6)
+        new_coeff = min(0.60, max(0.03, new_coeff))
+        history.append({"iter": it, "coeff_in": coeff, "coeff_out": new_coeff,
+                        "gross_kg": p.gross_kg, "stages": p.stages,
+                        "struct_kg": total_struct, "prop_kg": total_prop})
+        if abs(new_coeff - coeff) / max(coeff, 1e-6) < tol:
+            coeff = new_coeff
+            break
+        # damped update: the map can oscillate when buckling and strength swap
+        coeff = 0.5 * coeff + 0.5 * new_coeff
+
+    globals()["STRUCT_COEFF"] = 0.14
+    globals()["MAX_STAGE_MR"] = 1.0 / 0.14 * 0.62
+    return p, coeff, history
