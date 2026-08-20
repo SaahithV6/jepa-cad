@@ -511,6 +511,12 @@ def main() -> int:
                 "downrange_km": res["downrange_km"],
                 "max_q_pa": res["max_q_pa"],
                 "payload_kg": design["payload_kg"],
+                # carried so the graph ingest can populate conditioning slots
+                "chamber_pressure_pa": design["chamber_pressure_pa"],
+                "expansion_ratio": design["expansion_ratio"],
+                "mdot_kg_s": res["mdot_kg_s"],
+                "mass_fraction": design["prop_mass_kg"] / design["liftoff_mass_kg"],
+                "cd": design["cd"],
                 "channels": "thrust,mass,drag,mach,q,accel,velocity,altitude",
             },
         }))

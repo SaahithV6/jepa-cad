@@ -325,10 +325,15 @@ def physics_targets_for(fingerprint: str, family: str | None) -> dict[str, Any]:
 CONDITIONING_QUANTITIES: tuple[tuple[str, float], ...] = (
     ("Cd", 1.0),
     ("CL_alpha_per_rad", 1.0 / 7.0),
-    ("chamber_pressure_bar", 1.0 / 120.0),
+    # 1/120 saturated 42% of the propulsion sweep (pc up to 200 bar).
+    ("chamber_pressure_bar", 1.0 / 250.0),
     ("expansion_ratio", 1.0 / 100.0),
-    ("thrust_kN", 1.0 / 60.0),
-    ("isp_vac_s", 1.0 / 400.0),
+    # Widened from 1/60: that suited component-scale thrusters, but the
+    # propulsion corpus reaches 2,866 kN, which scaled to 47.8 and would have
+    # dominated a conditioning vector whose other slots sit near [0,1].
+    ("thrust_kN", 1.0 / 5_000.0),
+    # 1/400 saturated every LOX/LH2 case (Isp up to 447 s).
+    ("isp_vac_s", 1.0 / 500.0),
     ("meop_bar", 1.0 / 100.0),
     ("hoop_stress_margin", 1.0 / 3.0),
     ("max_stress_mpa", 1.0 / 600.0),
@@ -337,14 +342,16 @@ CONDITIONING_QUANTITIES: tuple[tuple[str, float], ...] = (
     ("safety_factor", 1.0 / 4.0),
     ("first_mode_hz", 1.0 / 400.0),
     ("pressure_drop_bar", 1.0 / 20.0),
-    ("mass_flow_kgps", 1.0 / 6.0),
+    # Widened from 1/6 for the same reason: corpus reaches 1,237 kg/s.
+    ("mass_flow_kgps", 1.0 / 2_000.0),
     ("deploy_time_s", 1.0 / 60.0),
     ("actuation_torque_nm", 1.0 / 60.0),
     ("wall_temp_max_K", 1.0 / 1500.0),
     ("max_skin_temp_K", 1.0 / 1500.0),
     ("fineness_ratio", 1.0 / 10.0),
     ("flutter_margin", 1.0 / 3.0),
-    ("max_dynamic_pressure_kpa", 1.0 / 80.0),
+    # Widened from 1/80: max-Q reaches ~444 kPa in the trajectory sweep.
+    ("max_dynamic_pressure_kpa", 1.0 / 600.0),
     ("heat_flux_MWm2", 1.0 / 40.0),
     ("throat_heat_flux_MWm2", 1.0 / 80.0),
     ("acoustic_transmission_db", 1.0 / 20.0),
@@ -361,7 +368,30 @@ CONDITIONING_QUANTITIES: tuple[tuple[str, float], ...] = (
     ("U_mag_max", 1.0 / 50.0),
     ("p_mean", 1.0 / 5.0),
     ("p_delta", 1.0 / 5.0),
+    # Mission-level slots. Appended (never inserted) because the ordering of
+    # this tuple is the conditioning contract. Without these a specification
+    # of the form "x kg payload to y km" has nowhere to live: the corpus could
+    # describe a nozzle and a stress field but not what the vehicle was for.
+    ("payload_kg", 1.0 / 20_000.0),
+    ("delta_v_ms", 1.0 / 12_000.0),
+    ("apogee_km", 1.0 / 5_000.0),
+    ("downrange_km", 1.0 / 9_000.0),
+    ("burn_time_s", 1.0 / 250.0),
 )
+
+
+def clamp_conditioning(value: float) -> float:
+    """Bound a scaled conditioning slot to [-1, 1].
+
+    The scales above only normalise to *roughly* [0,1] over the range each
+    quantity was originally tuned for, and a corpus that widens that range
+    silently produces huge features -- the propulsion sweep drove
+    mass_flow_kgps to 206 under the old 1/6 scale, which would have swamped
+    every other slot feeding the encoder. Saturating outliers keeps one
+    discipline from dominating conditioning, and costs only resolution in the
+    tail rather than correctness in the body of the distribution.
+    """
+    return max(-1.0, min(1.0, value))
 
 
 def conditioning_values(targets: dict[str, Any]) -> list[float]:
@@ -369,5 +399,8 @@ def conditioning_values(targets: dict[str, Any]) -> list[float]:
     out: list[float] = []
     for name, scale in CONDITIONING_QUANTITIES:
         value = targets.get(name)
-        out.append(round(float(value) * scale, 6) if isinstance(value, (int, float)) else 0.0)
+        if isinstance(value, (int, float)):
+            out.append(round(clamp_conditioning(float(value) * scale), 6))
+        else:
+            out.append(0.0)
     return out

@@ -699,6 +699,23 @@ class GraphBackedCADDataset(Dataset):
                     if val is not None:
                         payload["params"][str(key)] = val
 
+            # Seed physics from the node's own properties. Physics conditioning
+            # is otherwise gathered only by walking edges to neighbouring Part
+            # nodes, so a self-describing shard -- e.g. a propulsion/trajectory
+            # shard carrying its own isp, thrust and payload -- would condition
+            # on all zeros despite holding exactly the values the slots want.
+            try:
+                from cadflow.physics_targets import CONDITIONING_QUANTITIES as _CQ
+
+                for _name, _ in _CQ:
+                    if _name in payload["physics"]:
+                        continue
+                    val = _as_float(seed_props.get(_name))
+                    if val is not None:
+                        payload["physics"][_name] = val
+            except Exception:  # noqa: BLE001 - conditioning is optional
+                pass
+
         seen: set[str] = set()
         frontier = [node_id]
         for _ in range(depth):
@@ -856,9 +873,19 @@ class GraphBackedCADDataset(Dataset):
 
         physics = assoc.get("physics", {})
         physics_vec = []
+        # Clamp for the same reason conditioning_values does: scales are tuned
+        # per-quantity and a wider corpus overflows them, producing features
+        # orders of magnitude larger than their neighbours.
+        try:
+            from cadflow.physics_targets import clamp_conditioning as _clamp
+        except Exception:  # noqa: BLE001
+            def _clamp(v: float) -> float:
+                return max(-1.0, min(1.0, v))
         for name, scale in CONDITIONING_QUANTITIES:
             value = physics.get(name)
-            physics_vec.append(float(value) * scale if isinstance(value, (int, float)) else 0.0)
+            physics_vec.append(
+                _clamp(float(value) * scale) if isinstance(value, (int, float)) else 0.0
+            )
 
         geom = assoc.get("geometry", {})
         geometry_vec = [

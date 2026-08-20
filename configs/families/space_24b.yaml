@@ -23,7 +23,7 @@ data:
   num_points: 4096
   num_fields: 8
   mix_ratio: 0.95
-  graph_metadata_dim: 153  # 9 legacy + 25 family + 36 physics + 11 geometry + 8 material + 20 params + 32 text + 12 process
+  graph_metadata_dim: 158  # 9 legacy + 25 family + 41 physics + 11 geometry + 8 material + 20 params + 32 text + 12 process
   graph_path: artifacts/jepa-train-bundle/graph.json
   graph_data_root: artifacts/jepa-train-bundle
   # Prefer repo root so artifacts/physics_shards/... and data/processed/nasa3d resolve.

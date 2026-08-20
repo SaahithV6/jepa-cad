@@ -67,16 +67,25 @@ def main() -> int:
                 "family": "nozzle",
                 "is_synthetic": 0,
                 "channels": m.get("channels", ""),
-                # Unnormalised engineering values. The shard itself is scaled to
-                # [-1,1] per channel, so absolute magnitudes only survive here.
+                # Property names and units below MUST match
+                # cadflow.physics_targets.CONDITIONING_QUANTITIES exactly --
+                # the dataset looks slots up by name, so "thrust_sl_n" would be
+                # silently ignored where "thrust_kN" is conditioned on. The
+                # shard itself is scaled to [-1,1] per channel, so absolute
+                # magnitudes survive only here.
                 "isp_vac_s": m.get("isp_vac_s"),
-                "thrust_sl_n": m.get("thrust_sl_n"),
+                "thrust_kN": (m.get("thrust_sl_n") or 0.0) / 1000.0,
                 "burn_time_s": m.get("burn_time_s"),
-                "delta_v_ideal_m_s": m.get("delta_v_ideal_m_s"),
+                "delta_v_ms": m.get("delta_v_ideal_m_s"),
                 "apogee_km": m.get("apogee_km"),
                 "downrange_km": m.get("downrange_km"),
-                "max_q_pa": m.get("max_q_pa"),
+                "max_dynamic_pressure_kpa": (m.get("max_q_pa") or 0.0) / 1000.0,
                 "payload_kg": m.get("payload_kg"),
+                "chamber_pressure_bar": (m.get("chamber_pressure_pa") or 0.0) / 1e5,
+                "expansion_ratio": m.get("expansion_ratio"),
+                "mass_flow_kgps": m.get("mdot_kg_s"),
+                "mass_fraction": m.get("mass_fraction"),
+                "Cd": m.get("cd"),
             },
         })
         existing_ids.add(node_id)
