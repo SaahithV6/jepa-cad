@@ -105,6 +105,21 @@ def parse_override(expr: str) -> tuple[str, Any]:
         value = yaml.safe_load(rhs)
     except Exception as e:  # pragma: no cover
         raise ConfigError(f"Failed to parse override RHS as YAML: {rhs}") from e
+
+    # PyYAML's float resolver requires a decimal point before the exponent, so
+    # "3e-4" (the example in this docstring) loads as the *string* "3e-4" while
+    # "3.0e-4" loads as a float. Nothing complains at parse time; the string
+    # travels all the way into the optimiser and dies there with
+    # "'<=' not supported between instances of 'float' and 'str'". Coerce
+    # anything that is numerically parseable.
+    if isinstance(value, str):
+        try:
+            value = float(value)
+            if value.is_integer() and "." not in rhs and "e" not in rhs.lower():
+                value = int(value)
+        except ValueError:
+            pass  # genuinely a string, e.g. model.loss_type=cosine
+
     return key, value
 
 

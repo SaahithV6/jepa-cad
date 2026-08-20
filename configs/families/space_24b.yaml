@@ -75,6 +75,11 @@ train:
   amp: false
   lr: 1.5e-5
   weight_decay: 0.05
+  # Sized for a long cloud run. Any run shorter than a few thousand steps never
+  # leaves warmup: at step 150 the LR is still ~1e-7 and the loss sits flat,
+  # which looks like a model that will not learn rather than one that has not
+  # been given a learning rate yet. Scale this down for short or local runs,
+  # e.g. --set train.warmup_steps=20 for a 250-step smoke train.
   warmup_steps: 2000
   grad_clip: 1.0
   grad_accum_steps: 4
