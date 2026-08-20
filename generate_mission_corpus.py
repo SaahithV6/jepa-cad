@@ -209,7 +209,10 @@ def main() -> int:
         params.update({
             "chamber_pressure_bar": v["chamber_pressure_pa"] / 1e5,
             "expansion_ratio": v["expansion_ratio"],
-            "prop_mass_kg": v["prop_mass_kg"],
+            # log mass ratio rather than propellant mass: see models/cad_decoder.py
+            # for why parameter error must be proportional to delta-v error.
+            "log_mass_ratio": math.log(
+                v["liftoff_mass_kg"] / max(v["struct_mass_kg"] + v["payload_kg"], 1e-6)),
             "struct_mass_kg": v["struct_mass_kg"],
             "payload_kg": v["payload_kg"],
             # Without throat area the vehicle cannot be flown from its own

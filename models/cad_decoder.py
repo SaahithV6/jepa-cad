@@ -28,7 +28,13 @@ ASSEMBLY_PARAM_KEYS: tuple[str, ...] = (
     # decide whether the mission closes are simply not in the output.
     "chamber_pressure_bar",
     "expansion_ratio",
-    "prop_mass_kg",
+    # log mass ratio, not propellant mass. Apogee is exponential in mass ratio,
+    # so a fixed error in MR costs 939 m/s of delta-v at MR 1.33 and only
+    # 82 m/s at MR 17.7 -- an 11x asymmetry that mean-squared error cannot see,
+    # and which pushes the head to the high-MR end where mistakes are cheap.
+    # In log space a fixed parameter error costs a constant 294 m/s wherever it
+    # occurs, so parameter error becomes proportional to mission error.
+    "log_mass_ratio",
     "struct_mass_kg",
     "payload_kg",
     # Without throat area the design cannot be flown from its own parameters:
@@ -56,7 +62,7 @@ _ASSEMBLY_SCALES: tuple[float, ...] = (
     # barely notices, because in normalised units the error is tiny.
     100.0,   # chamber_pressure_bar  (corpus 15-80)
     30.0,    # expansion_ratio       (corpus 4-25)
-    500.0,   # prop_mass_kg          (corpus 16-424)
+    3.5,     # log_mass_ratio        (MR up to ~33)
     150.0,   # struct_mass_kg        (corpus 3-117)
     60.0,    # payload_kg            (corpus 0.5-46)
     20_000.0,  # throat_area_mm2     (corpus 68-17167)
@@ -80,7 +86,7 @@ def assembly_params_to_constraints(params_mm: dict[str, float]) -> dict[str, Any
         # must survive the round trip to be scored against.
         "chamber_pressure_bar": float(params_mm.get("chamber_pressure_bar", 60.0)),
         "expansion_ratio": float(params_mm.get("expansion_ratio", 20.0)),
-        "prop_mass_kg": float(params_mm.get("prop_mass_kg", 5_000.0)),
+        "log_mass_ratio": float(params_mm.get("log_mass_ratio", 1.2)),
         "struct_mass_kg": float(params_mm.get("struct_mass_kg", 800.0)),
         "payload_kg": float(params_mm.get("payload_kg", 200.0)),
         "throat_area_mm2": float(params_mm.get("throat_area_mm2", 2000.0)),

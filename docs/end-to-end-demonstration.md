@@ -250,3 +250,49 @@ Two ways out, neither attempted here:
 
 The first is the obvious next step and is a small change to the corpus and the
 decode path.
+
+### 3b. Reparameterising the target (partial)
+
+Predicting log mass ratio instead of propellant mass, so that parameter error
+is proportional to delta-v error rather than wildly uneven across the range:
+
+```
+MR      dv km/s   err if MR off by 0.5   err if ln(MR) off by 0.1
+ 1.33      0.84              939 m/s                    294 m/s
+ 1.87      1.84              697 m/s                    294 m/s
+ 3.62      3.78              381 m/s                    294 m/s
+17.71      8.46               82 m/s                    294 m/s
+```
+
+Predicting MR, the same absolute error costs 11x more delta-v at the low end
+than the high end, so the head is pushed toward high MR where mistakes are
+cheap -- which is exactly the collapse observed.
+
+Result, sweeping requested apogee:
+
+| asked | before flown | error | after flown | error |
+|---|---|---|---|---|
+| 20 km | 750.1 | 1.57 dec | **19.9** | **0.00 dec** |
+| 95 km | 431.4 | 0.66 dec | 44.7 | 0.33 dec |
+| 400 km | 622.4 | 0.19 dec | 139.5 | 0.46 dec |
+| 2000 km | 854.7 | 0.37 dec | 31.5 | 1.80 dec |
+
+Mean error barely moved, 0.698 to 0.647 decades. The character changed
+entirely: flown dynamic range went from 2.0x to 7.0x against a 100x request
+span, the collapse to a narrow band is gone, and a 20 km request is now hit
+exactly. The high end regressed, and that is not a corpus limit -- the corpus
+contains mass ratios to 8.81.
+
+So the loss-alignment fix removed the failure it targeted and exposed the next
+one. What remains is that nothing in training ever scores the mission itself.
+The head is still fitted to parameter vectors; the trajectory integrator that
+decides whether the mission closes is never consulted during training. Options,
+in increasing cost:
+
+- Score achieved apogee with a policy-gradient estimator over the existing
+  integrator. No differentiability required, and the integrator already runs at
+  roughly 3 designs per second.
+- Make the trajectory differentiable and train through it directly.
+
+Both are physics-in-the-loop training. Neither is a corpus or capacity change,
+which is why neither of those two fixes could substitute for it.
