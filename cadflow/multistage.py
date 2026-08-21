@@ -68,6 +68,13 @@ def integrate_stack(
     v, fpa, h, x = 1e-3, math.pi / 2.0, 0.0, 0.0
     t = 0.0
     max_q = 0.0
+    # Peak axial acceleration per stage, not one global figure. The global peak
+    # happens at final burnout when the vehicle is lightest, by which point the
+    # lower stages have separated -- sizing stage 1 for it would be sizing it
+    # for a load it never sees.
+    max_axial = 0.0
+    max_axial_by_stage = [0.0] * len(stages)
+    liftoff_thrust = 0.0
     sep_times: list[float] = []
     coasting_until = -1.0
     pitched = False
@@ -96,6 +103,17 @@ def integrate_stack(
         if not pitched and t >= pitchover_time:
             fpa = math.pi / 2.0 - pitchover_angle
             pitched = True
+
+        # Peak axial acceleration is what sizes the structure: every stage
+        # below a given station has to react it. The integrator had this number
+        # in hand at every step and threw it away, so component sizing assumed a
+        # flat 4.5 g instead of using the trajectory's own answer.
+        if thrust > 0.0 and liftoff_thrust == 0.0:
+            liftoff_thrust = thrust
+        axial_g = (thrust - drag) / m / G0
+        max_axial = max(max_axial, axial_g)
+        if burning and idx < len(max_axial_by_stage):
+            max_axial_by_stage[idx] = max(max_axial_by_stage[idx], axial_g)
 
         dv = thrust / m - g * math.sin(fpa) - drag / m
         dfpa = -(g / v_safe - v_safe / (R_EARTH + max(h, 0.0))) * math.cos(fpa)
@@ -169,4 +187,7 @@ def integrate_stack(
         "v_final": v,
         "separations": sep_times,
         "final_mass_kg": m,
+        "max_axial_g": max_axial,
+        "max_axial_g_by_stage": max_axial_by_stage,
+        "liftoff_thrust_n": liftoff_thrust,
     }

@@ -148,6 +148,11 @@ DESIGN_ALPHA_RAD = math.radians(5.0)
 #: Ultimate factor on limit load. Standard aerospace practice.
 ULTIMATE_FACTOR = 1.5
 
+#: Ceiling on wall thickness, millimetres. Past this the part is not a thin
+#: shell any more and the sizing model behind it no longer applies, so hitting
+#: it means the design needs a different architecture rather than more metal.
+MAX_WALL_MM = 12.0
+
 #: Floor on any design load, newtons. For a very light part the flight loads are
 #: not what sizes it -- being carried, clamped in a fixture, or leaned on during
 #: assembly is. Without a floor the aerodynamic cases for small components fall
@@ -159,7 +164,9 @@ MIN_DESIGN_LOAD_N = 200.0
 
 def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
                     payload_kg: float, cd: float = 0.42,
-                    cna_fins: float = 0.0, n_fins: int = 4):
+                    cna_fins: float = 0.0, n_fins: int = 4,
+                    axial_g_by_stage: list[float] | None = None,
+                    liftoff_thrust_n: float = 0.0):
     """Load cases for each component.
 
     The aerodynamic loads used to be max-Q dynamic pressure times frontal area
@@ -174,8 +181,19 @@ def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
     is actually meshed.
     """
     frontal = math.pi * (body_r_mm / 1000.0) ** 2
-    thrust1 = gross_kg * 9.80665 * 4.5
     q = float(max_q_pa)
+
+    # Axial loads come from the trajectory's own peak acceleration, per stage,
+    # rather than an assumed 4.5 g. For this mission the integrator reports
+    # 15.37 g while stage 1 burns and 16.46 g while stage 2 does -- so every
+    # axially loaded component had been sized for under a third of the load it
+    # actually sees. Per stage and not globally, because the global peak occurs
+    # at final burnout when the lower stages have already separated.
+    n_stages = len(list(stages))
+    gs = list(axial_g_by_stage) if axial_g_by_stage else [4.5] * n_stages
+    if len(gs) < n_stages:
+        gs = gs + [gs[-1]] * (n_stages - len(gs))
+    thrust1 = liftoff_thrust_n or (gross_kg * 9.80665 * max(gs))
 
     # nose: axial drag plus normal force from CNa_nose = 2 (slender body)
     nose_axial = q * float(cd) * frontal
@@ -206,8 +224,8 @@ def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
         supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
                                      for s in stages[i:])
         specs.append((f"stage {i+1} tank",
-                      f"carries {st.prop_mass_kg:.1f} kg propellant under thrust",
-                      supported * 9.80665 * 4.5,
+                      f"carries {st.prop_mass_kg:.1f} kg propellant at {gs[i]:.1f} g",
+                      supported * 9.80665 * gs[i],
                       dict(body_radius_mm=body_r_mm * (1.0 - 0.08 * i),
                            body_height_mm=body_r_mm * 3.5,
                            nose_height_mm=body_r_mm * 0.8,
@@ -215,7 +233,7 @@ def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
         if i < len(stages) - 1:
             specs.append((f"interstage {i+1}/{i+2}",
                           "transmits lower-stage thrust to the stage above",
-                          supported * 9.80665 * 4.5,
+                          supported * 9.80665 * gs[i],
                           dict(body_radius_mm=body_r_mm * (1.0 - 0.08 * i),
                                body_height_mm=body_r_mm * 1.5,
                                nose_height_mm=body_r_mm * 0.6,
@@ -290,7 +308,10 @@ def main() -> int:
     for name, why, load, geo in component_specs(
             body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"],
             args.payload_kg, cd=drag_coefficient(),
-            cna_fins=fins["cna_fins"], n_fins=fins["n_fins"]):
+            cna_fins=fins["cna_fins"], n_fins=fins["n_fins"],
+            axial_g_by_stage=p.trajectory.get("max_axial_g_by_stage"),
+            liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0)):
+        wall_capped = False
         # Size the wall, mesh that shell, and thicken if the analysis says so.
         #
         # The membrane formula assumes a long cylinder. The thrust structure is
@@ -366,7 +387,17 @@ def main() -> int:
             if ok:
                 break
             # thicken in proportion to the overshoot and re-analyse
-            t_mm = min(t_mm * min(2.0, 1.15 * vm / ALLOWABLE_MPA), 12.0)
+            thicker = min(t_mm * min(2.0, 1.15 * vm / ALLOWABLE_MPA), MAX_WALL_MM)
+            if thicker <= t_mm + 1e-9:
+                # Already at the cap and still over. Re-solving identical
+                # geometry cannot change the answer, so stop and say so rather
+                # than burning the remaining iterations on the same mesh.
+                print(f"  [{name}] p99 {vm:.0f} MPa over {ALLOWABLE_MPA:.0f} at "
+                      f"the {MAX_WALL_MM:.0f} mm wall limit; not converging",
+                      flush=True)
+                wall_capped = True
+                break
+            t_mm = thicker
             print(f"  [{name}] p99 {vm:.0f} MPa over {ALLOWABLE_MPA:.0f}; "
                   f"thickening wall to {t_mm:.2f} mm", flush=True)
 
@@ -412,7 +443,9 @@ def main() -> int:
                         "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
                         "wall_mm": wall_mm_final,
                         "wall_mass_kg": wall_mass,
-                        "wall_driver": wall_driver,
+                        "wall_driver": ("wall limit" if wall_capped
+                                        else wall_driver),
+                        "wall_capped": wall_capped,
                         "buckling_margin": buckling_margin,
                         "passed": ok and wall.margin_buckling >= 1.0})
 
