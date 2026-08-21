@@ -432,3 +432,53 @@ def test_liftoff_is_the_critical_state_for_a_bottom_heavy_vehicle():
     burnout_margin = static_margin(cgs["burnout"], fins["cp_z_m"], 2 * r)
     # sizing for the worst state must leave the other one no worse
     assert burnout_margin >= fins["static_margin_cal"]
+
+
+# --- vehicle stacking order -------------------------------------------------
+
+def _order(names):
+    import sys
+    from pathlib import Path
+    scripts = str(Path(__file__).resolve().parents[1] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from plan_and_verify import stack_order
+    return stack_order(names)
+
+
+def test_interstage_sits_between_the_stages_it_joins():
+    """An interstage n/n+1 goes between stage n+1 forward and stage n aft.
+
+    It ranked half a step the wrong way and landed *behind* the stage it should
+    sit on top of, so the coupon stack's centre of gravity was computed from a
+    vehicle assembled in the wrong order -- on every design built so far.
+    """
+    names = ["nose cone", "thrust structure", "fin set", "stage 1 tank",
+             "interstage 1/2", "stage 2 tank"]
+    order = _order(names)
+    assert order.index("stage 2 tank") < order.index("interstage 1/2")
+    assert order.index("interstage 1/2") < order.index("stage 1 tank")
+
+
+def test_four_stage_order_is_strictly_alternating():
+    names = ["nose cone", "thrust structure", "fin set"]
+    for i in range(1, 5):
+        names.append(f"stage {i} tank")
+        if i < 4:
+            names.append(f"interstage {i}/{i+1}")
+    order = _order(names)
+    assert order[0] == "nose cone"
+    assert order[-1] == "thrust structure"
+    assert order[-2] == "fin set"
+    middle = order[1:-2]
+    assert middle == ["stage 4 tank", "interstage 3/4", "stage 3 tank",
+                      "interstage 2/3", "stage 2 tank", "interstage 1/2",
+                      "stage 1 tank"], middle
+
+
+def test_upper_stages_are_forward_of_lower_ones():
+    names = [f"stage {i} tank" for i in (1, 2, 3)] + ["nose cone"]
+    order = _order(names)
+    assert order.index("stage 3 tank") < order.index("stage 2 tank")
+    assert order.index("stage 2 tank") < order.index("stage 1 tank")
+    assert order.index("nose cone") == 0

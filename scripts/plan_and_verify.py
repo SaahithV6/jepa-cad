@@ -131,7 +131,12 @@ def stack_order(names: list[str]) -> list[str]:
             # upper stages sit forward, so higher stage number comes first
             return (1, -int(name.split()[1]))
         if name.startswith("interstage"):
-            return (1, -int(name.split()[1].split("/")[0]) + 0.5)
+            # An interstage n/n+1 sits *between* stage n+1 (forward) and stage n
+            # (aft), so it ranks just forward of stage n -- minus a half, not
+            # plus. With plus it landed one position too far aft, behind the
+            # stage it should sit on top of, which put the coupon stack's centre
+            # of gravity in the wrong place for every vehicle built so far.
+            return (1, -int(name.split()[1].split("/")[0]) - 0.5)
         if name == "fin set":
             return (2, 0)
         return (3, 0)          # thrust structure at the aft end
