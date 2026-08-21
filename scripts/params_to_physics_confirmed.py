@@ -79,6 +79,11 @@ def run_confirmed(
                 "cl_max_mm": float(current.get("cl_max_mm", 8.0)),
                 "cl_min_mm": float(current.get("cl_min_mm", 2.0)),
                 "solver_timeout_s": 600,
+                # Thin-walled parts need several elements through the wall, so
+                # meshes run to hundreds of thousands of tets. The adapter
+                # defaults this from job.timeout_s, which left the nose cone
+                # timing out in gmsh and reporting nothing at all.
+                "mesh_timeout_s": int(current.get("mesh_timeout_s", 900)),
                 "youngs_modulus": 70e9,
                 "poisson": 0.33,
             },

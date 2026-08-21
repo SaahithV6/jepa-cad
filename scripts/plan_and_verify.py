@@ -158,6 +158,12 @@ def main() -> int:
                 # "PLC Error: a segment and a facet intersect". At 8/2 mm on a
                 # 1.11 mm wall it failed outright; at 1.5/0.4 it meshes to
                 # 51,403 nodes.
+                # Element size floors. Scaling purely with the wall drove
+                # cl_min to 0.27 mm on a 0.8 mm shell, which on a 70 mm part is
+                # millions of tets -- CalculiX then died with "Failed during
+                # initial partitioning" and the component returned nothing.
+                # 0.4 mm still gives two elements through the thinnest wall
+                # here while keeping the model solvable.
                 "cl_max_mm": max(0.8, wall.thickness_m * 1000.0 * 1.4),
                 "cl_min_mm": max(0.25, wall.thickness_m * 1000.0 / 3.0)}
         try:
@@ -174,8 +180,14 @@ def main() -> int:
                 vm, ok, hulled = None, False, True
             else:
                 hulled = False
+            err = None
         except Exception as exc:  # noqa: BLE001
+            # Record why. Swallowing this left two components reporting a bare
+            # "-" with empty output directories and no way to tell a mesh
+            # failure from a solver failure.
             vm, ok, hulled = None, False, False
+            err = f"{type(exc).__name__}: {exc}"
+            print(f"  [{name}] {err}", flush=True)
         comp_dir = args.out / "components" / name.replace(" ", "_").replace("/", "-")
         dist = None if hulled else frd_stress_percentiles(comp_dir)
         if dist is not None:
@@ -183,6 +195,7 @@ def main() -> int:
             ok = dist["p99"] <= ALLOWABLE_MPA
             vm = dist["p99"]
         results.append({"name": name, "why": why, "load_n": load,
+                        "error": err,
                         "mesh_was_hull": hulled, "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
                         "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,

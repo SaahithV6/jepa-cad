@@ -320,7 +320,11 @@ def prepare_fea_workdir_from_stl(
     total_load_n: float = 1_000.0,
     youngs_modulus: float = 70e9,
     poisson: float = 0.33,
-    mesh_timeout_s: int = 180,
+    # Thin shells legitimately take longer to mesh than solids: a wall needs
+    # several elements through its thickness, so element counts run to hundreds
+    # of thousands and 180 s was timing out on the nose cone and stage 2 tank,
+    # which then reported nothing at all.
+    mesh_timeout_s: int = 900,
     scale_to_meters: bool = True,
     allow_hull_fallback: bool = True,
     load_axis: str | None = "z",
