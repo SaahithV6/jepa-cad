@@ -450,12 +450,19 @@ class CadQueryBackend:
         vol_m3 = props.Mass() * 1e-9
         matrix = props.MatrixOfInertia()
         scale = 1e-15 * rho
+        com = props.CentreOfMass()
         return {
             "mass_kg": vol_m3 * rho,
             "volume_m3": vol_m3,
             "Ixx_kg_m2": matrix.Value(1, 1) * scale,
             "Iyy_kg_m2": matrix.Value(2, 2) * scale,
             "Izz_kg_m2": matrix.Value(3, 3) * scale,
+            # Centroid in metres, in the part's own frame. Needed to combine
+            # parts into a vehicle: without it there is no parallel-axis shift
+            # and no centre of gravity, which is the number stability turns on.
+            "cx_m": com.X() * 1e-3,
+            "cy_m": com.Y() * 1e-3,
+            "cz_m": com.Z() * 1e-3,
         }
 
     def rotate(self, shape: Any, axis: str, angle_deg: float) -> Any:

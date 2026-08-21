@@ -26,7 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from cadflow.planner import plan  # noqa: E402
-from cadflow.structural_sizing import size_wall  # noqa: E402
+from cadflow.structural_sizing import size_wall
+from cadflow.vehicle import Placed, combine  # noqa: E402
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
@@ -114,6 +115,24 @@ def frd_stress_percentiles(case_dir: Path) -> dict | None:
     return {"median": pct(0.50), "p95": pct(0.95), "p99": pct(0.99),
             "max": vals[-1], "n": len(vals),
             "frac_over_yield": sum(1 for v in vals if v > 276.0) / len(vals)}
+
+
+#: Physical order along the vehicle, nose forward. Components were only ever
+#: analysed in isolation; a rocket's behaviour depends on where its mass sits.
+def stack_order(names: list[str]) -> list[str]:
+    """Sort component names nose-first into their physical stacking order."""
+    def rank(name: str) -> tuple:
+        if name == "nose cone":
+            return (0, 0)
+        if name.startswith("stage") and "tank" in name:
+            # upper stages sit forward, so higher stage number comes first
+            return (1, -int(name.split()[1]))
+        if name.startswith("interstage"):
+            return (1, -int(name.split()[1].split("/")[0]) + 0.5)
+        if name == "fin set":
+            return (2, 0)
+        return (3, 0)          # thrust structure at the aft end
+    return sorted(names, key=rank)
 
 
 def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
@@ -296,6 +315,7 @@ def main() -> int:
         results.append({"name": name, "why": why, "load_n": load,
                         "first_mode_hz": first_mode,
                         "mass_properties": mass_props,
+                        "geometry": geom,
                         "error": err,
                         "mesh_was_hull": hulled, "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
@@ -343,6 +363,46 @@ def main() -> int:
                  f"{r['buckling_margin']:.2f}x | {vm} | {peak} | {mode} | "
                  f"{mass} | {izz} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
+    # Assemble the stack. Individual components have always been analysed
+    # alone, but static stability and control response depend on where the mass
+    # sits along the vehicle, which no single component knows.
+    placed, station = [], 0.0
+    by_name = {r["name"]: r for r in results}
+    for name in reversed(stack_order(list(by_name))):   # build aft to forward
+        r = by_name[name]
+        mp = r.get("mass_properties")
+        geo = r.get("geometry") or {}
+        length_m = (geo.get("body_height_mm", 0.0)
+                    + geo.get("nose_height_mm", 0.0)) / 1000.0
+        if not mp or length_m <= 0.0:
+            continue
+        placed.append(Placed(
+            name=name, mass_kg=mp["mass_kg"],
+            cx_m=mp["cx_m"], cy_m=mp["cy_m"], cz_m=mp["cz_m"],
+            Ixx_kg_m2=mp["Ixx_kg_m2"], Iyy_kg_m2=mp["Iyy_kg_m2"],
+            Izz_kg_m2=mp["Izz_kg_m2"],
+            station_z_m=station + length_m / 2.0))
+        station += length_m
+
+    if placed:
+        veh = combine(placed)
+        L.append("\n## Vehicle assembly\n")
+        L.append(f"Stack is {station:.3f} m of structure in "
+                 f"{len(placed)} sections, nose forward.\n")
+        L.append("| quantity | value |")
+        L.append("|---|---|")
+        L.append(f"| dry structural mass | {veh['mass_kg']*1000:.0f} g |")
+        L.append(f"| centre of gravity from aft end | "
+                 f"{veh['cg_z_m']:.3f} m ({100*veh['cg_z_m']/station:.0f}% of length) |")
+        L.append(f"| pitch/yaw inertia Ixx | {veh['Ixx_kg_m2']:.4e} kg m^2 |")
+        L.append(f"| roll inertia Izz | {veh['Izz_kg_m2']:.4e} kg m^2 |")
+        L.append("\nMass and inertia are exact for the geometry that was "
+                 "analysed, combined across sections with the parallel-axis "
+                 "theorem; the parts are disjoint, which is that theorem's only "
+                 "condition. Pitch inertia exceeds roll inertia by "
+                 f"{veh['Ixx_kg_m2']/max(veh['Izz_kg_m2'],1e-12):.0f}x, as it "
+                 "must for a long thin vehicle.")
+
     L.append("\nWall thickness and buckling margin size the thin shell; the "
              "shell FEA column is CalculiX on that same hollow geometry, so the "
              "meshed part is the part being designed rather than a solid billet "
