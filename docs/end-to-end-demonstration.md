@@ -768,3 +768,47 @@ The stage model is coarse: a real stage has domes, a dry engine at one end, and
 a propellant level that moves through the burn. Centre of pressure is not
 reported at all, because it needs the Barrowman set and half-remembered
 coefficients do not belong next to numbers that are exact.
+
+## Centre of pressure, derived rather than looked up
+
+I first declined to report one at all, on the grounds that the Barrowman
+coefficients are exactly the kind of half-remembered constant that had already
+produced one wrong answer in this document. That was the wrong call. Slender-body
+theory gives the nose contribution from its volume,
+
+    X_cp = L - V_nose / A_base
+
+measured from the tip, and the nose volume is computed exactly from the meridian.
+Nothing has to be recalled.
+
+It reproduces the two families whose values are exact constants -- a cone at
+2L/3 and a von Karman ogive at L/2, both to the last digit -- and it is better
+than the table for the third. Books quote a single 0.466 L for a tangent ogive.
+The real value depends on fineness:
+
+    fineness  1.0    0.4300
+    fineness  2.5    0.4606
+    fineness  5.0    0.4651
+    fineness  8.0    0.4661
+
+0.466 is the slender limit. Below fineness 4, which is where sounding-rocket
+noses actually live, the tabulated number is simply wrong and this one is not.
+
+The validity boundary then reappeared unprompted: an elliptical nose gives
+0.333 L against a tabulated 0.5, because it meets the axis with infinite slope
+and slender-body theory does not describe a blunt nose. That is the same shape,
+excluded for the same reason, as in the wave-drag work -- two independent
+derivations disagreeing with the tables on the same nose, for the same stated
+cause.
+
+A cylinder generates no normal force in this theory, so a finless vehicle's
+centre of pressure is its nose's. For the sized vehicle that puts the CP at
+z = 3.468 m against a CG at 1.841 m -- forward of it, a static margin of -2.86
+calibers, unstable. That is the correct answer and the reason fins exist.
+
+Fin centre of pressure is *not* implemented. The Barrowman fin set is
+semi-empirical and I have no independent way to check it here, and the pattern
+in this document is unambiguous: every formula shipped without a validation
+route turned out to be wrong. So no full-vehicle static margin is claimed. What
+would settle it is a CFD normal-force run on the fins, which is a real piece of
+work rather than a missing constant.
