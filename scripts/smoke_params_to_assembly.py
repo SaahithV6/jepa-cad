@@ -23,7 +23,8 @@ if str(ROOT) not in sys.path:
 
 from cadflow.manifest import JobManifest  # noqa: E402
 from cadflow.pipeline import run_pipeline  # noqa: E402
-from cadflow.profiles import NOSE_SHAPES, centred, nose_profile  # noqa: E402
+from cadflow.profiles import (  # noqa: E402
+    NOSE_SHAPES, centred, fin_planform, nose_profile)
 
 
 def constraints_to_geometry(constraints: dict) -> dict:
@@ -100,8 +101,10 @@ def constraints_to_geometry(constraints: dict) -> dict:
     # to a convex hull -- which for a hollow part is a solid billet.
     stack_overlap = max(1.0, min(3.0, body_r * 0.05))
     nose_z = (body_h + nose_h) / 2.0 - stack_overlap
-    fin_x = body_r + fin_span / 2.0 - min(2.0, wall + 1.0)
-    fin_z = -body_h / 2.0 + fin_chord / 2.0
+    # The planform starts at its root rather than being centred, so the root
+    # is placed just inside the skin and the fin grows outward from there.
+    fin_root_x = body_r - min(2.0, wall + 1.0)
+    fin_z = -body_h / 2.0 + fin_chord / 4.0
 
     return {
         "kind": "assembly",
@@ -110,13 +113,16 @@ def constraints_to_geometry(constraints: dict) -> dict:
             tube(nose_r, nose_h, at=[0.0, 0.0, nose_z]),
         ] + ([] if fin_span <= 0.0 else [
             {
-                "kind": "box",
+                # A real trapezoid, not a box. Sketched in XY with x radial and
+                # y aft, extruded through the thickness along Z, then turned
+                # 90 degrees about X so the chord lies along the vehicle axis
+                # and the thickness across it.
+                "kind": "extrude",
                 "params": {
-                    # x radial (span), y thickness, z axial (chord)
-                    "width": fin_span,
+                    "profile": fin_planform(fin_span, fin_chord),
                     "height": fin_thick,
-                    "depth": fin_chord,
-                    "at": [fin_x, 0.0, fin_z],
+                    "rotate": ["x", 90.0],
+                    "at": [fin_root_x, 0.0, fin_z],
                 },
             },
         ]),

@@ -112,3 +112,36 @@ def wetted_area(profile: Sequence[tuple[float, float]]) -> float:
         slant = math.hypot(r1 - r0, z1 - z0)
         total += math.pi * (r0 + r1) * slant
     return total
+
+
+def fin_planform(
+    span: float,
+    root_chord: float,
+    taper_ratio: float = 0.5,
+    sweep_frac: float = 0.6,
+) -> list[tuple[float, float]]:
+    """Trapezoidal fin planform as (span_station, axial) points.
+
+    Fins were boxes: constant chord, no taper, no sweep. A box fin has its whole
+    area out at the tip where it does least for stability and most for root
+    bending, and a square leading edge that no supersonic fin has. This is the
+    standard trapezoid -- root chord at the body, a shorter tip chord swept aft.
+
+    x runs radially outward from the root, y runs aft from the root leading
+    edge. The caller extrudes through the thickness and turns it into place.
+    """
+    s = float(span)
+    cr = float(root_chord)
+    if s <= 0.0 or cr <= 0.0:
+        raise ValueError(f"fin needs positive span/chord, got {s}/{cr}")
+    ct = cr * max(0.05, min(1.0, float(taper_ratio)))
+    sweep = cr * max(0.0, float(sweep_frac))
+    return [(0.0, 0.0), (0.0, cr), (s, sweep + ct), (s, sweep)]
+
+
+def planform_area(points: Sequence[tuple[float, float]]) -> float:
+    """Shoelace area of a planform polygon."""
+    total = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:] + list(points[:1])):
+        total += x0 * y1 - x1 * y0
+    return abs(total) / 2.0

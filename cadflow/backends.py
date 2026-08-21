@@ -35,49 +35,12 @@ class CadBackend(Protocol):
 
     def sculpt_offset(self, shape: Any, distance: float) -> Any: ...
 
-    def revolve_profile(self, profile: Sequence[tuple[float, float]],
-                        angle_deg: float = 360.0, smooth: bool = True) -> Any:
-        """Revolve a 2-D profile about the Z axis.
-
-        This is what lets a nose cone actually be a nose cone. Until now the
-        "nose" was a cylinder -- a stand-in with neither the shape nor the drag
-        of an ogive, and with a flat forward face that carries load nothing like
-        a real one.
-
-        Points are (radius, z) with radius >= 0; the profile is closed back
-        along the axis automatically. smooth fits a single spline through the
-        points, so the revolve produces ONE lateral face rather than one per
-        segment -- a 24-segment polyline would give ~50 faces on a hollow part,
-        which is the face count that previously ran gmsh past its timeout.
-        """
-        cadquery = cq
-        assert cadquery is not None
-        pts = [(float(r), float(z)) for r, z in profile]
-        if len(pts) < 2:
-            raise ValueError("revolve_profile needs at least 2 points")
-        # Fit the curve through the caller's points only, then close back to
-        # the axis with straight lines. Feeding the axis-closure points into the
-        # spline puts a 90-degree corner in it, and the fit overshoots trying to
-        # round that corner -- an ogive came out 31% over its analytic volume
-        # and 23% longer than its own length.
-        wp = cadquery.Workplane("XZ").moveTo(*pts[0])
-        if smooth and len(pts) > 2:
-            wp = wp.spline(pts[1:], includeCurrent=True)
-        else:
-            wp = wp.polyline(pts[1:])
-        if pts[-1][0] > 1e-9:
-            wp = wp.lineTo(0.0, pts[-1][1])
-        if pts[0][0] > 1e-9:
-            wp = wp.lineTo(0.0, pts[0][1])
-        return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
-
     def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any: ...
 
-    def revolve_profile(
-        self,
-        profile: Sequence[tuple[float, float]],
-        angle_deg: float = 360.0,
-    ) -> Any: ...
+    def rotate(self, shape: Any, axis: str, angle_deg: float) -> Any: ...
+
+    def revolve_profile(self, profile: Sequence[tuple[float, float]],
+                        angle_deg: float = 360.0, smooth: bool = True) -> Any: ...
 
     def boolean_cut(self, target: Any, tool: Any) -> Any: ...
 
@@ -155,6 +118,9 @@ class MockCadBackend:
         r = max((abs(x) for x, _ in pts), default=1.0)
         h = max((abs(y) for _, y in pts), default=1.0)
         return MockCadSolid(kind="cylinder", dimensions=(r, h), profile=pts)
+
+    def rotate(self, shape: MockCadSolid, axis: str, angle_deg: float) -> MockCadSolid:
+        return replace(shape, ops=shape.ops + (f"rotate({axis},{angle_deg})",))
 
     def translate(self, shape: MockCadSolid, dx: float, dy: float, dz: float) -> MockCadSolid:
         # Position does not change the mock's volume estimate; record the move
@@ -453,6 +419,18 @@ class CadQueryBackend:
             wp = wp.lineTo(0.0, pts[0][1])
         return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
 
+    def rotate(self, shape: Any, axis: str, angle_deg: float) -> Any:
+        """Rotate about a principal axis through the origin.
+
+        Needed because extrude_profile always extrudes XY along +Z, so a shape
+        whose natural sketch plane is not XY -- a fin planform, whose span is
+        radial and whose chord runs along the vehicle axis -- has to be turned
+        into place afterwards.
+        """
+        vec = {"x": (1, 0, 0), "y": (0, 1, 0), "z": (0, 0, 1)}[str(axis).lower()]
+        solid = self._solid(shape)
+        return solid.rotate((0, 0, 0), vec, float(angle_deg))
+
     def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any:
         """Move a part into place.
 
@@ -659,6 +637,10 @@ def build_from_spec(spec: dict[str, Any], backend: CadBackend | None = None) -> 
     # the part first would leave those tools cutting empty space where the part
     # used to be. Building in local coordinates and placing afterwards is what
     # makes per-part hollowing work in an assembly.
+    rot = params.get("rotate") or spec.get("rotate")
+    if rot:
+        shape = backend.rotate(shape, str(rot[0]), float(rot[1]))
+
     at = params.get("at") or spec.get("at")
     if at is not None:
         shape = backend.translate(shape, float(at[0]), float(at[1]), float(at[2]))
