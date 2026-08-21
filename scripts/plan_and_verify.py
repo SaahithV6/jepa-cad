@@ -172,6 +172,10 @@ DESIGN_ALPHA_RAD = math.radians(5.0)
 #: Ultimate factor on limit load. Standard aerospace practice.
 ULTIMATE_FACTOR = 1.5
 
+#: Nozzle wall material density, kg/m^3. Inconel or a comparable superalloy is
+#: what a regeneratively cooled skirt is actually made from.
+NOZZLE_DENSITY = 8000.0
+
 #: Temperature above which aluminium alloys stop holding useful strength. Not a
 #: sharp limit -- 6061-T6 is already well down by 500 K -- but past it a
 #: room-temperature allowable is the wrong number to be designing against.
@@ -562,6 +566,56 @@ def main() -> int:
                      f"stages earlier to hold this down; this planner does "
                      f"neither, so the number is reported rather than hidden.")
         L.append("")
+    # Nozzle geometry. The nozzle existed only as an area ratio: no contour,
+    # no wall, no mass, and no way for its shape to matter to anything.
+    nozzle = None
+    try:
+        from cadflow.backends import get_backend
+        from cadflow.sculpt import bell_contour, nozzle_solid
+
+        st0 = p.stack[0]
+        at = st0.throat_area_m2
+        r_t = math.sqrt(at / math.pi)
+        bell = bell_contour(r_t, st0.expansion_ratio)
+        wall_m = max(0.0015, 0.02 * r_t)
+        _b = get_backend(prefer_real=True)
+        solid = nozzle_solid(bell, wall_m, backend=_b)
+        mp = _b.mass_properties(solid, NOZZLE_DENSITY)
+        nozzle = {
+            "throat_radius_mm": r_t * 1000.0,
+            "exit_radius_mm": bell.exit_radius_m * 1000.0,
+            "length_mm": bell.length_m * 1000.0,
+            "area_ratio": bell.area_ratio,
+            "percent_bell": bell.percent_bell,
+            "exit_angle_deg": bell.exit_angle_deg,
+            "divergence_efficiency": bell.divergence_efficiency,
+            "wall_mm": wall_m * 1000.0,
+            "mass_kg": mp["mass_kg"],
+        }
+        L.append("\n## Nozzle\n")
+        L.append("| quantity | value |")
+        L.append("|---|---|")
+        L.append(f"| throat / exit radius | {nozzle['throat_radius_mm']:.1f} / "
+                 f"{nozzle['exit_radius_mm']:.1f} mm |")
+        L.append(f"| area ratio | {bell.area_ratio:.1f} |")
+        L.append(f"| contour | {100*bell.percent_bell:.0f}% bell, "
+                 f"{bell.length_m*1000:.0f} mm long, exiting at "
+                 f"{bell.exit_angle_deg:.0f} deg |")
+        L.append(f"| divergence efficiency | {bell.divergence_efficiency:.4f} |")
+        L.append(f"| wall / mass | {wall_m*1000:.2f} mm, "
+                 f"{mp['mass_kg']:.2f} kg of Inconel |")
+        L.append("\nThe contour is a quadratic pinned by four constraints that "
+                 "are all given or forced -- throat radius, the exit radius the "
+                 "area ratio demands, and the flow angle at each end -- so "
+                 "nothing about it is read off a chart. Its shape now has a "
+                 "consequence: divergence loss multiplies thrust, and a 25 "
+                 "degree exit would cost 4.7% of specific impulse against this "
+                 "one's 0.6%. The wall is offset along the surface normal, so "
+                 "it is constant-thickness sheet rather than thinning where the "
+                 "contour is steep.")
+    except Exception as exc:  # noqa: BLE001 - geometry is an addition, not a gate
+        print(f"nozzle geometry unavailable: {exc}", flush=True)
+
     # Thermal. An engine is very often limited by what its throat can survive
     # rather than by performance or structures, and nothing in this packet knew
     # that. The throat is the worst place on the vehicle: densest gas, nearly
@@ -794,7 +848,8 @@ def main() -> int:
         "coupon_stack": coupon_stack,
         "flight_vehicle": flight_vehicle,
         "stability": stability,
-        "thermal": thermal}, indent=2))
+        "thermal": thermal,
+        "nozzle": nozzle}, indent=2))
     print("\n".join(L))
     return 0
 

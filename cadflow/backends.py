@@ -33,7 +33,11 @@ class CadBackend(Protocol):
         height: float,
     ) -> Any: ...
 
-    def sculpt_offset(self, shape: Any, distance: float) -> Any: ...
+    def sculpt_offset(self, shape: Any, distance: float,
+                      open_face: str | None = None) -> Any: ...
+
+    def loft_sections(self, sections: Sequence[tuple[float, Sequence[tuple[float, float]]]],
+                      ruled: bool = False) -> Any: ...
 
     def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any: ...
 
@@ -42,7 +46,8 @@ class CadBackend(Protocol):
     def mass_properties(self, shape: Any, density_kgm3: float) -> dict: ...
 
     def revolve_profile(self, profile: Sequence[tuple[float, float]],
-                        angle_deg: float = 360.0, smooth: bool = True) -> Any: ...
+                        angle_deg: float = 360.0, smooth: bool = True,
+                        close_to_axis: bool = True) -> Any: ...
 
     def boolean_cut(self, target: Any, tool: Any) -> Any: ...
 
@@ -115,7 +120,8 @@ class MockCadBackend:
         return MockCadSolid(kind="sphere", dimensions=(_require_positive("radius", radius),))
 
     def revolve_profile(self, profile: Sequence[tuple[float, float]],
-                        angle_deg: float = 360.0, smooth: bool = True) -> MockCadSolid:
+                        angle_deg: float = 360.0, smooth: bool = True,
+                        close_to_axis: bool = True) -> MockCadSolid:
         pts = tuple((float(x), float(y)) for x, y in profile)
         r = max((abs(x) for x, _ in pts), default=1.0)
         h = max((abs(y) for _, y in pts), default=1.0)
@@ -152,7 +158,18 @@ class MockCadBackend:
             profile=pts,
         )
 
-    def sculpt_offset(self, shape: MockCadSolid, distance: float) -> MockCadSolid:
+    def loft_sections(self, sections, ruled: bool = False) -> MockCadSolid:
+        ordered = sorted(((float(z), list(p)) for z, p in sections),
+                         key=lambda s_: s_[0])
+        if len(ordered) < 2:
+            raise ValueError("a loft needs at least two sections")
+        height = ordered[-1][0] - ordered[0][0]
+        return MockCadSolid(kind="extrusion", dimensions=(max(1e-9, height),),
+                            profile=tuple((float(x), float(y))
+                                          for x, y in ordered[0][1]))
+
+    def sculpt_offset(self, shape: MockCadSolid, distance: float,
+                      open_face: str | None = None) -> MockCadSolid:
         return MockCadSolid(
             kind=shape.kind,
             dimensions=shape.dimensions,
@@ -373,30 +390,89 @@ class CadQueryBackend:
         height = _require_positive("height", height)
         return cadquery.Workplane("XY").polyline(pts).close().extrude(height)
 
-    def sculpt_offset(self, shape: Any, distance: float) -> Any:
-        """Deterministic freeform-ish edit via shell/offset (not LLM mesh dump)."""
+    def sculpt_offset(self, shape: Any, distance: float,
+                      open_face: str | None = None) -> Any:
+        """Hollow a solid to a wall of the given thickness.
+
+        Negative offsets inward, which is what a tank or an airframe section
+        wants; ``open_face`` names a face selector to leave open, so a tank can
+        be a tube rather than a sealed bottle.
+
+        This was calling ``.shell()`` on the underlying Solid rather than on the
+        Workplane, which always raised -- and the except branch returned an
+        *expanded bounding box*. Every caller silently got a solid block of the
+        same envelope: a cylinder came back at 164% of its own volume, a box at
+        133%, and a hollow tube at 865%, all with six faces. A shell operation
+        that returns more material than it started with, as a box, and says
+        nothing, is worse than one that is missing.
+
+        It now uses the Workplane API, which is exact -- a 2 mm shell of a
+        60 mm x r20 cylinder gives 18397.2 against an analytic 18397.2 -- and
+        raises rather than inventing geometry when it cannot.
+        """
         cadquery = cq
         assert cadquery is not None
         distance = float(distance)
         if abs(distance) < 1e-12:
             return shape
-        solid = self._solid(shape)
+        wp = shape if hasattr(shape, "shell") else cadquery.Workplane(
+            "XY").newObject([self._solid(shape)])
         try:
-            shelled = solid.shell(distance)  # type: ignore[attr-defined]
-            return cadquery.Workplane("XY").newObject([shelled])
-        except Exception:
-            # Fallback: expanded AABB as a conservative deterministic sculpt.
-            xmin, ymin, zmin, xmax, ymax, zmax = self.bounding_box(shape)
-            pad = abs(distance)
-            return self.box(
-                (xmax - xmin) + 2 * pad,
-                (ymax - ymin) + 2 * pad,
-                (zmax - zmin) + 2 * pad,
-            )
+            if open_face:
+                return wp.faces(open_face).shell(distance)
+            return wp.shell(distance)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                f"shell of {distance} mm failed on this solid: {exc}. "
+                f"A wall thicker than the part's smallest feature cannot be "
+                f"shelled, and neither can a body with self-intersecting "
+                f"offsets."
+            ) from exc
+
+    def loft_sections(self, sections: Sequence[tuple[float, Sequence[tuple[float, float]]]],
+                      ruled: bool = False) -> Any:
+        """Loft a solid through a stack of cross-sections.
+
+        Sections are ``(z, [(x, y), ...])``, given in increasing z. This is the
+        primitive the sculpting layer was missing: revolve makes bodies with an
+        axis of symmetry and extrude makes prisms, but a transition between two
+        different shapes -- a bell nozzle contour, an interstage between stages
+        of different diameter, a fairing that starts round and ends square --
+        is a loft and cannot be either of the other two.
+
+        ``ruled`` joins the sections with straight lines rather than a smooth
+        surface, which is what a conical transition wants; the default fits a
+        surface through them.
+        """
+        cadquery = cq
+        assert cadquery is not None
+        ordered = sorted(((float(z), list(pts)) for z, pts in sections),
+                         key=lambda s: s[0])
+        if len(ordered) < 2:
+            raise ValueError("a loft needs at least two sections")
+        for z, pts in ordered:
+            if len(pts) < 3:
+                raise ValueError(f"section at z={z} has fewer than 3 points")
+
+        z0, first = ordered[0]
+        wp = cadquery.Workplane("XY", origin=(0, 0, z0)).polyline(
+            [(float(x), float(y)) for x, y in first]).close()
+        for z, pts in ordered[1:]:
+            wp = wp.workplane(offset=z - z0).polyline(
+                [(float(x), float(y)) for x, y in pts]).close()
+            z0 = z
+        return wp.loft(ruled=bool(ruled))
 
     def revolve_profile(self, profile: Sequence[tuple[float, float]],
-                        angle_deg: float = 360.0, smooth: bool = True) -> Any:
+                        angle_deg: float = 360.0, smooth: bool = True,
+                        close_to_axis: bool = True) -> Any:
         """Revolve a 2-D profile about the Z axis.
+
+        ``close_to_axis`` suits a body that is solid on the centreline -- a nose
+        cone, a dome -- where the meridian runs from the axis out and back. A
+        wall that never reaches the axis, like a nozzle skirt, is already a
+        closed ring and closing it again produces a zero-length edge on the axis
+        that OpenCASCADE refuses to build.
 
         This is what lets a nose cone actually be a nose cone. Until now the
         "nose" was a cylinder -- a stand-in with neither the shape nor the drag
@@ -424,10 +500,11 @@ class CadQueryBackend:
             wp = wp.spline(pts[1:], includeCurrent=True)
         else:
             wp = wp.polyline(pts[1:])
-        if pts[-1][0] > 1e-9:
-            wp = wp.lineTo(0.0, pts[-1][1])
-        if pts[0][0] > 1e-9:
-            wp = wp.lineTo(0.0, pts[0][1])
+        if close_to_axis:
+            if pts[-1][0] > 1e-9:
+                wp = wp.lineTo(0.0, pts[-1][1])
+            if pts[0][0] > 1e-9:
+                wp = wp.lineTo(0.0, pts[0][1])
         return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
 
     def mass_properties(self, shape: Any, density_kgm3: float) -> dict:

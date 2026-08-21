@@ -137,6 +137,7 @@ def nozzle_performance(
     gamma: float,
     mol_mass: float,           # kg/kmol
     ambient_pressure: float,   # Pa
+    divergence_efficiency: float = 1.0,
 ) -> dict:
     """Ideal-rocket performance, with flow separation when over-expanded."""
     r_specific = R_UNIV / mol_mass
@@ -169,7 +170,12 @@ def nozzle_performance(
     # pressure term, the part that makes Isp altitude-dependent
     cf = cf_mom + (p_exit - ambient_pressure) / chamber_pressure * expansion_ratio
 
-    thrust = cf * chamber_pressure * throat_area
+    # Divergence loss. A real nozzle throws some of its exhaust sideways, and
+    # only the axial component pushes: lambda = (1 + cos theta_e)/2. This was
+    # absent, so nozzle *shape* had no consequence anywhere -- the contour could
+    # be a 40-degree cone or an optimised bell and the thrust came out the same.
+    # Defaults to 1.0 so callers that do not have a contour are unaffected.
+    thrust = cf * chamber_pressure * throat_area * float(divergence_efficiency)
     mdot = chamber_pressure * throat_area / c_star
     isp = thrust / (mdot * G0) if mdot > 0 else 0.0
 
