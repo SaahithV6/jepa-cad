@@ -6,9 +6,19 @@ from pathlib import Path
 from types import SimpleNamespace
 import contextlib
 
+import pytest
+
 from cadflow.cli import main
 from cadflow.manifest import JobManifest
-from cadflow import modal_training
+
+# The modal SDK is an optional dependency of the cloud training path. Without it
+# this module raised ImportError during collection, which aborts the whole run
+# before any other test executes -- one absent optional package took the entire
+# suite down. Skip the module instead.
+modal_training = pytest.importorskip(
+    "cadflow.modal_training",
+    reason="modal SDK not installed; cloud training path unavailable",
+)
 
 
 class _FakeVolumeUpload:

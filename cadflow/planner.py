@@ -27,12 +27,26 @@ import math
 from dataclasses import dataclass, field
 
 from cadflow.multistage import Stage, integrate_stack
+from cadflow.wave_drag import cd_multiplier
 from generate_propulsion_trajectory_corpus import (
     G0, P0, PROPELLANTS, nozzle_performance,
 )
 
 STRUCT_COEFF = 0.14
 CD = 0.42
+
+#: Nose geometry the reference CD above is taken to describe. Shape reaches the
+#: trajectory from here: cd_multiplier returns exactly 1.0 for a tangent ogive,
+#: so the default vehicle flies precisely as it always did, and any other nose
+#: moves the wave-drag share of CD by the amount slender-body theory predicts.
+NOSE_SHAPE = "ogive"
+NOSE_FINENESS = 3.0
+
+
+def drag_coefficient(nose_shape: str = NOSE_SHAPE,
+                     nose_fineness: float = NOSE_FINENESS) -> float:
+    """Zero-lift CD for a vehicle with the given nose."""
+    return CD * cd_multiplier(nose_shape, nose_fineness)
 # Above this mass ratio a stage's structure cannot be closed at STRUCT_COEFF:
 # dry mass would have to be smaller than the tank holding the propellant.
 MAX_STAGE_MR = 1.0 / STRUCT_COEFF * 0.62
@@ -104,10 +118,13 @@ def build_stack_n(total_prop: float, fractions: list[float], payload: float,
 
 
 def fly_plan(total_prop: float, fractions: list[float], payload: float,
-             pc: float, prop: str, pitchover_deg: float = 3.0):
+             pc: float, prop: str, pitchover_deg: float = 3.0,
+             nose_shape: str = NOSE_SHAPE,
+             nose_fineness: float = NOSE_FINENESS):
     stages, gross, split = build_stack_n(total_prop, fractions, payload, pc, prop)
     dia = max(0.10, (gross / 1000.0) ** (1.0 / 3.0) * 0.55)
-    r = integrate_stack(stages, payload, cd=CD,
+    r = integrate_stack(stages, payload,
+                        cd=drag_coefficient(nose_shape, nose_fineness),
                         ref_area_m2=math.pi * (dia / 2) ** 2, dt=0.2,
                         pitchover_angle=math.radians(pitchover_deg))
     return r["apogee_m"] / 1000.0, gross, stages, split, r
@@ -115,14 +132,16 @@ def fly_plan(total_prop: float, fractions: list[float], payload: float,
 
 def solve_for(target_km: float, fractions: list[float], payload: float,
               pc: float, prop: str, tol: float = 0.02,
-              pitchover_deg: float = 3.0):
+              pitchover_deg: float = 3.0,
+              nose_shape: str = NOSE_SHAPE,
+              nose_fineness: float = NOSE_FINENESS):
     """Bisect total propellant until the stack flies the target."""
     # Near-escape missions need mass ratios around 95, so the upper bound has
     # to allow a vehicle that heavy or the search reports no solution for a
     # mission that is merely expensive. 40,000 km already needs ~650x payload.
     lo, hi = payload * 0.3, payload * 400000.0
-    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg)
-    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg)
+    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
+    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
     if not (a_lo <= target_km <= a_hi):
         return None
 
@@ -138,7 +157,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     prev_x, prev_a = lo, a_lo
     for i in range(1, n_scan + 1):
         x = lo * (hi / lo) ** (i / n_scan)
-        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg)
+        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
         if a >= target_km:
             lo, hi = prev_x, x
             break
@@ -157,7 +176,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     for _ in range(40):
         mid = math.sqrt(lo * hi)
         a, gross, stages, split, r = fly_plan(mid, fractions, payload, pc, prop,
-                                             pitchover_deg)
+                                             pitchover_deg, nose_shape, nose_fineness)
         err = abs(a - target_km) / target_km if math.isfinite(a) else float("inf")
         if err < best_err:
             best_err, best = err, (mid, a, gross, stages, split, r)
@@ -197,7 +216,8 @@ def _splits_for(n: int) -> list[list[float]]:
 
 
 def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
-         chamber_bar: float = 55.0) -> Plan | None:
+         chamber_bar: float = 55.0, nose_shape: str = NOSE_SHAPE,
+         nose_fineness: float = NOSE_FINENESS) -> Plan | None:
     """Choose an architecture for this mission and size it."""
     pc = chamber_bar * 1e5
     rationale: list[str] = []
@@ -241,7 +261,8 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
           # multiplying out to thousands of trajectory integrations.
           for pitch in (1.5, 3.0, 6.0):
             got = solve_for(target_km, fr, payload_kg, pc, propellant,
-                            pitchover_deg=pitch)
+                            pitchover_deg=pitch, nose_shape=nose_shape,
+                            nose_fineness=nose_fineness)
             if got is None:
                 continue
             tp, achieved, gross, stages, split, r = got

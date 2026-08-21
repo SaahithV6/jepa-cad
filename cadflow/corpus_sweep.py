@@ -795,7 +795,10 @@ def run_parametric_corpus_sweep(
         },
     )
     master_graph_path.write_text(json.dumps(merged.to_dict(), indent=2), encoding="utf-8")
-    neo4j_report = import_graph_to_neo4j(merged, out_dir=neo4j_dir, database="neo4j")
+    # The graph export is a side artifact of the sweep; a machine without Neo4j
+    # should still be able to generate and promote a corpus.
+    neo4j_report = import_graph_to_neo4j(
+        merged, out_dir=neo4j_dir, database="neo4j", required=False)
 
     return SweepResult(
         discovered_sources=len(source_profiles),

@@ -200,8 +200,16 @@ def import_graph_to_neo4j(
     database: str = "neo4j",
     neo4j_home: str | Path | None = None,
     java_home: str | Path | None = None,
+    required: bool = True,
 ) -> Neo4jImportReport:
-    """Write a Cypher bundle and load it into the local Neo4j instance."""
+    """Write a Cypher bundle and load it into the local Neo4j instance.
+
+    With ``required=False`` a missing Neo4j is reported rather than raised. The
+    Cypher bundle is written either way, so the import can be replayed later on
+    a machine that has one. That matters for running corpus sweeps in a
+    throwaway environment -- a Colab runtime has no Neo4j, and the graph export
+    is a side artifact of a sweep, not the thing the sweep is for.
+    """
 
     graph = graph or build_source_registry_graph()
     bundle = write_neo4j_bundle(graph, out_dir, database=database)
@@ -209,7 +217,23 @@ def import_graph_to_neo4j(
     neo4j_home_path = Path(neo4j_home) if neo4j_home is not None else Path.home() / ".local/neo4j/current"
     cypher_shell = neo4j_home_path / "bin" / "cypher-shell"
     if not cypher_shell.exists():
-        raise FileNotFoundError(f"cypher-shell not found: {cypher_shell}")
+        if required:
+            raise FileNotFoundError(f"cypher-shell not found: {cypher_shell}")
+        return Neo4jImportReport(
+            bundle=bundle,
+            database=database,
+            cypher_shell=str(cypher_shell),
+            exit_code=0,
+            stdout_path="",
+            stderr_path="",
+            node_count=len(graph.nodes),
+            edge_count=len(graph.edges),
+            status="skipped_no_neo4j",
+            notes=(
+                f"cypher-shell not found at {cypher_shell}; the Cypher bundle "
+                f"was written to {bundle.cypher_path} and can be imported later.",
+            ),
+        )
 
     env = os.environ.copy()
     if java_home is not None:

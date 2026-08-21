@@ -56,7 +56,21 @@ class SolverAdapter(ABC):
 
     def run(self, job: SolverJob) -> SolverResult:
         job.workdir.mkdir(parents=True, exist_ok=True)
-        case_files = self.write_case(job)
+        try:
+            case_files = self.write_case(job)
+        except Exception as exc:  # noqa: BLE001
+            # Case preparation fails on geometry that cannot be meshed -- an
+            # empty or degenerate STL, a part gmsh reports as having no
+            # surfaces. Every other failure mode in this method already honours
+            # allow_fallback; this one did not, so it propagated and killed the
+            # run. That is wrong for a corpus sweep over thousands of parts,
+            # where one unmeshable geometry is a property of that part and not
+            # of the job.
+            if not job.allow_fallback:
+                raise
+            return self._fallback(
+                job, {}, self.probe(), error=f"case setup failed: {exc}"
+            )
         probe = self.probe()
         runtime = getattr(self, "runtime", None)
         cmd = self.command(job, case_files)
@@ -286,6 +300,24 @@ class FEAAdapter(SolverAdapter):
         cl_max = float(job.parameters.get("cl_max_mm", 6.0))
         cl_min = float(job.parameters.get("cl_min_mm", 1.5))
         timeout = int(job.parameters.get("mesh_timeout_s", max(120, int(job.timeout_s))))
+
+        # Write the material deck before meshing, not after. Meshing is the part
+        # that fails on a degenerate part, and when it did the case directory
+        # was left with no record of what had been attempted -- no material, no
+        # load, nothing to read back. This deck always exists; case.inp, with
+        # the actual mesh in it, appears only if the geometry meshes.
+        job.workdir.mkdir(parents=True, exist_ok=True)
+        (job.workdir / "job.inp").write_text(
+            "\n".join([
+                f"*HEADING",
+                f"job {job.job_id}: {mat}, load {load:g} N",
+                f"*MATERIAL, NAME={mat}",
+                "*ELASTIC",
+                f"{E:g}, {nu:g}",
+                "",
+            ]),
+            encoding="utf-8",
+        )
 
         geom = Path(job.geometry_path)
         # Prefer STL; if only STEP was passed, look beside it.

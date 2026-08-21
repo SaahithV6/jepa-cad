@@ -377,6 +377,12 @@ CONDITIONING_QUANTITIES: tuple[tuple[str, float], ...] = (
     ("apogee_km", 1.0 / 5_000.0),
     ("downrange_km", 1.0 / 9_000.0),
     ("burn_time_s", 1.0 / 250.0),
+    # Nose shape, as the physically meaningful scalar rather than a category
+    # index: wave drag relative to a tangent ogive at the same fineness, so
+    # 1.0 is an ogive, below 1 is von Karman, above is a cone. Paired with the
+    # existing fineness_ratio slot, that is enough to place a nose in the
+    # drag model. Appended, never inserted -- the tuple order is the contract.
+    ("nose_wave_factor", 1.0 / 2.0),
 )
 
 

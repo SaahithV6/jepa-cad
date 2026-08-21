@@ -45,6 +45,8 @@ import argparse
 import hashlib
 import json
 import math
+
+from cadflow.wave_drag import POINTED_SHAPES, cd_multiplier, shape_factor
 import random
 from pathlib import Path
 
@@ -424,6 +426,17 @@ def sample_design(rng: random.Random, idx: int) -> dict:
     # why the raw Cd_proxy distribution cannot be taken at face value.
     cd, cd_coupled = _draw(rng, "cd", 0.25, 0.55)
 
+    # NOSE SHAPE. The corpus previously had no nose at all, so a cone and a von
+    # Karman ogive produced identical trajectories and the model had nothing to
+    # learn from shape. The drawn Cd is taken to describe a tangent ogive, which
+    # is what cd_multiplier normalises to, so every record that samples an ogive
+    # keeps exactly the drag it would have had before. Only pointed noses are
+    # sampled: slender-body theory needs S'(0) = 0 at the tip, and an elliptical
+    # nose is blunt, so its drag would be a number the theory cannot support.
+    nose_shape = rng.choice(list(POINTED_SHAPES))
+    nose_fineness = rng.uniform(1.5, 5.5)
+    cd = cd * cd_multiplier(nose_shape, nose_fineness)
+
     pc = rng.uniform(2.0e6, 20.0e6)
     # Expansion ratio is a design choice tied to where the stage operates.
     # Sea-level stages run low eps to stay attached in atmosphere; vacuum
@@ -464,6 +477,11 @@ def sample_design(rng: random.Random, idx: int) -> dict:
         "target_twr": float(twr),
         "cd": float(cd),
         "cd_coupled": bool(cd_coupled),
+        "nose_shape": str(nose_shape),
+        "nose_fineness": float(nose_fineness),
+        # Named to match the conditioning slots so they reach the model.
+        "fineness_ratio": float(nose_fineness),
+        "nose_wave_factor": float(shape_factor(nose_shape, nose_fineness)),
         "fea_max_von_mises_mpa": float(vm_mpa),
         "structural_utilisation": float(utilisation),
         "struct_coupled": bool(vm_coupled),
