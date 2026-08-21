@@ -352,6 +352,60 @@ PROPELLANTS = {
 }
 
 
+#: Mixture-ratio sampling window per propellant, as a fraction of the reference
+#: value. Wide enough that the trade is visible in the data, narrow enough that
+#: every sample is a mixture an engine could actually run.
+_OF_WINDOW = (0.65, 1.45)
+
+
+def _sample_chamber(rng: random.Random, prop: str):
+    """Sample a mixture ratio and solve the chamber for it.
+
+    Falls back to the old constant table if the chemistry is unavailable, so a
+    machine without Cantera still generates a corpus -- one without an O/F axis,
+    but a valid one.
+    """
+    try:
+        from cadflow.combustion import REFERENCE, bulk_density, chamber_equilibrium
+
+        of_ref = REFERENCE[prop][0]
+        lo, hi = _OF_WINDOW
+        of = round(of_ref * rng.uniform(lo, hi) / 0.05) * 0.05
+        state = chamber_equilibrium(prop, of)
+        return (of, state.gamma, state.chamber_temp_k, state.molecular_mass,
+                state.c_star_m_s, bulk_density(prop, of))
+    except Exception:  # noqa: BLE001 - chemistry is an enhancement, not a gate
+        gamma, tc, mol = PROPELLANTS[prop]
+        return None, gamma, tc, mol, None, 1030.0
+
+
+def _thermal_state(prop: str, of_ratio, throat_area_m2: float,
+                   chamber_pressure_pa: float, c_star):
+    """Throat heat flux and whether the fuel flow can carry it away."""
+    if of_ratio is None or not c_star:
+        return None
+    try:
+        from cadflow.combustion import COMBINATIONS, chamber_equilibrium
+        from cadflow.thermal import chamber_heat_load, regenerative_cooling
+
+        state = chamber_equilibrium(prop, of_ratio, chamber_pressure_pa)
+        mdot = chamber_pressure_pa * throat_area_m2 / state.c_star_m_s
+        load = chamber_heat_load(state, throat_area_m2, mdot)
+        fuel = COMBINATIONS[prop][1]
+        cool = regenerative_cooling(load["q_total_w"], mdot / (1.0 + of_ratio),
+                                    fuel)
+        return {
+            "throat_heat_flux_MWm2": load["throat"].heat_flux_mw_m2,
+            "wall_temp_max_K": load["throat"].wall_temp_k,
+            "recovery_temp_K": load["throat"].recovery_temp_k,
+            "coolant_outlet_K": cool["outlet_temp_k"],
+            "cooling_margin_K": cool["margin_k"],
+            "cooling_feasible": bool(cool["feasible"]),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # Yield strength of Al-6061-T6, the default airframe material in the corpus.
 ALLOWABLE_MPA = 276.0
 
@@ -392,7 +446,16 @@ def _draw(rng: random.Random, key: str, fallback_lo: float, fallback_hi: float) 
 
 def sample_design(rng: random.Random, idx: int) -> dict:
     prop = rng.choice(list(PROPELLANTS))
-    gamma, tc, mol = PROPELLANTS[prop]
+
+    # MIXTURE RATIO. The corpus carried one chamber condition per propellant
+    # and no O/F axis at all, so the central trade in a liquid engine -- rich
+    # for specific impulse against lean for density -- was absent from the
+    # training data entirely. It is now a sampled design variable and the
+    # chamber conditions follow from equilibrium chemistry at that ratio.
+    #
+    # Quantised to 0.05 because the equilibrium solve is memoised on a rounded
+    # ratio; the answer varies far more slowly with O/F than that.
+    of_ratio, gamma, tc, mol, c_star, rho_bulk = _sample_chamber(rng, prop)
 
     # Mass budget at FIXED gross liftoff mass, so payload competes with
     # propellant the way it does on a real vehicle. Sampling payload and mass
@@ -479,9 +542,18 @@ def sample_design(rng: random.Random, idx: int) -> dict:
         "chamber_pressure_pa": float(pc),
         "expansion_ratio": float(eps),
         "throat_area_m2": float(throat_area),
+        **( {} if (_th := _thermal_state(prop, of_ratio, float(throat_area),
+                                         float(pc), c_star)) is None
+            else {"thermal": _th} ),
         "target_twr": float(twr),
         "cd": float(cd),
         "cd_coupled": bool(cd_coupled),
+        # Chemistry: the mixture ratio this design runs at, and the chamber
+        # conditions equilibrium gives for it. Previously one row per
+        # propellant, so the model had no O/F axis to learn on.
+        "mixture_ratio": (float(of_ratio) if of_ratio is not None else None),
+        "bulk_density_kgm3": float(rho_bulk),
+        "c_star_m_s": (float(c_star) if c_star else None),
         "nose_shape": str(nose_shape),
         "nose_fineness": float(nose_fineness),
         # Named to match the conditioning slots so they reach the model.
@@ -638,6 +710,17 @@ def main() -> int:
                 # which a name-only fix would have got wrong by 1000x.
                 "delta_v_ms": res["delta_v_ideal_m_s"],
                 "max_dynamic_pressure_kpa": res["max_q_pa"] / 1000.0,
+                # Chemistry and thermal, under their conditioning slot names.
+                # These slots existed and were populated only by values sampled
+                # from family ranges; they now carry numbers computed for this
+                # specific design, which is a different kind of training signal.
+                **({} if design.get("mixture_ratio") is None
+                   else {"mixture_ratio": design["mixture_ratio"]}),
+                **({} if not design.get("thermal") else {
+                    "throat_heat_flux_MWm2":
+                        design["thermal"]["throat_heat_flux_MWm2"],
+                    "wall_temp_max_K": design["thermal"]["wall_temp_max_K"],
+                }),
                 "channels": "thrust,mass,drag,mach,q,accel,velocity,altitude",
             },
         }))

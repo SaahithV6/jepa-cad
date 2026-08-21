@@ -34,6 +34,11 @@ TRAJECTORY_SLOTS = (
     "mass_fraction",
     "fineness_ratio",
     "nose_wave_factor",
+    # chemistry and thermal, computed for the specific design rather than
+    # sampled from a family range
+    "mixture_ratio",
+    "throat_heat_flux_MWm2",
+    "wall_temp_max_K",
 )
 
 
@@ -114,3 +119,29 @@ def test_drag_responds_to_nose_shape_in_the_corpus():
     ogive = [cd for f, cd in pairs if f >= 0.99]
     assert better and ogive
     assert sum(better) / len(better) < sum(ogive) / len(ogive)
+
+
+@pytest.mark.skipif(not MANIFEST.exists(), reason="no trajectory corpus generated")
+def test_mixture_ratio_varies_and_drives_the_chamber():
+    """The O/F axis the corpus did not have.
+
+    One row per propellant meant the central trade in a liquid engine was
+    absent from the training data entirely -- a constant carries no information
+    however correctly it is computed.
+    """
+    rows = [json.loads(line) for line in MANIFEST.read_text().splitlines() if line]
+    ratios = [r["metrics"].get("mixture_ratio") for r in rows]
+    ratios = [x for x in ratios if isinstance(x, (int, float))]
+    assert len(ratios) > 20
+    assert max(ratios) > 1.4 * min(ratios), (min(ratios), max(ratios))
+
+
+@pytest.mark.skipif(not MANIFEST.exists(), reason="no trajectory corpus generated")
+def test_thermal_is_physical_across_the_corpus():
+    rows = [json.loads(line) for line in MANIFEST.read_text().splitlines() if line]
+    fluxes = [r["metrics"].get("throat_heat_flux_MWm2") for r in rows]
+    fluxes = [x for x in fluxes if isinstance(x, (int, float))]
+    assert len(fluxes) > 20
+    # real throats run from a few to a couple of hundred MW/m^2
+    assert all(0.5 < f < 500.0 for f in fluxes), (min(fluxes), max(fluxes))
+    assert max(fluxes) > 2.0 * min(fluxes), "heat flux carries no variation"
