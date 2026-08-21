@@ -116,3 +116,71 @@ def test_fin_planform_rejects_nonsense():
         fin_planform(0.0, 10.0)
     with pytest.raises(ValueError):
         fin_planform(10.0, 0.0)
+
+
+# --- fin attachment ---------------------------------------------------------
+# A component once came back with no usable result at all -- gmsh fell back to a
+# convex hull, which for a hollow part is a solid billet. The cause was that the
+# fin root embedded deeper than the wall was thick, so the fin punched through
+# and left a sliver dangling inside the cavity. These check the geometry that
+# caused it, without needing to mesh anything.
+
+def _fin_root_x(constraints):
+    """Radial station of the fin root in the built spec."""
+    from scripts.smoke_params_to_assembly import constraints_to_geometry
+
+    spec = constraints_to_geometry(constraints)
+    fins = [p for p in spec["parts"] if p["kind"] == "extrude"]
+    assert fins, "no fin in the spec"
+    return fins[0]["params"]["at"][0]
+
+
+@pytest.mark.parametrize("wall", [0.4, 0.8, 1.5, 3.0, 6.0, 12.0])
+def test_fin_root_never_passes_through_the_wall(wall):
+    """The bug, stated directly: the root must stay within the shell.
+
+    The old embed depth was min(2.0, wall + 1.0), which exceeds the wall for any
+    wall under 2 mm. On a 0.8 mm shell that put the root 1.0 mm past the inner
+    surface.
+    """
+    body_r = 38.98
+    root_x = _fin_root_x(dict(
+        body_radius_mm=body_r, body_height_mm=78.0, nose_radius_mm=body_r,
+        nose_height_mm=27.0, fin_span_mm=99.75, fin_thickness_mm=5.0,
+        fin_chord_mm=78.0, wall_thickness_mm=wall))
+    inner_r = body_r - wall
+    assert root_x > inner_r, (
+        f"fin root at {root_x:.3f} is inside the cavity "
+        f"(inner surface {inner_r:.3f}), wall {wall}")
+    assert root_x < body_r, "fin root must be embedded, not floating outside"
+
+
+@pytest.mark.parametrize("wall", [0.4, 0.8, 1.5, 3.0])
+def test_fin_root_is_embedded_deep_enough_to_union(wall):
+    """It must overlap the skin, or the boolean union leaves two solids."""
+    body_r = 38.98
+    root_x = _fin_root_x(dict(
+        body_radius_mm=body_r, body_height_mm=78.0, nose_radius_mm=body_r,
+        nose_height_mm=27.0, fin_span_mm=99.75, fin_thickness_mm=5.0,
+        fin_chord_mm=78.0, wall_thickness_mm=wall))
+    overlap = body_r - root_x
+    assert overlap >= 0.25 * wall, (overlap, wall)
+
+
+def test_a_hollow_finned_part_is_one_watertight_solid():
+    """The consequence that matters: it has to be a single body to mesh."""
+    cq = pytest.importorskip("cadquery")
+    from cadflow.backends import build_from_spec, get_backend
+    from scripts.smoke_params_to_assembly import constraints_to_geometry
+
+    backend = get_backend(prefer_real=True)
+    if backend.name != "cadquery":
+        pytest.skip("real CAD backend unavailable")
+    shape = build_from_spec(constraints_to_geometry(dict(
+        body_radius_mm=38.98, body_height_mm=77.97, nose_radius_mm=38.98,
+        nose_height_mm=27.29, fin_span_mm=99.75, fin_thickness_mm=5.0,
+        fin_chord_mm=77.97, wall_thickness_mm=0.8)), backend=backend)
+    solid = shape.val() if hasattr(shape, "val") else shape
+    assert len(solid.Solids()) == 1
+    # the sliver tab added faces; without it this part is simple
+    assert len(solid.Faces()) <= 12, len(solid.Faces())

@@ -398,11 +398,15 @@ def main() -> int:
                 acc = rep.get("accepted") or {}
                 vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
                 hulled = any(comp_dir.rglob("MESH_IS_CONVEX_HULL"))
+                # A coarser-than-requested mesh is still the real part, so it
+                # is not a failure -- but it resolves the wall with fewer
+                # elements than intended and the reader should know.
+                coarsened = any(comp_dir.rglob("MESH_COARSENED"))
                 if hulled:
                     vm, ok = None, False
                 err = None
             except Exception as exc:  # noqa: BLE001
-                vm, ok, hulled = None, False, False
+                vm, ok, hulled, coarsened = None, False, False, False
                 err = f"{type(exc).__name__}: {exc}"
                 print(f"  [{name}] {err}", flush=True)
                 break
@@ -466,7 +470,9 @@ def main() -> int:
                         "mass_properties": mass_props,
                         "geometry": geom,
                         "error": err,
-                        "mesh_was_hull": hulled, "stress_dist": dist,
+                        "mesh_was_hull": hulled,
+                        "mesh_was_coarsened": coarsened,
+                        "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
                         "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
                         "wall_mm": wall_mm_final,
@@ -538,6 +544,8 @@ def main() -> int:
         peak = f"{d['max']:.0f} MPa" if d else ("hull" if r["mesh_was_hull"] else "-")
         f1 = r.get("first_mode_hz")
         mode = f"{f1:.0f} Hz" if f1 else "-"
+        if r.get("mesh_was_coarsened"):
+            vm = vm + " (coarse)"
         mp = r.get("mass_properties") or {}
         mass = f"{mp['mass_kg']*1000:.0f} g" if mp.get("mass_kg") else "-"
         izz = f"{mp['Izz_kg_m2']:.2e}" if mp.get("Izz_kg_m2") else "-"
