@@ -692,3 +692,40 @@ takes the top row along the whole wall rather than the exit plane. And the
 area-Mach relation predicts the speed, not its projection on the axis: in a
 diverging nozzle the flow has a real radial component, and averaging Ux instead
 of |U| understates the exit Mach.
+
+## The conditioning contract, and three slots that were never reaching the model
+
+Adding a conditioning slot is three edits in three files: the slot goes in
+`CONDITIONING_QUANTITIES`, the value gets computed in the corpus, and the value
+has to appear in the *shard metrics* under exactly the slot's name -- because
+the graph ingest seeds conditioning by looking slot names up in a node's own
+properties. Miss the third and nothing breaks: the run succeeds, the corpus
+holds the value, and the model conditions on a zero.
+
+`nose_wave_factor` was doing exactly that. Computed from a validated integral,
+written into every corpus record, and invisible.
+
+Fixing it was one line. Writing the test that would have caught it found two
+more immediately. The corpus emits `delta_v_ideal_m_s` and `max_q_pa`; the slots
+are named `delta_v_ms` and `max_dynamic_pressure_kpa`. Neither had ever been
+populated -- including mission delta-v, which is the single most descriptive
+number about a launch vehicle. The second is a unit change as well as a rename,
+so a name-only fix would have been wrong by a factor of 1000.
+
+An audit of all 42 slots against the graph found four with zero occurrences
+anywhere in 327,700 nodes: `nose_wave_factor` and the three inertia components.
+A first pass with grep claimed ten, which was wrong -- several are populated
+through `FAMILY_PHYSICS` target names rather than as literal keys, so the graph
+had to be checked rather than the source.
+
+`Ixx/Iyy/Izz` are exactly computable from geometry that is already being built,
+and they are what attitude control and stability need, so `backends` gained
+`mass_properties`. Against an analytic 10 x 20 x 30 mm aluminium box, mass and
+all three principal moments agree to 0.0000%.
+
+Then the guard earned itself twice over. A 1500-record generation launched
+before the `delta_v_ms` fix finished *after* a corrected 600-record run, wrote
+the same files, and silently reverted the corpus. The contract test failed by
+name on exactly the two slots. The generator now takes an exclusive lock and
+refuses to run alongside another, and writes through a temporary file and a
+rename so a reader never sees a half-written corpus.

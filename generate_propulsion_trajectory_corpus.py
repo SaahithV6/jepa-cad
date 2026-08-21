@@ -42,8 +42,11 @@ to the manifest and the record JSON).
 from __future__ import annotations
 
 import argparse
+import atexit
 import hashlib
 import json
+import os
+import sys
 import math
 
 from cadflow.wave_drag import TANGENT_SHAPES, cd_multiplier, shape_factor
@@ -551,6 +554,23 @@ def main() -> int:
     args.manifest.parent.mkdir(parents=True, exist_ok=True)
     args.records.parent.mkdir(parents=True, exist_ok=True)
 
+    # Refuse to run alongside another generation. Two concurrent runs write the
+    # same manifest and records, and the one that finishes last wins -- so a
+    # long run started before a fix silently reverted the corpus to the state
+    # the fix had corrected, after a shorter corrected run had already written
+    # it. The conditioning contract test caught it, but nothing should have had
+    # to.
+    lock = args.manifest.with_suffix(args.manifest.suffix + ".lock")
+    try:
+        lock_fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        print(f"another generation holds {lock}; refusing to run.\n"
+              f"if no generator is running, remove it.", file=sys.stderr)
+        return 2
+    os.write(lock_fd, f"{os.getpid()}\n".encode())
+    os.close(lock_fd)
+    atexit.register(lambda: lock.unlink(missing_ok=True))
+
     rng = random.Random(args.seed)
     ok = skipped = 0
     manifest_lines: list[str] = []
@@ -624,8 +644,13 @@ def main() -> int:
         record_lines.append(json.dumps({"case_id": case_id, "design": design, "outcomes": res}))
         ok += 1
 
-    args.manifest.write_text("\n".join(manifest_lines) + ("\n" if manifest_lines else ""))
-    args.records.write_text("\n".join(record_lines) + ("\n" if record_lines else ""))
+    # Write via a temporary file and rename, so a reader never sees a
+    # half-written corpus and an interrupted run leaves the old one intact.
+    for path, lines in ((args.manifest, manifest_lines),
+                        (args.records, record_lines)):
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text("\n".join(lines) + ("\n" if lines else ""))
+        tmp.replace(path)
 
     print(f"generated  : {ok}")
     print(f"skipped    : {skipped} (thrust below liftoff weight)")
