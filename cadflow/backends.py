@@ -39,6 +39,8 @@ class CadBackend(Protocol):
 
     def rotate(self, shape: Any, axis: str, angle_deg: float) -> Any: ...
 
+    def mass_properties(self, shape: Any, density_kgm3: float) -> dict: ...
+
     def revolve_profile(self, profile: Sequence[tuple[float, float]],
                         angle_deg: float = 360.0, smooth: bool = True) -> Any: ...
 
@@ -118,6 +120,15 @@ class MockCadBackend:
         r = max((abs(x) for x, _ in pts), default=1.0)
         h = max((abs(y) for _, y in pts), default=1.0)
         return MockCadSolid(kind="cylinder", dimensions=(r, h), profile=pts)
+
+    def mass_properties(self, shape: MockCadSolid, density_kgm3: float) -> dict:
+        vol_m3 = self.volume(shape) * 1e-9
+        mass = vol_m3 * float(density_kgm3)
+        # A crude equivalent cube keeps the mock dimensionally honest.
+        side = max(vol_m3, 1e-30) ** (1.0 / 3.0)
+        i = mass * (2.0 * side * side) / 12.0
+        return {"mass_kg": mass, "volume_m3": vol_m3,
+                "Ixx_kg_m2": i, "Iyy_kg_m2": i, "Izz_kg_m2": i}
 
     def rotate(self, shape: MockCadSolid, axis: str, angle_deg: float) -> MockCadSolid:
         return replace(shape, ops=shape.ops + (f"rotate({axis},{angle_deg})",))
@@ -418,6 +429,34 @@ class CadQueryBackend:
         if pts[0][0] > 1e-9:
             wp = wp.lineTo(0.0, pts[0][1])
         return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
+
+    def mass_properties(self, shape: Any, density_kgm3: float) -> dict:
+        """Mass and principal moments of inertia about the centroid, in SI.
+
+        Ixx/Iyy/Izz are conditioning slots that no producer has ever filled --
+        they were three of only four slots absent from the whole graph. They are
+        also exactly computable from geometry that is already being built, and
+        they are what an attitude-control or stability assessment needs.
+
+        Geometry is in millimetres, so the volume integral of r^2 dV comes out
+        in mm^5: scale by 1e-15 to reach m^5, then by density for kg m^2.
+        """
+        from OCP.BRepGProp import BRepGProp
+        from OCP.GProp import GProp_GProps
+
+        props = GProp_GProps()
+        BRepGProp.VolumeProperties_s(self._solid(shape).wrapped, props)
+        rho = float(density_kgm3)
+        vol_m3 = props.Mass() * 1e-9
+        matrix = props.MatrixOfInertia()
+        scale = 1e-15 * rho
+        return {
+            "mass_kg": vol_m3 * rho,
+            "volume_m3": vol_m3,
+            "Ixx_kg_m2": matrix.Value(1, 1) * scale,
+            "Iyy_kg_m2": matrix.Value(2, 2) * scale,
+            "Izz_kg_m2": matrix.Value(3, 3) * scale,
+        }
 
     def rotate(self, shape: Any, axis: str, angle_deg: float) -> Any:
         """Rotate about a principal axis through the origin.

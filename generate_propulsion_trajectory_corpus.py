@@ -602,6 +602,22 @@ def main() -> int:
                 "mdot_kg_s": res["mdot_kg_s"],
                 "mass_fraction": design["prop_mass_kg"] / design["liftoff_mass_kg"],
                 "cd": design["cd"],
+                # Nose shape reaches the model through here or not at all. The
+                # graph ingest seeds conditioning from a node's own properties
+                # by slot name, so a slot whose name never appears in these
+                # metrics stays at zero however carefully it was computed --
+                # which is what nose_wave_factor was doing.
+                "fineness_ratio": design["fineness_ratio"],
+                "nose_wave_factor": design["nose_wave_factor"],
+                # Slot-named duplicates. The conditioning slots are delta_v_ms
+                # and max_dynamic_pressure_kpa; this corpus was emitting
+                # delta_v_ideal_m_s and max_q_pa, so the lookup by slot name
+                # found nothing and both conditioned on zero -- including the
+                # mission delta-v, which is the single most descriptive number
+                # about a launch vehicle. The kPa one is also a unit change,
+                # which a name-only fix would have got wrong by 1000x.
+                "delta_v_ms": res["delta_v_ideal_m_s"],
+                "max_dynamic_pressure_kpa": res["max_q_pa"] / 1000.0,
                 "channels": "thrust,mass,drag,mach,q,accel,velocity,altitude",
             },
         }))

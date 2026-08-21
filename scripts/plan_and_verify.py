@@ -279,8 +279,23 @@ def main() -> int:
         wall_mm_final = t_mm
         first_mode = None if (hulled or dist is None) else \
             component_first_mode_hz(comp_dir)
+
+        # Mass properties from the solid that was actually analysed. Ixx/Iyy/Izz
+        # were three of only four conditioning slots absent from the entire
+        # graph, and they are exactly computable from geometry already being
+        # built -- and they are what attitude control and stability need.
+        mass_props = None
+        try:
+            from cadflow.backends import build_from_spec, get_backend
+            from scripts.smoke_params_to_assembly import constraints_to_geometry
+            _b = get_backend(prefer_real=True)
+            _shape = build_from_spec(constraints_to_geometry(geom), backend=_b)
+            mass_props = _b.mass_properties(_shape, RHO_AL)
+        except Exception:  # noqa: BLE001
+            mass_props = None
         results.append({"name": name, "why": why, "load_n": load,
                         "first_mode_hz": first_mode,
+                        "mass_properties": mass_props,
                         "error": err,
                         "mesh_was_hull": hulled, "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
@@ -311,8 +326,8 @@ def main() -> int:
              f"separations {seps}.\n")
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
-             " shell p99 | peak | 1st mode | status |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|")
+             " shell p99 | peak | 1st mode | mass | Izz | status |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         vm = (f"{r['shell_von_mises_mpa']:.1f} MPa"
               if r["shell_von_mises_mpa"] else "-")
@@ -320,9 +335,13 @@ def main() -> int:
         peak = f"{d['max']:.0f} MPa" if d else ("hull" if r["mesh_was_hull"] else "-")
         f1 = r.get("first_mode_hz")
         mode = f"{f1:.0f} Hz" if f1 else "-"
+        mp = r.get("mass_properties") or {}
+        mass = f"{mp['mass_kg']*1000:.0f} g" if mp.get("mass_kg") else "-"
+        izz = f"{mp['Izz_kg_m2']:.2e}" if mp.get("Izz_kg_m2") else "-"
         L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | "
                  f"{r['wall_mm']:.2f} mm | {r['wall_driver']} | "
                  f"{r['buckling_margin']:.2f}x | {vm} | {peak} | {mode} | "
+                 f"{mass} | {izz} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
     L.append("\nWall thickness and buckling margin size the thin shell; the "
              "shell FEA column is CalculiX on that same hollow geometry, so the "
@@ -330,7 +349,9 @@ def main() -> int:
              "with the same outer dimensions. The 1st mode column is a CalculiX "
              "*FREQUENCY solve on that same mesh, clamped at the aft face: it is "
              "what a static check cannot see, and it is the quantity a flutter "
-             "or coupled-loads assessment starts from.")
+             "or coupled-loads assessment starts from. Mass and Izz are "
+             "computed on that same solid, exact for the geometry, in kg and "
+             "kg m^2 about the centroid.")
     allp = all(r["passed"] for r in results)
     L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
              f"All {len(results)} components passed: **{allp}**\n")
