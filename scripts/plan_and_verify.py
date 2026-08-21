@@ -102,11 +102,30 @@ def frd_stress_percentiles(case_dir: Path) -> dict | None:
             if line.startswith(" -3"):
                 break
             if line.startswith(" -1"):
-                parts = line.split()
+                # FRD is fixed-width, not whitespace-separated: ' -1', a
+                # 10-character node number, then six 12-character values. A
+                # negative value fills its whole field, so it abuts the previous
+                # one with no space -- "2.44293E+08-1.04280E+07" is two numbers.
+                #
+                # split() therefore returns too few tokens on any line
+                # containing a negative component, and the old parser skipped
+                # those lines silently. On one 14,013-node result it read 100 of
+                # them, and the hundred it kept were exactly the ones where every
+                # component happened to be positive: not a sample, a selection.
+                # p99 of 100 values is the 99th, i.e. the maximum, which is why
+                # p99 and peak kept coming out identical.
                 try:
-                    sxx, syy, szz, sxy, syz, szx = (float(x) for x in parts[2:8])
-                except (ValueError, IndexError):
-                    continue
+                    comps = [float(line[13 + 12 * i: 13 + 12 * (i + 1)])
+                             for i in range(6)]
+                except ValueError:
+                    parts = line.split()
+                    try:
+                        comps = [float(x) for x in parts[2:8]]
+                    except (ValueError, IndexError):
+                        continue
+                    if len(comps) != 6:
+                        continue
+                sxx, syy, szz, sxy, syz, szx = comps
                 vm = _m.sqrt(0.5 * ((sxx-syy)**2 + (syy-szz)**2 + (szz-sxx)**2)
                              + 3.0 * (sxy**2 + syz**2 + szx**2))
                 vals.append(vm / 1e6)
