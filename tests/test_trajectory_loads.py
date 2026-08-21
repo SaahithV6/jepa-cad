@@ -178,3 +178,58 @@ def test_plan_is_unaffected_by_a_preceding_plan_sized():
     second = planner.plan(4000.0, 25.0)
     assert first.stages == second.stages
     assert first.gross_kg == pytest.approx(second.gross_kg, rel=1e-12)
+
+
+# --- plan caching -----------------------------------------------------------
+
+def test_the_plan_cache_returns_the_same_vehicle():
+    """plan() is deterministic, and the design loop asks for the same vehicle
+    many times while searching. A cold call is ~2.5 s and a warm one is free."""
+    import cadflow.planner as planner
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    planner.clear_plan_cache()
+    first = planner.plan(4000.0, 25.0)
+    second = planner.plan(4000.0, 25.0)
+    assert first is second
+
+
+def test_the_cache_key_carries_the_structural_coefficient():
+    """The risk a cache introduces here, asserted directly.
+
+    plan_sized mutates STRUCT_COEFF while it iterates. Keyed on the arguments
+    alone, the cache would hand back a vehicle sized at whatever coefficient
+    happened to be set when it was first computed -- the silent wrong answer a
+    cache is best at producing.
+    """
+    import cadflow.planner as planner
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    planner.clear_plan_cache()
+    baseline = planner.plan(4000.0, 25.0)
+
+    saved_coeff, saved_mr = planner.STRUCT_COEFF, planner.MAX_STAGE_MR
+    try:
+        planner.STRUCT_COEFF = 0.25
+        planner.MAX_STAGE_MR = 1.0 / 0.25 * 0.62
+        heavier = planner.plan(4000.0, 25.0)
+    finally:
+        planner.STRUCT_COEFF, planner.MAX_STAGE_MR = saved_coeff, saved_mr
+
+    assert heavier is not baseline
+    assert heavier.gross_kg != pytest.approx(baseline.gross_kg, rel=1e-6)
+
+
+def test_different_arguments_are_different_cache_entries():
+    import cadflow.planner as planner
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    planner.clear_plan_cache()
+    a = planner.plan(1000.0, 25.0)
+    b = planner.plan(1000.0, 50.0)
+    c = planner.plan(1000.0, 25.0, of_ratio=2.0)
+    assert a is not b and a is not c
+    assert b.gross_kg > a.gross_kg          # heavier payload, heavier vehicle

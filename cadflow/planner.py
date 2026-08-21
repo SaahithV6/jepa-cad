@@ -260,12 +260,48 @@ def _splits_for(n: int) -> list[list[float]]:
     return out
 
 
+#: Bounded cache of completed plans. plan() is deterministic given its
+#: arguments and the two module-level constants plan_sized mutates, so repeated
+#: identical requests can be answered from here. The design loop asks for the
+#: same vehicle many times while searching, and so does every test that
+#: exercises the same mission twice.
+#:
+#: The key carries STRUCT_COEFF and MAX_STAGE_MR explicitly, because plan_sized
+#: changes them mid-solve -- keying on the arguments alone would hand back a
+#: vehicle sized at a different structural coefficient than the one asked for,
+#: which is exactly the sort of silent wrong answer a cache is good at.
+_PLAN_CACHE: dict = {}
+_PLAN_CACHE_LIMIT = 512
+
+
+def _remember_plan(key, value):
+    """Store a plan, discarding the oldest entries once the cache is full."""
+    if len(_PLAN_CACHE) >= _PLAN_CACHE_LIMIT:
+        for stale in list(_PLAN_CACHE)[:_PLAN_CACHE_LIMIT // 4]:
+            _PLAN_CACHE.pop(stale, None)
+    _PLAN_CACHE[key] = value
+
+
+def clear_plan_cache() -> None:
+    """Drop every cached plan. For tests that mutate module-level physics."""
+    _PLAN_CACHE.clear()
+
+
 def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
          chamber_bar: float = 55.0, nose_shape: str = NOSE_SHAPE,
          nose_fineness: float = NOSE_FINENESS,
          of_ratio: float | None = None,
          twr_by_stage: list[float] | None = None) -> Plan | None:
     """Choose an architecture for this mission and size it."""
+    key = (round(float(target_km), 6), round(float(payload_kg), 6), propellant,
+           round(float(chamber_bar), 6), nose_shape, round(float(nose_fineness), 6),
+           None if of_ratio is None else round(float(of_ratio), 6),
+           None if twr_by_stage is None else tuple(round(float(t), 6)
+                                                   for t in twr_by_stage),
+           round(STRUCT_COEFF, 9), round(MAX_STAGE_MR, 9))
+    if key in _PLAN_CACHE:
+        return _PLAN_CACHE[key]
+
     pc = chamber_bar * 1e5
     rationale: list[str] = []
     dv = required_delta_v(target_km)
@@ -333,12 +369,14 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
 
     if best_plan is None:
         rationale.append("no architecture up to 3 stages closes this mission")
+        _remember_plan(key, None)
         return None
     if not any("selected" in s for s in best_plan.rationale):
         best_plan.rationale.append(
             f"{best_plan.stages} stages selected, split "
             f"{[round(f,2) for f in best_plan.split]}, "
             f"{best_plan.gross_kg:.1f} kg gross")
+    _remember_plan(key, best_plan)
     return best_plan
 
 
