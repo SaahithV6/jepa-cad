@@ -96,6 +96,7 @@ def test_warping_produces_a_valid_mesh(tmp_path):
     assert "Mesh OK" in check.stdout, check.stdout[-2000:]
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(foam_missing, reason="OpenFOAM not installed")
 def test_slender_nozzle_matches_the_isentropic_relation(tmp_path):
     """The verification itself.
@@ -117,6 +118,7 @@ def test_slender_nozzle_matches_the_isentropic_relation(tmp_path):
     assert mach == pytest.approx(want, rel=0.01), f"{mach} vs {want}"
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(foam_missing, reason="OpenFOAM not installed")
 def test_steep_nozzle_loses_more_than_a_slender_one(tmp_path):
     """Divergence loss is real, and must be ordered by divergence angle.

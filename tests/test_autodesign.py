@@ -161,26 +161,37 @@ def test_a_conflict_stops_the_loop_early():
 
 
 def test_an_extreme_mission_stays_physically_coherent():
-    """10,000 t to lunar distance. I expected this to be refused; it is not,
-    and the answer it gives is the right shape -- six stages at a gross-to-
-    payload ratio of 114, which is what the rocket equation demands for that
-    delta-v. The property worth asserting is coherence under extrapolation,
-    not refusal."""
-    res = autodesign(1e7, 500_000.0, limits=_limits(), max_iters=3)
+    """Far outside the mission this system was tuned on, the answer must still
+    have the right shape: several stages at the gross-to-payload ratio the
+    rocket equation demands for that delta-v.
+
+    This was 10,000 t to lunar distance, which cost 326 s -- a third of the
+    entire test suite -- to check a property that 5 t to 20,000 km checks in
+    11 s. Extrapolating two orders of magnitude past the tuning point is the
+    point; extrapolating five is just slow.
+    """
+    res = autodesign(5000.0, 20_000.0, limits=_limits(), max_iters=2)
     ev = res["evaluation"]
     assert ev is not None and ev.plan is not None
     assert ev.stages > 2, ev.stages
-    assert ev.gross_kg > 10.0 * 1e7, ev.gross_kg
-    # and it must still be flying the mission it was asked for
-    assert ev.plan.achieved_km > 0.8 * 500_000.0
+    assert ev.gross_kg > 10.0 * 5000.0, ev.gross_kg
+    assert ev.plan.achieved_km > 0.8 * 20_000.0
 
 
-def test_a_mission_that_cannot_close_is_reported_not_crashed():
-    """The planner caps its stage count, so some missions genuinely do not
-    close. That has to come back as a violation rather than an exception."""
+def test_a_mission_that_cannot_close_is_reported_as_a_violation(monkeypatch):
+    """A mission with no architecture must come back as a violation rather than
+    an exception or a crash.
+
+    Tested by making the planner return None rather than by hunting for a
+    mission it genuinely cannot close -- that hunt cost 152 s and exercised the
+    search, not the error path this test is about.
+    """
+    import cadflow.autodesign as autodesign_mod
     from cadflow.autodesign import Knobs, evaluate
 
-    ev = evaluate(1.0, 5_000_000.0, Knobs(), _limits())
-    assert ev is not None
-    if ev.plan is None:
-        assert any(v.discipline == "architecture" for v in ev.violations)
+    monkeypatch.setattr("cadflow.planner.plan", lambda *a, **k: None)
+    ev = evaluate(25.0, 4000.0, Knobs(), _limits())
+    assert ev.plan is None
+    assert not ev.feasible
+    assert any(v.discipline == "architecture" for v in ev.violations)
+    _ = autodesign_mod

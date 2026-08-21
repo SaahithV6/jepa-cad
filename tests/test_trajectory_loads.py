@@ -120,6 +120,7 @@ def test_engine_mass_scales_with_thrust():
     assert heavy > light
 
 
+@pytest.mark.slow
 def test_solved_structural_coefficient_is_physically_plausible():
     """It converged near 0.06 with no engine; real vehicles sit at 0.10-0.25."""
     from generate_propulsion_trajectory_corpus import load_coupling

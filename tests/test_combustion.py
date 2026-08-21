@@ -218,6 +218,7 @@ def test_bulk_density_reaches_the_structural_model():
     assert rich < 250.0          # hydrogen-rich loads are extraordinarily light
 
 
+@pytest.mark.slow
 def test_vehicle_level_optimisation_returns_a_usable_sweep():
     """The trade must be inspectable, not just its answer.
 
