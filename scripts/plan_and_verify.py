@@ -172,6 +172,11 @@ DESIGN_ALPHA_RAD = math.radians(5.0)
 #: Ultimate factor on limit load. Standard aerospace practice.
 ULTIMATE_FACTOR = 1.5
 
+#: Skin thickness for the assembled vehicle, mm. The component analysis sizes
+#: each coupon's wall separately; this is one representative gauge for drawing
+#: the whole airframe, which is a different job from qualifying a part.
+ASSEMBLY_WALL_MM = 3.0
+
 #: Nozzle wall material density, kg/m^3. Inconel or a comparable superalloy is
 #: what a regeneratively cooled skirt is actually made from.
 NOZZLE_DENSITY = 8000.0
@@ -447,7 +452,25 @@ def main() -> int:
             dist = None if hulled else frd_stress_percentiles(comp_dir)
             if dist is None:
                 break
-            vm = dist["p99"]
+            # Accept on p95, not p99.
+            #
+            # Measured on one part at 170 kN across a 16x mesh refinement,
+            # 3,253 to 50,737 elements, the spread of each metric was:
+            #
+            #   median   2.8%      p95  13.8%      p99  36.6%      peak  268%
+            #
+            # p99 is not stable enough to design against at the mesh densities
+            # this loop can afford. With around 1,200 nodes on a component, the
+            # top one percent is a dozen nodes and every one of them sits on the
+            # same re-entrant corner: one part read median 37 MPa, p95 62 MPa
+            # and p99 306 MPa, and thickening its wall from 2.4 mm to 12 mm
+            # moved p99 by nothing at all -- 299, 330, 306 -- because a
+            # singularity does not care how thick the wall is.
+            #
+            # The median is steadier still but too permissive to size against,
+            # since it ignores the whole loaded upper field. p95 keeps the
+            # structure in view and leaves the singularity out of it.
+            vm = dist["p95"]
             ok = vm <= ALLOWABLE_MPA
             if ok:
                 break
@@ -569,6 +592,8 @@ def main() -> int:
     # Nozzle geometry. The nozzle existed only as an area ratio: no contour,
     # no wall, no mass, and no way for its shape to matter to anything.
     nozzle = None
+    bell = None
+    assembly = None
     try:
         from cadflow.backends import get_backend
         from cadflow.sculpt import bell_contour, nozzle_solid
@@ -706,13 +731,16 @@ def main() -> int:
 
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
-             " shell p99 | peak | 1st mode | mass | Izz | status |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+             " shell p95 | p99 | peak | 1st mode | mass | Izz | status |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         vm = (f"{r['shell_von_mises_mpa']:.1f} MPa"
               if r["shell_von_mises_mpa"] else "-")
         d = r.get("stress_dist")
         peak = f"{d['max']:.0f} MPa" if d else ("hull" if r["mesh_was_hull"] else "-")
+        p99 = f"{d['p99']:.0f}" if d else "-"
+        if d and d["p95"] > 0 and d["p99"] > 2.0 * d["p95"]:
+            p99 += "*"
         f1 = r.get("first_mode_hz")
         mode = f"{f1:.0f} Hz" if f1 else "-"
         if r.get("mesh_was_coarsened"):
@@ -722,7 +750,7 @@ def main() -> int:
         izz = f"{mp['Izz_kg_m2']:.2e}" if mp.get("Izz_kg_m2") else "-"
         L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | "
                  f"{r['wall_mm']:.2f} mm | {r['wall_driver']} | "
-                 f"{r['buckling_margin']:.2f}x | {vm} | {peak} | {mode} | "
+                 f"{r['buckling_margin']:.2f}x | {vm} | {p99} | {peak} | {mode} | "
                  f"{mass} | {izz} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
     # Assemble the stack. Individual components have always been analysed
@@ -810,6 +838,73 @@ def main() -> int:
                  "chord -- two limits with known answers, which is what makes "
                  "its constants checkable rather than merely quoted.")
 
+        # The vehicle as actual geometry. Components have been designed, meshed
+        # and analysed one at a time; this is the assembly the intent asks for,
+        # and it could not be built before the sculpting layer existed -- a
+        # change of diameter between stages is a loft, and there was no loft.
+        try:
+            from cadflow.assembly import (build_vehicle, export_assembly,
+                                          mass_closure)
+
+            asm = build_vehicle(
+                p.stack, args.payload_kg, flight_r,
+                wall_mm=ASSEMBLY_WALL_MM,
+                fin_span_m=fins["span_m"],
+                fin_root_chord_m=fins["root_chord_m"],
+                n_fins=fins["n_fins"],
+                nozzle=bell if nozzle else None)
+            budget = sum(st.struct_mass_kg for st in p.stack)
+            closure = mass_closure(
+                asm, budget,
+                liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0))
+            files = export_assembly(asm, args.out / "cad")
+            assembly = {"summary": asm.summary(),
+                        "total_length_m": asm.total_length_mm / 1000.0,
+                        "max_radius_m": asm.max_radius_mm / 1000.0,
+                        "skin_mass_kg": asm.mass_kg,
+                        "closure": closure,
+                        "exported": sorted(files)}
+
+            L.append("\n## Assembly\n")
+            L.append(f"The vehicle built as geometry: {asm.total_length_mm/1000:.2f} m "
+                     f"over {len(asm.parts)} parts, {len(files)} of them exported "
+                     f"to STEP under `cad/`.\n")
+            L.append("| part | kind | station | length | mass |")
+            L.append("|---|---|---|---|---|")
+            for row in sorted(asm.summary(), key=lambda r: r["station_mm"]):
+                L.append(f"| {row['name']} | {row['kind']} | "
+                         f"{row['station_mm']/1000:.3f} m | "
+                         f"{row['length_mm']:.0f} mm | {row['mass_kg']:.2f} kg |")
+
+            L.append("\n### Does the mass budget hold the vehicle?\n")
+            L.append("| term | mass |")
+            L.append("|---|---|")
+            L.append(f"| skin, as drawn | {closure['skin_kg']:.1f} kg |")
+            L.append(f"| engine, from liftoff thrust at T/W 60 | "
+                     f"{closure['engine_kg']:.1f} kg |")
+            L.append(f"| accounted for | {closure['accounted_kg']:.1f} kg |")
+            L.append(f"| structural budget | {closure['budget_kg']:.1f} kg |")
+            L.append(f"| slack | {closure['slack_kg']:+.1f} kg |")
+            if not closure["closes"]:
+                L.append(f"\n> The vehicle cannot contain itself. Its own skin "
+                         f"plus its own engine exceed the mass it was allowed "
+                         f"by {-closure['slack_kg']:.1f} kg, so the design does "
+                         f"not close. This is the same verdict the structural "
+                         f"fixed point reaches from the opposite direction and "
+                         f"knowing nothing about this calculation -- it wants a "
+                         f"structural coefficient of "
+                         f"{solved_coeff:.3f} where the design asserts "
+                         f"{STRUCT_COEFF:.3f}. Two independent routes agreeing "
+                         f"that a number is optimistic is worth more than "
+                         f"either alone.")
+            else:
+                L.append(f"\n> The budget holds, with {closure['slack_kg']:.1f} kg "
+                         f"left for plumbing, avionics, tank domes and "
+                         f"separation hardware -- none of which the geometry "
+                         f"draws.")
+        except Exception as exc:  # noqa: BLE001 - assembly is an addition
+            print(f"assembly unavailable: {exc}", flush=True)
+
         L.append("\nStage lengths come from propellant volume at LOX/RP-1 bulk "
                  "density and each stage is a uniform cylinder of its wet mass "
                  "-- coarse, since a real stage has domes, a dry engine at one "
@@ -819,6 +914,14 @@ def main() -> int:
                  f"{fv['Ixx_kg_m2']/max(fv['Izz_kg_m2'],1e-12):.0f}x roll, as "
                  "it must be for a long thin vehicle.")
 
+    L.append("\nSizing is on p95. Across a 16x mesh refinement on one part the "
+             "median moved 2.8%, p95 13.8%, p99 36.6% and the peak 268% -- p99 "
+             "is not stable enough to design against at the mesh densities this "
+             "loop can afford, because with ~1,200 nodes its top percent is a "
+             "dozen nodes all on the same corner. A starred p99 marks a part "
+             "whose p99 exceeds twice its p95: that is a stress concentration "
+             "wanting a fillet or a doubler, not a wall that wants thickening. "
+             "The peak column never converges and is shown only to locate it.")
     L.append("\nWall thickness and buckling margin size the thin shell; the "
              "shell FEA column is CalculiX on that same hollow geometry, so the "
              "meshed part is the part being designed rather than a solid billet "
@@ -849,7 +952,8 @@ def main() -> int:
         "flight_vehicle": flight_vehicle,
         "stability": stability,
         "thermal": thermal,
-        "nozzle": nozzle}, indent=2))
+        "nozzle": nozzle,
+        "assembly": assembly}, indent=2))
     print("\n".join(L))
     return 0
 

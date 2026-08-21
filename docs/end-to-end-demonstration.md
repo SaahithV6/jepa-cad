@@ -958,3 +958,99 @@ p99 and peak are now separated by a factor of three to ten, which is what a tet
 mesh with re-entrant corners should give. Two components sit at the 12 mm wall
 limit and converge below the allowable there; the stage 1 tank went from 3.06 mm
 to 12.00 mm once its stresses were being read in full.
+
+## The sculpting layer, and the whole vehicle
+
+Layer 3 of the plan is "a custom sculpting layer for freeform surfaces, direct
+modeling, and hybrid solid/surface edits". What existed was one function, and it
+was broken in the worst available way.
+
+`sculpt_offset` called `.shell()` on the underlying Solid rather than on the
+Workplane, which always raised, and the except branch returned an *expanded
+bounding box*. Every caller silently received a solid block of the same
+envelope: a cylinder came back at 164% of its own volume, a box at 133%, and a
+hollow tube at 865%, each with six faces. A shell operation that returns more
+material than it started with, as a box, without saying anything, is worse than
+one that does not exist.
+
+Using the Workplane API it is exact -- a 2 mm shell of an r20 x 60 cylinder
+gives 18397.2 against an analytic 18397.2 -- and an impossible shell now raises,
+because "this wall is thicker than the part" is a constraint worth hearing.
+
+`loft_sections` was simply absent. Revolve makes bodies with an axis of
+symmetry, extrude makes prisms, and a transition between two different shapes is
+neither. Against an analytic conical frustum it lands within 0.161%, which is
+exactly the 64-sided polygon inscribed in the circle.
+
+### The nozzle
+
+With those, the nozzle exists as geometry. It had been an area ratio -- no
+contour, no wall, no mass, and no way for its shape to matter to anything. The
+contour is a quadratic pinned by four constraints that are all given or forced:
+throat radius, the exit radius the area ratio demands, and the flow angle at
+each end. Two endpoints and two tangents determine a quadratic completely, so
+nothing is read off a chart.
+
+For the 25 kg / 4,000 km vehicle: 43.4 mm throat to 150.2 mm exit, an 80% bell
+319 mm long, 2.73 kg of Inconel at a 1.5 mm wall.
+
+Its shape now has a consequence. `nozzle_performance` had no divergence loss, so
+a 40-degree cone and an optimised bell produced identical thrust. Thrust is
+multiplied by (1 + cos theta_e)/2 now: 0.6% at this nozzle's 9-degree exit,
+4.7% at 25 degrees. That agrees with the CFD run earlier in this document, which
+measured exit Mach falling 1.83% below quasi-1D at a 36-degree half-angle and
+matching it to 0.00% at 10.4.
+
+One bug on the way: the wall was offset radially, which gives a thickness of
+t cos(theta) across the sheet, so it thinned exactly where the contour is
+steepest -- 87% of intended at the 30-degree throat, and the solid came out 5%
+light. Offsetting along the surface normal brings it to -0.15% of Pappus.
+
+### The assembly
+
+The intent names "individual parts *and whole assemblies*", and the assembly had
+never existed -- only an arithmetic combination of its pieces' masses. It comes
+out 4.97 m over nine parts and exports to STEP per part.
+
+Two bugs, both found by reading the mass column. The nose cone was solid at
+339 kg -- more than the rest of the vehicle put together, for its least loaded
+part -- and 11.0 kg once hollowed. The interstage was solid at 114 kg against
+the 43 kg tank below it, and 2.4 kg once hollowed.
+
+Then the geometry said something it was not built to say. The drawn skin is
+98.3 kg; an engine sized from liftoff thrust at T/W 60 is 85.3 kg; the budget is
+155.6 kg. The vehicle is 27.9 kg short of being able to contain itself. That is
+the same verdict the structural fixed point reaches from the opposite direction
+and knowing nothing about this calculation -- 0.249 against an asserted 0.140.
+
+## Sizing on p95 rather than p99
+
+Wiring the assembly in surfaced a regression: two components failed at the 12 mm
+wall limit. Chasing it produced the more useful finding.
+
+The thrust structure's stress did not respond to its wall at all -- 299, 330 and
+306 MPa as the wall went 2.4, 4.3, 8.1 and 12.0 mm. Its membrane stress is
+24 MPa, so the number being reported was thirteen times the field and entirely
+insensitive to the thing being changed. The distribution says why: median 37,
+p95 62, p99 306, peak 1203, over 1,196 nodes. The top one percent is twelve
+nodes and every one of them is on the same re-entrant corner.
+
+Measured across a 16x mesh refinement on one part, 3,253 to 50,737 elements:
+
+    metric    spread
+    median      2.8%
+    p95        13.8%
+    p99        36.6%
+    peak      268.5%
+
+p99 is not stable enough to design against at the mesh densities this loop can
+afford. The median is steadier still but too permissive to size on, since it
+ignores the whole loaded upper field. Sizing moved to p95, which keeps the
+structure in view and leaves the singularity out of it.
+
+The effect on the design is large, and in the direction of sanity. The thrust
+structure sizes at 2.49 mm instead of being driven to the 12 mm limit; the
+design-by-analysis loop fires once instead of three times and converges instead
+of hitting the wall cap. A starred p99 in the table marks a part whose p99
+exceeds twice its p95 -- a stress concentration wanting a fillet or a doubler,
+not a wall wanting thickening.

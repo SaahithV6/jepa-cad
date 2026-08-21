@@ -55,12 +55,6 @@ class VehicleAssembly:
                 for p in self.parts]
 
 
-def _ring(radius_mm: float, points: int = CIRCLE_POINTS):
-    return [(radius_mm * math.cos(2 * math.pi * i / points),
-             radius_mm * math.sin(2 * math.pi * i / points))
-            for i in range(points)]
-
-
 def build_vehicle(stages, payload_kg: float, body_radius_m: float,
                   wall_mm: float = 3.0, nose_fineness: float = 2.0,
                   fin_span_m: float = 0.0, fin_root_chord_m: float = 0.0,
