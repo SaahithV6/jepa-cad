@@ -806,9 +806,38 @@ centre of pressure is its nose's. For the sized vehicle that puts the CP at
 z = 3.468 m against a CG at 1.841 m -- forward of it, a static margin of -2.86
 calibers, unstable. That is the correct answer and the reason fins exist.
 
-Fin centre of pressure is *not* implemented. The Barrowman fin set is
-semi-empirical and I have no independent way to check it here, and the pattern
-in this document is unambiguous: every formula shipped without a validation
-route turned out to be wrong. So no full-vehicle static margin is claimed. What
-would settle it is a CFD normal-force run on the fins, which is a real piece of
-work rather than a missing constant.
+Fin centre of pressure was, briefly, declared unimplementable here: the
+Barrowman set is semi-empirical, I had no independent way to check it, and the
+pattern in this document is unambiguous about formulas shipped without a
+validation route. I said it would take a CFD normal-force run to settle.
+
+It took one test. Referenced to fin area rather than body area, Barrowman's
+CN_alpha converges onto Jones' slender-wing theorem C_La = pi AR / 2 as aspect
+ratio goes to zero:
+
+    AR 0.02    ratio to theorem 0.99990
+    AR 0.05                     0.99938
+    AR 0.10                     0.99751
+
+The constant is not remembered, it is forced. And the centre-of-pressure half
+has its own exact limit: an unswept rectangular fin must sit at the quarter
+chord, and the formula returns Cr/4 to machine precision. Two limits with known
+answers is a validation route, and the departure above AR ~ 0.3 is precisely the
+finite-aspect-ratio behaviour the slender-wing theorem does not contain.
+
+The lesson generalises past this one formula. "Semi-empirical" is not the same
+as "uncheckable" -- the question to ask is whether the expression has a limit
+where an exact result is known, and here it had two. Declining to implement it
+was the same failure of nerve in the opposite direction from shipping the
+unvalidated cone drag.
+
+With that, stability closes in the *design* direction. The vehicle and its
+centre of gravity are fixed by the mission, so fin span is the free variable and
+the margin is the requirement:
+
+    fin span (each of 4)   567 mm
+    root / tip chord       569 / 284 mm, sweep 341 mm
+    centre of pressure     0.987 m from the aft end
+    centre of gravity      1.841 m
+    static margin          1.50 calibers, on target
+    normal force slope     nose 2.00 + fins 7.78 = 9.78 /rad
