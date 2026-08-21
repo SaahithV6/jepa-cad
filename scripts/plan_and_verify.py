@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cadflow.planner import drag_coefficient, plan  # noqa: E402
+from cadflow.planner import STRUCT_COEFF, drag_coefficient, plan, plan_sized  # noqa: E402
 from cadflow.structural_sizing import size_wall
 from cadflow.profiles import nose_profile  # noqa: E402
 from cadflow.vehicle import (  # noqa: E402
@@ -253,6 +253,9 @@ def main() -> int:
     ap.add_argument("--propellant", type=str, default="lox_rp1")
     ap.add_argument("--chamber-bar", type=float, default=55.0)
     ap.add_argument("--out", type=Path, default=ROOT / "artifacts/plan_packet")
+    ap.add_argument("--solve-structure", action="store_true",
+                    help="design at the structural coefficient the mass model "
+                         "solves for, instead of the asserted constant")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     load_coupling()
@@ -261,8 +264,28 @@ def main() -> int:
             f"apogee using {args.propellant.replace('_','/')} at "
             f"{args.chamber_bar:.0f} bar chamber pressure")
 
-    p = plan(args.apogee_km, args.payload_kg,
-             propellant=args.propellant, chamber_bar=args.chamber_bar)
+    # Solve the structural coefficient as a fixed point and compare it with the
+    # constant the design is asserted at. The two disagreeing is the single most
+    # consequential thing this packet can say about its own vehicle: if the mass
+    # model is right, a vehicle sized at the asserted value is too light to
+    # exist and will not make the mission.
+    solved_coeff = None
+    try:
+        _sp, solved_coeff, _hist = plan_sized(
+            args.apogee_km, args.payload_kg, propellant=args.propellant,
+            chamber_bar=args.chamber_bar)
+        if args.solve_structure and _sp is not None:
+            p = _sp
+            print(f"designing at solved structural coefficient "
+                  f"{solved_coeff:.4f}", flush=True)
+        else:
+            p = plan(args.apogee_km, args.payload_kg,
+                     propellant=args.propellant, chamber_bar=args.chamber_bar)
+    except Exception as exc:  # noqa: BLE001
+        print(f"structural fixed point failed ({exc}); using the asserted "
+              f"coefficient", flush=True)
+        p = plan(args.apogee_km, args.payload_kg,
+                 propellant=args.propellant, chamber_bar=args.chamber_bar)
     if p is None:
         print(f"# Design packet\n\n**Specification:** {spec}\n")
         print("No architecture up to 3 stages closes this mission.")
@@ -457,6 +480,23 @@ def main() -> int:
     L = [f"# Design packet\n", f"**Specification:** {spec}\n", "## Architecture\n"]
     for line in p.rationale:
         L.append(f"- {line}")
+    if solved_coeff is not None:
+        L.append("\n## Structural mass closure\n")
+        used = solved_coeff if args.solve_structure else STRUCT_COEFF
+        L.append(f"Designed at a structural coefficient of **{used:.3f}**. "
+                 f"Solving it as a fixed point -- size the vehicle, size its "
+                 f"walls from the resulting loads, recompute the coefficient, "
+                 f"repeat -- converges to **{solved_coeff:.3f}**.\n")
+        if not args.solve_structure and solved_coeff > STRUCT_COEFF * 1.15:
+            L.append(f"> The mass model wants {solved_coeff:.3f} where the "
+                     f"design asserts {STRUCT_COEFF:.3f}, so this vehicle is "
+                     f"optimistic: built to its own structural model it would "
+                     f"be heavier than planned and would fall short of the "
+                     f"target. Re-run with `--solve-structure` to design at the "
+                     f"solved value. It is reported rather than silently "
+                     f"absorbed because it changes the architecture -- a "
+                     f"heavier structure closes fewer stages, so the same "
+                     f"mission needs more of them.\n")
     L.append(f"\n## Vehicle: {p.stages} stage(s)\n")
     L.append("| stage | propellant | structure | expansion |")
     L.append("|---|---|---|---|")
@@ -619,6 +659,9 @@ def main() -> int:
         "gross_kg": p.gross_kg, "achieved_km": p.achieved_km,
         "error_pct": err, "rationale": p.rationale,
         "components": results, "all_passed": allp,
+        "struct_coeff_used": (solved_coeff if args.solve_structure
+                              else STRUCT_COEFF),
+        "struct_coeff_solved": solved_coeff,
         # Vehicle-level results were markdown-only, so nothing downstream --
         # including the model -- could consume them. Kept as two separate keys
         # because they describe two different objects: the coupons that were
