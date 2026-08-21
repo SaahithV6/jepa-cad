@@ -466,17 +466,48 @@ def prepare_fea_workdir_from_stl(
         local_stl.write_bytes(stl.read_bytes())
 
     msh = case_path / "mesh.msh"
-    mesh_result = mesh_stl_volume(
-        local_stl,
-        msh,
-        cl_max_mm=cl_max_mm,
-        cl_min_mm=cl_min_mm,
-        scale_to_meters=scale_to_meters,
-        mesh_timeout_s=mesh_timeout_s,
-        allow_hull_fallback=allow_hull_fallback,
-    )
-    if not mesh_result.success or not msh.exists():
-        raise RuntimeError(f"gmsh mesh failed: {mesh_result.error}")
+    # Try the requested element size, then progressively coarser ones, and only
+    # accept a convex hull if none of them produce a real mesh.
+    #
+    # A hull is not a degraded answer, it is a different part: for a thin shell
+    # it is a solid billet of the same envelope, so every stress it returns is
+    # about something that was never designed. A mesh two steps coarser is still
+    # the actual geometry. The fin set showed why this matters -- the same
+    # design meshed cleanly at one tessellation and hulled at another, differing
+    # only in the last digits of its dimensions, so meshability was turning on
+    # luck rather than on anything about the part.
+    mesh_result = None
+    for factor in (1.0, 1.5, 2.25, 3.0):
+        attempt = mesh_stl_volume(
+            local_stl,
+            msh,
+            cl_max_mm=cl_max_mm * factor,
+            cl_min_mm=cl_min_mm * factor,
+            scale_to_meters=scale_to_meters,
+            mesh_timeout_s=mesh_timeout_s,
+            allow_hull_fallback=False,
+        )
+        if attempt.success and msh.exists() and not getattr(
+                attempt, "used_hull", False):
+            mesh_result = attempt
+            if factor > 1.0:
+                (case_path / "MESH_COARSENED").write_text(
+                    f"Meshed at {factor:g}x the requested element size "
+                    f"({cl_max_mm * factor:.3f}/{cl_min_mm * factor:.3f} mm). "
+                    f"The requested size did not produce a real mesh, and a "
+                    f"coarser mesh of the actual part is worth more than a "
+                    f"convex hull of it.\n")
+            break
+    if mesh_result is None and allow_hull_fallback:
+        mesh_result = mesh_stl_volume(
+            local_stl, msh,
+            cl_max_mm=cl_max_mm, cl_min_mm=cl_min_mm,
+            scale_to_meters=scale_to_meters, mesh_timeout_s=mesh_timeout_s,
+            allow_hull_fallback=True,
+        )
+    if mesh_result is None or not mesh_result.success or not msh.exists():
+        err = mesh_result.error if mesh_result else "no element size produced a mesh"
+        raise RuntimeError(f"gmsh mesh failed: {err}")
 
     # Record when the mesh is a convex-hull proxy rather than the real
     # geometry. For a thin-walled part the hull is a solid billet, so the

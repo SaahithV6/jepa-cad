@@ -101,9 +101,18 @@ def constraints_to_geometry(constraints: dict) -> dict:
     # to a convex hull -- which for a hollow part is a solid billet.
     stack_overlap = max(1.0, min(3.0, body_r * 0.05))
     nose_z = (body_h + nose_h) / 2.0 - stack_overlap
-    # The planform starts at its root rather than being centred, so the root
-    # is placed just inside the skin and the fin grows outward from there.
-    fin_root_x = body_r - min(2.0, wall + 1.0)
+    # The planform starts at its root rather than being centred, so the root is
+    # embedded in the skin and the fin grows outward from there. Embed by half
+    # the wall: enough overlap for a clean boolean union, but never through it.
+    #
+    # This was min(2.0, wall + 1.0), which is deeper than the wall for any wall
+    # under 2 mm. On a 0.8 mm shell it put the fin root 1.0 mm *past* the inner
+    # surface, so the fin punched through and left a sliver tab dangling in the
+    # cavity. gmsh could not mesh that and fell back to a convex hull -- which
+    # for a hollow part is a solid billet, so the component reported no usable
+    # result at all. It was marginal rather than always broken: the same design
+    # meshed at one tessellation and hulled at another.
+    fin_root_x = body_r - (wall * 0.5 if wall > 0.0 else min(2.0, body_r * 0.05))
     fin_z = -body_h / 2.0 + fin_chord / 4.0
 
     return {
