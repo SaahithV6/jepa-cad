@@ -257,6 +257,128 @@ def generate_fea_case_inp(
     )
 
 
+def generate_modal_case_inp(
+    case_dir: Path | str,
+    mesh_filename: str = "mesh_solid.inp",
+    case_filename: str = "modal.inp",
+    fix_axis: str | None = "z",
+    modes: int = 6,
+    youngs_modulus: float = 210_000_000_000.0,
+    poisson: float = 0.3,
+    density: float = 7850.0,
+) -> FEASetupResult:
+    """Build a CalculiX ``*FREQUENCY`` deck for the mesh in ``case_dir``.
+
+    The static check cannot see a resonance. A fin sized only for steady load
+    can still be destroyed by flutter, which is set by where its natural
+    frequencies sit relative to the flight condition -- and ``first_mode_hz`` is
+    already a conditioning slot with nothing populating it.
+
+    A modal analysis needs mass, so this writes ``*DENSITY``, which the static
+    deck has no reason to carry and does not.
+    """
+    case_path = Path(case_dir)
+    msh_file = case_path / "mesh.msh"
+    if not msh_file.exists():
+        raise FileNotFoundError(f"Missing mesh: {msh_file}")
+
+    mesh = parse_msh2_solid(msh_file)
+    if not mesh.nodes or not mesh.elements:
+        raise ValueError(f"No solid elements found in {msh_file}")
+
+    mesh_inp = case_path / mesh_filename
+    write_solid_mesh_inp(mesh, mesh_inp)
+
+    axis = fix_axis or longest_axis(mesh.nodes)
+    fixed, _ = pick_face_boundary_nodes(mesh.nodes, axis=axis)
+    if not fixed:
+        raise ValueError(f"Could not derive fixed nodes for {case_path}")
+
+    lines = [
+        "*HEADING",
+        "FEA modal analysis",
+        f"*INCLUDE, INPUT={mesh_filename}",
+        "*MATERIAL, NAME=Steel",
+        "*ELASTIC",
+        f"{youngs_modulus:.6e}, {poisson}",
+        "*DENSITY",
+        f"{density:.6e}",
+        "*SOLID SECTION, ELSET=ALL, MATERIAL=Steel",
+    ]
+    lines.extend(_nset_lines("FIXED", fixed))
+    lines.extend(["*BOUNDARY", "FIXED, 1, 3, 0.0"])
+    lines.extend([
+        "*STEP",
+        "*FREQUENCY",
+        f"{int(max(1, modes))}",
+        "*NODE FILE",
+        "U",
+        "*END STEP",
+    ])
+
+    case_inp = case_path / case_filename
+    case_inp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return FEASetupResult(
+        case_dir=case_path,
+        mesh_inp=mesh_inp,
+        case_inp=case_inp,
+        node_count=len(mesh.nodes),
+        element_count=len(mesh.elements),
+        fixed_nodes=len(fixed),
+        loaded_nodes=0,
+    )
+
+
+def parse_eigenfrequencies(dat_path: Path | str) -> list[float]:
+    """Natural frequencies in Hz from a CalculiX ``.dat`` eigenvalue block.
+
+    CalculiX prints mode number, eigenvalue, then the frequency in rad/s and in
+    cycles/s; the last column is the one wanted. Rigid-body modes come out at
+    essentially zero and are dropped, so the first entry is the first *elastic*
+    mode -- which is what "first_mode_hz" is supposed to mean.
+    """
+    path = Path(dat_path)
+    if not path.exists():
+        return []
+    freqs: list[float] = []
+    in_block = False
+    for line in path.read_text(errors="ignore").splitlines():
+        upper = line.upper()
+        if "EIGENVALUE" in upper.replace(" ", ""):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        parts = line.split()
+        if not parts:
+            continue
+        if not parts[0].lstrip("-").isdigit():
+            if freqs:
+                break
+            continue
+        # Columns are: mode, eigenvalue, frequency (rad/time), frequency
+        # (cycles/time), and -- for the real solver, though not in every
+        # CalculiX build -- an imaginary part. Taking parts[-1] read that
+        # imaginary column, which is identically zero for an undamped
+        # eigenproblem, so every frequency was filtered out as rigid-body.
+        if len(parts) < 4:
+            continue
+        try:
+            freqs.append(float(parts[3]))
+        except ValueError:
+            continue
+    if not freqs:
+        return []
+    # Drop rigid-body modes. An absolute epsilon is not enough on its own: a
+    # rigid-body mode comes out at whatever the solver's round-off gives, which
+    # was 5e-6 Hz in one case and sailed past a 1e-6 cut. Real modes of a rocket
+    # part are Hz to kHz and a cantilever's second mode is only ~6x its first,
+    # so anything four orders below the highest computed mode is numerical.
+    ceiling = max(freqs)
+    floor = max(1e-3, 1e-4 * ceiling)
+    return [f for f in freqs if f > floor]
+
+
 def run_calculix_case(
     case_dir: Path | str,
     job_name: str = "case",
