@@ -192,3 +192,59 @@ def test_a_bigger_stage_makes_a_longer_vehicle():
 def test_flight_vehicle_rejects_a_nonsense_radius():
     with pytest.raises(ValueError):
         flight_vehicle_properties([_Stage(100.0, 20.0)], 10.0, 0.0)
+
+
+def test_nose_cp_reproduces_the_exact_families():
+    """Cone at 2L/3 and von Karman at L/2 are exact, so they pin the formula."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import nose_center_of_pressure
+
+    r, ell = 1.0, 5.0
+    cone = nose_center_of_pressure(nose_profile(r, ell, "conical", 20000), r)
+    vk = nose_center_of_pressure(nose_profile(r, ell, "vonkarman", 20000), r)
+    assert cone / ell == pytest.approx(2.0 / 3.0, rel=1e-4)
+    assert vk / ell == pytest.approx(0.5, rel=1e-4)
+
+
+def test_ogive_cp_approaches_the_tabulated_value_as_it_slims():
+    """Tables give a single 0.466 L; that is the slender limit, not a constant."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import nose_center_of_pressure
+
+    ratios = []
+    for fineness in (1.0, 2.5, 5.0, 8.0):
+        ell = 2.0 * fineness
+        ratios.append(
+            nose_center_of_pressure(nose_profile(1.0, ell, "ogive", 20000), 1.0) / ell
+        )
+    assert all(a < b for a, b in zip(ratios, ratios[1:])), ratios
+    assert ratios[-1] == pytest.approx(0.466, abs=0.002)
+    assert ratios[0] < 0.44
+
+
+def test_nose_cp_is_forward_of_the_base():
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import nose_center_of_pressure
+
+    for shape in ("ogive", "conical", "vonkarman"):
+        x = nose_center_of_pressure(nose_profile(1.0, 5.0, shape, 4000), 1.0)
+        assert 0.0 < x < 5.0
+
+
+def test_finless_vehicle_is_unstable():
+    """The expected answer, not a bug: this is why fins exist."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import body_alone_static_margin
+
+    prof = nose_profile(0.2845, 1.5, "ogive", 4000)
+    margin = body_alone_static_margin(prof, 0.2845,
+                                      nose_tip_station_m=4.16, cg_z_m=1.841)
+    assert margin < 0.0
+
+
+def test_nose_cp_rejects_a_nonsense_radius():
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import nose_center_of_pressure
+
+    with pytest.raises(ValueError):
+        nose_center_of_pressure(nose_profile(1.0, 5.0, "ogive", 100), 0.0)

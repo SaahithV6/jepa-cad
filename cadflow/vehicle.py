@@ -158,3 +158,55 @@ def flight_vehicle_properties(
     out["radius_m"] = r
     out["sections"] = [(p.name, p.mass_kg, p.station_z_m) for p in parts]
     return out
+
+
+def nose_center_of_pressure(profile, base_radius_m: float) -> float:
+    """Distance from the nose tip to its centre of pressure, in profile units.
+
+    Slender-body theory puts it at
+
+        X_cp = L - V_nose / A_base
+
+    which needs only the nose volume -- a quantity computed exactly from the
+    meridian -- rather than a per-family coefficient looked up from a table.
+
+    That it is right is checked against the two families whose values are exact
+    constants: a cone gives 2L/3 and a von Karman ogive gives L/2, both to the
+    last digit. The tangent ogive is the interesting case. Tables quote a single
+    0.466 L, but the true value depends on fineness -- 0.4300 at fineness 1,
+    0.4606 at 2.5, 0.4661 at 8 -- and 0.466 is the slender limit. So the formula
+    is not merely as good as the table, it is better below fineness 4 or so,
+    which is where sounding-rocket noses actually live.
+
+    Not valid for a blunt nose. An elliptical nose meets the axis with infinite
+    slope and the formula returns 0.333 L against a tabulated 0.5 -- the same
+    validity boundary that makes its wave drag meaningless, showing up again.
+    """
+    from .profiles import profile_volume
+
+    r = float(base_radius_m)
+    if r <= 0.0:
+        raise ValueError("base radius must be positive")
+    pts = list(profile)
+    length = max(z for _, z in pts) - min(z for _, z in pts)
+    volume = profile_volume(pts)
+    return length - volume / (math.pi * r * r)
+
+
+def body_alone_static_margin(
+    nose_profile_pts,
+    body_radius_m: float,
+    nose_tip_station_m: float,
+    cg_z_m: float,
+) -> float:
+    """Static margin in calibers for a finless vehicle, +z forward.
+
+    A cylinder generates no normal force in slender-body theory, so a finless
+    vehicle's centre of pressure is its nose's. Such a vehicle is almost always
+    unstable -- the nose CP sits well forward of any realistic CG -- which is
+    exactly why fins exist, and a negative number here is the expected answer
+    rather than a bug.
+    """
+    x_from_tip = nose_center_of_pressure(nose_profile_pts, body_radius_m)
+    cp_z = nose_tip_station_m - x_from_tip
+    return static_margin(cg_z_m, cp_z, 2.0 * body_radius_m)
