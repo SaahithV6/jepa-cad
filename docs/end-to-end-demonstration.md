@@ -629,3 +629,66 @@ converged solve returned nothing at all.
 Every component in the packet now reports its first mode, and the ordering is
 the physical one -- 8,158 Hz for the short stubby thrust structure down to
 1,342 Hz for the long thin stage 2 tank.
+
+## The nozzle, verified against compressible CFD
+
+The nozzle sizing has always been the ideal-rocket isentropic relations, and
+nothing had ever checked them against a flow solve. The existing CFD routes
+could not: they run simpleFoam, which is incompressible, and a nozzle is nothing
+but compressibility. rhoCentralFoam is density-based, built for exactly this,
+and was installed the whole time.
+
+The result, and it is a clean one. A supersonic state is imposed at A/A* = 1.2
+and the solver expands it to A/A* = 4.0 on its own:
+
+    half-angle   CFD exit Mach   error vs isentropic
+      36.2 deg      2.8863           -1.83%
+      20.1 deg      2.9384           -0.06%
+      10.4 deg      2.9402           -0.00%
+
+Exact agreement once the nozzle is slender enough for quasi-1D theory to be the
+right theory. The deficit at steep angles is not numerical error, it is nozzle
+divergence loss, which quasi-1D theory does not contain.
+
+Getting there took four failures, each of which said something specific.
+
+*The mesh.* The obvious construction -- one block with the nozzle wall as a
+polyLine edge -- does not work. blockMesh distributes points along the curved
+top edge by arc length and along the straight bottom edge by x, so the two
+disagree about where each column belongs and the cells shear. checkMesh found
+140 negative-volume cells, max skewness 262, and 97-degree non-orthogonality;
+rhoCentralFoam died in sqrt after nine steps with a max Courant number 1,950
+times its mean, one tangled cell setting the timestep for the whole domain. The
+fix is to mesh a plain orthogonal box and warp each point's y by h(x): every
+column keeps its own x, and checkMesh reports skewness 2.1 and "Mesh OK".
+
+*No gradient.* With the interior at chamber pressure, a fixed-value inlet at
+that same pressure and an extrapolating outlet, there is no pressure gradient
+anywhere. The solver ran to completion having moved nothing: exit Mach 1.8e-14
+after 152 s of compute.
+
+*The subsonic inlet.* Dropping the interior to 2% of chamber and ramping the
+inlet like a valve opening got the flow started and then blew up anyway. A
+diagnostic dump caught the interior at 26,347 K and 4.9 MPa against a 3,000 K,
+2 MPa chamber -- hotter and at higher pressure than the reservoir feeding it,
+which is thermodynamically impossible and unmistakably a boundary condition
+rather than the mesh. Fixing p and T at a subsonic inlet while extrapolating U
+leaves the momentum flux under-determined. Lowering the Courant number,
+switching to Minmod, and adding a wave-transmissive outlet each only moved the
+moment it blew up, which is how it became clear the timestep was not the
+problem.
+
+The well-posed version drops the subsonic region entirely. A supersonic inlet
+has every characteristic entering, so fixing p, T and U there is the correct and
+complete specification; a supersonic outlet has every characteristic leaving, so
+extrapolating everything is correct. Both boundaries are then exactly determined
+and nothing is under-specified. What is being tested is unchanged in substance:
+only the inlet state is given, and the expansion is the solver's own.
+
+*The wrong plane, and the wrong component.* Two post-processing bugs that would
+each have produced a plausible-looking wrong number. blockMesh numbers cells
+with i varying fastest, so averaging "the last few percent" of the cell list
+takes the top row along the whole wall rather than the exit plane. And the
+area-Mach relation predicts the speed, not its projection on the axis: in a
+diverging nozzle the flow has a real radial component, and averaging Ux instead
+of |U| understates the exit Mach.
