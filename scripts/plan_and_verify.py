@@ -206,6 +206,41 @@ def main() -> int:
     body_r = max(20.0, min(50.0, 16.0 * (p.gross_kg / 100.0) ** (1 / 3)))
     geo_r_mm = body_r
     flight_r = max(0.10, (p.gross_kg / 1000.0) ** (1 / 3) * 0.55) / 2.0
+
+    # Stability is solved before the components, because it decides the fin.
+    # Previously the fin that was structurally verified had a hardcoded 14 mm
+    # span and no relation to the fin the vehicle actually needs, so the FEA was
+    # checking a part that would never be built.
+    fv = flight_vehicle_properties(p.stack, args.payload_kg, flight_r)
+    nose_len = 4.0 * flight_r
+    prof = nose_profile(flight_r, nose_len, "ogive", 4000)
+    root_le = 2.0 * flight_r
+    burn_states = [("liftoff", [1.0] * len(p.stack))]
+    burn_states.append(("stage 1 burnout", [0.0] + [1.0] * (len(p.stack) - 1))
+                       if len(p.stack) > 1 else ("burnout", [0.0]))
+    cgs = []
+    for label, rem in burn_states:
+        st = flight_vehicle_properties(p.stack, args.payload_kg, flight_r,
+                                       propellant_remaining=rem)
+        cgs.append((label, st["cg_z_m"], st["mass_kg"]))
+    worst_label, worst_cg, _ = min(cgs, key=lambda c: c[1])
+    fins = size_fins_for_margin(prof, flight_r,
+                                nose_tip_station_m=fv["length_m"],
+                                cg_z_m=worst_cg,
+                                fin_root_le_station_m=root_le)
+    margins = [(lbl, static_margin(cg, fins["cp_z_m"], 2.0 * flight_r), m)
+               for lbl, cg, m in cgs]
+    stability = dict(fins, sized_for=worst_label,
+                     margins=[{"state": l, "margin_cal": mg, "mass_kg": m}
+                              for l, mg, m in margins])
+
+    # Carry the designed fin's *shape* down to coupon scale: same span and chord
+    # in body radii, same taper and sweep. The coupon is smaller, but it is now
+    # the same fin.
+    scale = geo_r_mm / (flight_r * 1000.0)
+    fin_span_mm = fins["span_m"] * 1000.0 * scale
+    fin_chord_mm = fins["root_chord_m"] * 1000.0 * scale
+
     results = []
     for name, why, load, geo in component_specs(
             body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
@@ -243,9 +278,9 @@ def main() -> int:
                     # stress does not relieve when the wall is thickened. That
                     # is why the thrust structure went 230 -> 817 MPa as it was
                     # made heavier.
-                    "fin_span_mm": 14.0 if "fin" in name else 0.0,
+                    "fin_span_mm": fin_span_mm if "fin" in name else 0.0,
                     "fin_thickness_mm": geo["fin_thickness_mm"],
-                    "fin_chord_mm": 18.0, "fillet_radius_mm": 2.5,
+                    "fin_chord_mm": fin_chord_mm, "fillet_radius_mm": 2.5,
                     "wall_thickness_mm": t_mm,
                     # Roughly three elements through the wall, but the element
                     # size is also capped against the radius. Scaling cl purely
@@ -392,7 +427,7 @@ def main() -> int:
             station_z_m=station + length_m / 2.0))
         station += length_m
 
-    coupon_stack = flight_vehicle = stability = None
+    coupon_stack = flight_vehicle = None   # stability is set above
     if placed:
         veh = combine(placed)
         coupon_stack = dict(veh, length_m=station, sections=len(placed))
@@ -412,7 +447,6 @@ def main() -> int:
                  f"are about representative sections; the mass properties that "
                  f"describe the flight vehicle are below.")
 
-        fv = flight_vehicle_properties(p.stack, args.payload_kg, flight_r)
         flight_vehicle = {k: v for k, v in fv.items() if k != "sections"}
         flight_vehicle["sections"] = [
             {"name": n, "mass_kg": m, "station_z_m": z} for n, m, z in fv["sections"]]
@@ -426,38 +460,6 @@ def main() -> int:
                  f"({100*fv['cg_z_m']/fv['length_m']:.0f}% of length) |")
         L.append(f"| pitch/yaw inertia Ixx | {fv['Ixx_kg_m2']:.1f} kg m^2 |")
         L.append(f"| roll inertia Izz | {fv['Izz_kg_m2']:.1f} kg m^2 |")
-        # Stability. The vehicle and its centre of gravity are fixed by the
-        # mission, so fin size is the free variable and the margin is the
-        # requirement -- design, not analysis.
-        nose_len = 2.0 * flight_r * 2.0
-        prof = nose_profile(flight_r, nose_len, "ogive", 4000)
-        root_le = 2.0 * flight_r
-        # Margin has to hold through the burn, not just at liftoff. CG moves
-        # as propellant drains, so the fins are sized for whichever state is
-        # worst rather than for whichever one is convenient -- and which state
-        # that is gets computed, not assumed.
-        burn_states = [("liftoff", [1.0] * len(p.stack))]
-        if len(p.stack) > 1:
-            burn_states.append(("stage 1 burnout",
-                                [0.0] + [1.0] * (len(p.stack) - 1)))
-        else:
-            burn_states.append(("burnout", [0.0]))
-        cgs = []
-        for label, rem in burn_states:
-            st = flight_vehicle_properties(p.stack, args.payload_kg, flight_r,
-                                           propellant_remaining=rem)
-            cgs.append((label, st["cg_z_m"], st["mass_kg"]))
-        worst_label, worst_cg, _ = min(cgs, key=lambda c: c[1])
-
-        fins = size_fins_for_margin(prof, flight_r,
-                                    nose_tip_station_m=fv["length_m"],
-                                    cg_z_m=worst_cg,
-                                    fin_root_le_station_m=root_le)
-        margins = [(lbl, static_margin(cg, fins["cp_z_m"], 2.0 * flight_r), m)
-                   for lbl, cg, m in cgs]
-        stability = dict(fins, sized_for=worst_label,
-                         margins=[{"state": l, "margin_cal": mg, "mass_kg": m}
-                                  for l, mg, m in margins])
         L.append("\n## Stability\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
