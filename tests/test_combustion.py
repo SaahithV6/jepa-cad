@@ -191,3 +191,54 @@ def test_equilibrium_rejects_nonsense():
         chamber_equilibrium("lox_rp1", 0.0)
     with pytest.raises(ValueError):
         chamber_equilibrium("not_a_propellant", 2.0)
+
+
+# --- mixture ratio as a design variable -------------------------------------
+
+def test_planner_performance_responds_to_mixture_ratio():
+    """It could not before: the propellant table had one row and no O/F axis."""
+    from cadflow.planner import chamber_properties
+
+    props = [chamber_properties("lox_rp1", of) for of in (1.5, 2.45, 4.0, 6.5)]
+    temps = [p[1] for p in props]
+    masses = [p[2] for p in props]
+    assert len(set(round(t) for t in temps)) == len(temps), temps
+    # heavier products as the mixture leans out, all the way through
+    assert all(a < b for a, b in zip(masses, masses[1:])), masses
+
+
+def test_bulk_density_reaches_the_structural_model():
+    """Tank mass has to know what is in the tank, or the density half of the
+    mixture-ratio trade does not exist."""
+    from cadflow.planner import _bulk_density
+
+    lean = _bulk_density("lox_lh2", 6.0)
+    rich = _bulk_density("lox_lh2", 2.0)
+    assert lean > rich
+    assert rich < 250.0          # hydrogen-rich loads are extraordinarily light
+
+
+def test_vehicle_level_optimisation_returns_a_usable_sweep():
+    """The trade must be inspectable, not just its answer.
+
+    Kept small deliberately -- each point is a full structural fixed point, so
+    the shape is checked here and the accuracy against flown hardware is a
+    design run rather than a unit test.
+    """
+    from cadflow.planner import optimise_mixture_ratio
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    best, sweep = optimise_mixture_ratio(1200.0, 25.0, lo=2.0, hi=3.0, steps=2)
+    assert best is not None
+    assert len(sweep) == 3
+    for row in sweep:
+        assert row["gross_kg"] > 0.0
+        assert row["propellant_volume_m3"] > 0.0
+        assert 0.03 <= row["struct_coeff"] <= 0.60
+    # denser loads need less tank for the same propellant mass
+    densities = [r["bulk_density"] for r in sweep]
+    assert all(a < b for a, b in zip(densities, densities[1:])), densities
+    # and the chosen point really is the lightest one seen
+    assert min(r["gross_kg"] for r in sweep) == pytest.approx(
+        next(r["gross_kg"] for r in sweep if r["of_ratio"] == best))

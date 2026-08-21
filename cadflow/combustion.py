@@ -489,6 +489,14 @@ def chamber_equilibrium(combination: str, of_ratio: float,
     if of <= 0.0:
         raise ValueError("O/F must be positive")
 
+    # Memoised on a rounded mixture ratio and pressure. An equilibrium solve is
+    # tens of milliseconds and the planner asks for thousands of them while it
+    # searches; the answer varies far more slowly with O/F than the rounding.
+    key = (combination, round(of, 4), round(float(pressure_pa), -3))
+    hit = _EQ_CACHE.get(key)
+    if hit is not None:
+        return hit
+
     fuel, m_fuel, oxid, m_oxid = EQ_REACTANTS[combination]
     gas = _equilibrium_solution()
     moles_ox = of * m_fuel / m_oxid
@@ -497,7 +505,7 @@ def chamber_equilibrium(combination: str, of_ratio: float,
 
     gamma = gas.cp / gas.cv
     major = {s: float(x) for s, x in zip(gas.species_names, gas.X) if x > 5e-3}
-    return ChamberState(
+    state = ChamberState(
         combination=combination,
         of_ratio=of,
         pressure_pa=float(pressure_pa),
@@ -507,6 +515,8 @@ def chamber_equilibrium(combination: str, of_ratio: float,
         c_star_m_s=characteristic_velocity(gas.T, gas.mean_molecular_weight, gamma),
         major_species=major,
     )
+    _EQ_CACHE[key] = state
+    return state
 
 
 def optimum_mixture_ratio(combination: str, pressure_pa: float = 55e5,

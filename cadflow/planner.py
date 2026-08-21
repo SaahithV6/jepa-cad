@@ -28,6 +28,35 @@ from dataclasses import dataclass, field
 
 from cadflow.multistage import Stage, integrate_stack
 from cadflow.wave_drag import cd_multiplier
+
+
+def _bulk_density(propellant: str, of_ratio: float | None = None) -> float:
+    """Loaded propellant bulk density, kg/m^3, falling back if chemistry is off."""
+    try:
+        from cadflow.combustion import REFERENCE, bulk_density
+
+        of = REFERENCE[propellant][0] if of_ratio is None else float(of_ratio)
+        return bulk_density(propellant, of)
+    except Exception:  # noqa: BLE001
+        return 1030.0
+
+
+def chamber_properties(propellant: str, of_ratio: float | None = None):
+    """(gamma, chamber temperature, molecular mass) from equilibrium chemistry.
+
+    Replaces a lookup table that had one row per propellant and no dependence on
+    mixture ratio, which meant the planner could not trade the single most
+    important variable it has. Falls back to the old table only if the chemistry
+    is unavailable, so a machine without Cantera still runs.
+    """
+    try:
+        from cadflow.combustion import REFERENCE, chamber_equilibrium
+
+        of = REFERENCE[propellant][0] if of_ratio is None else float(of_ratio)
+        state = chamber_equilibrium(propellant, of)
+        return state.gamma, state.chamber_temp_k, state.molecular_mass
+    except Exception:  # noqa: BLE001 - chemistry is an enhancement, not a gate
+        return PROPELLANTS[propellant]
 from generate_propulsion_trajectory_corpus import (
     G0, P0, PROPELLANTS, nozzle_performance,
 )
@@ -86,9 +115,10 @@ def required_delta_v(apogee_km: float) -> float:
 
 
 def build_stack_n(total_prop: float, fractions: list[float], payload: float,
-                  pc: float, prop: str) -> tuple[list[Stage], float, list[tuple]]:
+                  pc: float, prop: str, of_ratio: float | None = None
+                  ) -> tuple[list[Stage], float, list[tuple]]:
     """Build an N-stage stack given the propellant split."""
-    gamma, tc, mol = PROPELLANTS[prop]
+    gamma, tc, mol = chamber_properties(prop, of_ratio)
     props = [total_prop * f for f in fractions]
     structs = [p * STRUCT_COEFF / (1 - STRUCT_COEFF) for p in props]
 
@@ -120,8 +150,10 @@ def build_stack_n(total_prop: float, fractions: list[float], payload: float,
 def fly_plan(total_prop: float, fractions: list[float], payload: float,
              pc: float, prop: str, pitchover_deg: float = 3.0,
              nose_shape: str = NOSE_SHAPE,
-             nose_fineness: float = NOSE_FINENESS):
-    stages, gross, split = build_stack_n(total_prop, fractions, payload, pc, prop)
+             nose_fineness: float = NOSE_FINENESS,
+             of_ratio: float | None = None):
+    stages, gross, split = build_stack_n(total_prop, fractions, payload, pc, prop,
+                                         of_ratio)
     dia = max(0.10, (gross / 1000.0) ** (1.0 / 3.0) * 0.55)
     r = integrate_stack(stages, payload,
                         cd=drag_coefficient(nose_shape, nose_fineness),
@@ -134,14 +166,15 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
               pc: float, prop: str, tol: float = 0.02,
               pitchover_deg: float = 3.0,
               nose_shape: str = NOSE_SHAPE,
-              nose_fineness: float = NOSE_FINENESS):
+              nose_fineness: float = NOSE_FINENESS,
+              of_ratio: float | None = None):
     """Bisect total propellant until the stack flies the target."""
     # Near-escape missions need mass ratios around 95, so the upper bound has
     # to allow a vehicle that heavy or the search reports no solution for a
     # mission that is merely expensive. 40,000 km already needs ~650x payload.
     lo, hi = payload * 0.3, payload * 400000.0
-    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
-    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
+    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
+    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
     if not (a_lo <= target_km <= a_hi):
         return None
 
@@ -157,7 +190,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     prev_x, prev_a = lo, a_lo
     for i in range(1, n_scan + 1):
         x = lo * (hi / lo) ** (i / n_scan)
-        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness)
+        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
         if a >= target_km:
             lo, hi = prev_x, x
             break
@@ -176,7 +209,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     for _ in range(40):
         mid = math.sqrt(lo * hi)
         a, gross, stages, split, r = fly_plan(mid, fractions, payload, pc, prop,
-                                             pitchover_deg, nose_shape, nose_fineness)
+                                             pitchover_deg, nose_shape, nose_fineness, of_ratio)
         err = abs(a - target_km) / target_km if math.isfinite(a) else float("inf")
         if err < best_err:
             best_err, best = err, (mid, a, gross, stages, split, r)
@@ -217,12 +250,13 @@ def _splits_for(n: int) -> list[list[float]]:
 
 def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
          chamber_bar: float = 55.0, nose_shape: str = NOSE_SHAPE,
-         nose_fineness: float = NOSE_FINENESS) -> Plan | None:
+         nose_fineness: float = NOSE_FINENESS,
+         of_ratio: float | None = None) -> Plan | None:
     """Choose an architecture for this mission and size it."""
     pc = chamber_bar * 1e5
     rationale: list[str] = []
     dv = required_delta_v(target_km)
-    gamma, tc, mol = PROPELLANTS[propellant]
+    gamma, tc, mol = chamber_properties(propellant, of_ratio)
     u = nozzle_performance(chamber_pressure=pc, chamber_temp=tc,
                            expansion_ratio=20.0, throat_area=1.0,
                            gamma=gamma, mol_mass=mol, ambient_pressure=0.0)
@@ -262,7 +296,7 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
           for pitch in (1.5, 3.0, 6.0):
             got = solve_for(target_km, fr, payload_kg, pc, propellant,
                             pitchover_deg=pitch, nose_shape=nose_shape,
-                            nose_fineness=nose_fineness)
+                            nose_fineness=nose_fineness, of_ratio=of_ratio)
             if got is None:
                 continue
             tp, achieved, gross, stages, split, r = got
@@ -296,7 +330,8 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
 
 def plan_sized(target_km: float, payload_kg: float, *,
                propellant: str = "lox_rp1", chamber_bar: float = 55.0,
-               max_iters: int = 8, tol: float = 0.01):
+               max_iters: int = 8, tol: float = 0.01,
+               of_ratio: float | None = None):
     """Plan a mission with structural mass solved rather than assumed.
 
     STRUCT_COEFF is a constant asserted in the source. Real structural mass
@@ -331,7 +366,7 @@ def plan_sized(target_km: float, payload_kg: float, *,
           globals()["STRUCT_COEFF"] = coeff
           globals()["MAX_STAGE_MR"] = 1.0 / coeff * 0.62
           p = plan(target_km, payload_kg, propellant=propellant,
-                   chamber_bar=chamber_bar)
+                   chamber_bar=chamber_bar, of_ratio=of_ratio)
           if p is None:
               return None, coeff, history
 
@@ -372,3 +407,56 @@ def plan_sized(target_km: float, payload_kg: float, *,
         globals()["STRUCT_COEFF"] = _saved_coeff
         globals()["MAX_STAGE_MR"] = _saved_mr
     return p, coeff, history
+
+
+def optimise_mixture_ratio(target_km: float, payload_kg: float, *,
+                           propellant: str = "lox_rp1",
+                           chamber_bar: float = 55.0,
+                           lo: float = 1.2, hi: float = 7.0,
+                           steps: int = 12):
+    """Choose the mixture ratio that gives the lightest vehicle for the mission.
+
+    This is the trade that makes mixture ratio a design variable rather than a
+    constant. Running rich raises specific impulse, which shrinks the propellant
+    load; it also drops the bulk density, which grows the tank that has to hold
+    it. Neither effect wins everywhere, and where the balance falls depends on
+    the propellant -- which is why a hydrogen vehicle flies at O/F 5.5 when its
+    characteristic velocity peaks near 2.4.
+
+    Uses the structure-solving planner, not the fixed-coefficient one. That is
+    the whole point: with a constant structural coefficient the tank mass does
+    not depend on what is in the tank, bulk density never enters the objective,
+    and the optimiser sees only specific impulse -- which put hydrogen at O/F
+    2.65, right next to its characteristic-velocity optimum and nowhere near
+    what anything flies.
+
+    Returns the best mixture ratio and the full sweep, so the shape of the
+    trade is visible rather than just its answer.
+    """
+    sweep = []
+    best = None
+    for i in range(steps + 1):
+        of = lo + (hi - lo) * i / steps
+        try:
+            candidate, coeff, _hist = plan_sized(
+                target_km, payload_kg, propellant=propellant,
+                chamber_bar=chamber_bar, of_ratio=of)
+        except Exception:  # noqa: BLE001
+            continue
+        if candidate is None:
+            continue
+        struct = sum(st.struct_mass_kg for st in candidate.stack)
+        prop_mass = sum(st.prop_mass_kg for st in candidate.stack)
+        rho = _bulk_density(propellant, of)
+        # tank volume is what the density buys or costs
+        volume = prop_mass / max(rho, 1.0)
+        sweep.append({"of_ratio": of, "gross_kg": candidate.gross_kg,
+                      "stages": candidate.stages, "struct_kg": struct,
+                      "prop_kg": prop_mass, "bulk_density": rho,
+                      "struct_coeff": coeff,
+                      "propellant_volume_m3": volume})
+        if best is None or candidate.gross_kg < best[1]:
+            best = (of, candidate.gross_kg)
+    if best is None:
+        return None, sweep
+    return best[0], sweep
