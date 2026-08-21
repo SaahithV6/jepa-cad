@@ -27,7 +27,8 @@ sys.path.insert(0, str(ROOT))
 
 from cadflow.planner import plan  # noqa: E402
 from cadflow.structural_sizing import size_wall
-from cadflow.vehicle import Placed, combine  # noqa: E402
+from cadflow.vehicle import (  # noqa: E402
+    Placed, combine, flight_vehicle_properties)
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
@@ -197,7 +198,12 @@ def main() -> int:
         print("No architecture up to 3 stages closes this mission.")
         return 1
 
+    # The CAD radius is clamped so parts stay meshable; the flight vehicle's
+    # radius is what the trajectory actually used. Keeping both, and keeping
+    # them named apart, is the only way the packet can report each honestly.
     body_r = max(20.0, min(50.0, 16.0 * (p.gross_kg / 100.0) ** (1 / 3)))
+    geo_r_mm = body_r
+    flight_r = max(0.10, (p.gross_kg / 1000.0) ** (1 / 3) * 0.55) / 2.0
     results = []
     for name, why, load, geo in component_specs(
             body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
@@ -386,22 +392,41 @@ def main() -> int:
 
     if placed:
         veh = combine(placed)
-        L.append("\n## Vehicle assembly\n")
-        L.append(f"Stack is {station:.3f} m of structure in "
-                 f"{len(placed)} sections, nose forward.\n")
+        L.append("\n## Coupon stack (what was analysed)\n")
+        L.append(f"The six analysed parts stacked nose-forward: {station:.3f} m "
+                 f"in {len(placed)} sections, {veh['mass_kg']*1000:.0f} g of "
+                 f"structure, centre of gravity {veh['cg_z_m']:.3f} m from the "
+                 f"aft end, Ixx {veh['Ixx_kg_m2']:.3e} and Izz "
+                 f"{veh['Izz_kg_m2']:.3e} kg m^2.\n")
+        L.append(f"These are **coupons, not the vehicle**. Body radius is "
+                 f"clamped to 50 mm so the parts stay meshable, while this "
+                 f"mission's reference diameter is {2*flight_r*1000:.0f} mm -- a "
+                 f"factor of {flight_r*1000/geo_r_mm:.1f} in radius, so the "
+                 f"coupons carry {veh['mass_kg']*1000:.0f} g against the "
+                 f"{sum(st.struct_mass_kg for st in p.stack):.0f} kg of "
+                 f"structure the planner sized. The stresses and modes above "
+                 f"are about representative sections; the mass properties that "
+                 f"describe the flight vehicle are below.")
+
+        fv = flight_vehicle_properties(p.stack, args.payload_kg, flight_r)
+        L.append("\n## Flight vehicle\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
-        L.append(f"| dry structural mass | {veh['mass_kg']*1000:.0f} g |")
-        L.append(f"| centre of gravity from aft end | "
-                 f"{veh['cg_z_m']:.3f} m ({100*veh['cg_z_m']/station:.0f}% of length) |")
-        L.append(f"| pitch/yaw inertia Ixx | {veh['Ixx_kg_m2']:.4e} kg m^2 |")
-        L.append(f"| roll inertia Izz | {veh['Izz_kg_m2']:.4e} kg m^2 |")
-        L.append("\nMass and inertia are exact for the geometry that was "
-                 "analysed, combined across sections with the parallel-axis "
-                 "theorem; the parts are disjoint, which is that theorem's only "
-                 "condition. Pitch inertia exceeds roll inertia by "
-                 f"{veh['Ixx_kg_m2']/max(veh['Izz_kg_m2'],1e-12):.0f}x, as it "
-                 "must for a long thin vehicle.")
+        L.append(f"| length | {fv['length_m']:.2f} m |")
+        L.append(f"| diameter | {2*fv['radius_m']*1000:.0f} mm |")
+        L.append(f"| wet mass | {fv['mass_kg']:.1f} kg |")
+        L.append(f"| centre of gravity from aft end | {fv['cg_z_m']:.3f} m "
+                 f"({100*fv['cg_z_m']/fv['length_m']:.0f}% of length) |")
+        L.append(f"| pitch/yaw inertia Ixx | {fv['Ixx_kg_m2']:.1f} kg m^2 |")
+        L.append(f"| roll inertia Izz | {fv['Izz_kg_m2']:.1f} kg m^2 |")
+        L.append("\nStage lengths come from propellant volume at LOX/RP-1 bulk "
+                 "density and each stage is a uniform cylinder of its wet mass "
+                 "-- coarse, since a real stage has domes, a dry engine at one "
+                 "end and a moving liquid level, but built only from numbers the "
+                 "planner produced, and the wet mass reproduces the planner's "
+                 f"gross of {p.gross_kg:.1f} kg. Pitch inertia is "
+                 f"{fv['Ixx_kg_m2']/max(fv['Izz_kg_m2'],1e-12):.0f}x roll, as "
+                 "it must be for a long thin vehicle.")
 
     L.append("\nWall thickness and buckling margin size the thin shell; the "
              "shell FEA column is CalculiX on that same hollow geometry, so the "

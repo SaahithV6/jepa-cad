@@ -11,7 +11,8 @@ import math
 
 import pytest
 
-from cadflow.vehicle import Placed, combine, static_margin
+from cadflow.vehicle import (
+    Placed, combine, cylinder_inertia, flight_vehicle_properties, static_margin)
 
 RHO = 2700.0
 
@@ -126,3 +127,68 @@ def test_moving_mass_forward_moves_the_cg_forward():
     fwd = combine([_box(1.0, 0, 0, 0, z=0.0), _box(1.0, 0, 0, 0, z=3.0)])
     assert fwd["cg_z_m"] > aft["cg_z_m"]
     assert math.isfinite(fwd["Ixx_kg_m2"])
+
+
+def test_cylinder_inertia_matches_the_closed_forms():
+    m, r, ell = 3.0, 0.2, 1.5
+    ixx, izz = cylinder_inertia(m, r, ell)
+    assert izz == pytest.approx(m * r * r / 2.0)
+    assert ixx == pytest.approx(m * (3 * r * r + ell * ell) / 12.0)
+
+
+def test_cylinder_inertia_against_the_cad_kernel():
+    cq = pytest.importorskip("cadquery")
+    from cadflow.backends import get_backend
+
+    backend = get_backend(prefer_real=True)
+    if backend.name != "cadquery":
+        pytest.skip("real CAD backend unavailable")
+    r_mm, l_mm = 100.0, 400.0
+    solid = cq.Workplane("XY").cylinder(l_mm, r_mm)
+    mp = backend.mass_properties(solid, RHO)
+    ixx, izz = cylinder_inertia(mp["mass_kg"], r_mm / 1000.0, l_mm / 1000.0)
+    assert ixx == pytest.approx(mp["Ixx_kg_m2"], rel=1e-4)
+    assert izz == pytest.approx(mp["Izz_kg_m2"], rel=1e-4)
+
+
+class _Stage:
+    def __init__(self, prop, struct):
+        self.prop_mass_kg = prop
+        self.struct_mass_kg = struct
+
+
+def test_flight_vehicle_conserves_mass():
+    """Wet mass must reproduce the planner's gross exactly, or the model is
+    describing a different vehicle than the one that flew the trajectory."""
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    payload = 25.0
+    veh = flight_vehicle_properties(stages, payload, 0.2845)
+    expected = sum(s.prop_mass_kg + s.struct_mass_kg for s in stages) + payload
+    assert veh["mass_kg"] == pytest.approx(expected, rel=1e-12)
+
+
+def test_flight_vehicle_cg_lies_inside_the_vehicle():
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    veh = flight_vehicle_properties(stages, 25.0, 0.2845)
+    assert 0.0 < veh["cg_z_m"] < veh["length_m"]
+    # heavy first stage is aft, so the CG must sit below mid-length
+    assert veh["cg_z_m"] < 0.6 * veh["length_m"]
+
+
+def test_flight_vehicle_is_long_and_thin_in_its_inertia():
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    veh = flight_vehicle_properties(stages, 25.0, 0.2845)
+    assert veh["Ixx_kg_m2"] > 10.0 * veh["Izz_kg_m2"]
+    assert veh["length_m"] > 4.0 * (2.0 * veh["radius_m"])
+
+
+def test_a_bigger_stage_makes_a_longer_vehicle():
+    small = flight_vehicle_properties([_Stage(100.0, 20.0)], 10.0, 0.2845)
+    big = flight_vehicle_properties([_Stage(800.0, 120.0)], 10.0, 0.2845)
+    assert big["length_m"] > small["length_m"]
+    assert big["Ixx_kg_m2"] > small["Ixx_kg_m2"]
+
+
+def test_flight_vehicle_rejects_a_nonsense_radius():
+    with pytest.raises(ValueError):
+        flight_vehicle_properties([_Stage(100.0, 20.0)], 10.0, 0.0)

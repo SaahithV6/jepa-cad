@@ -14,6 +14,7 @@ handle exactly -- the parts are disjoint, which is the theorem's only condition.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 
@@ -87,3 +88,73 @@ def static_margin(cg_z_m: float, cp_z_m: float, body_diameter_m: float) -> float
     if body_diameter_m <= 0.0:
         raise ValueError("diameter must be positive")
     return (cg_z_m - cp_z_m) / body_diameter_m
+
+
+#: Bulk density of a LOX/RP-1 load at a typical mixture ratio, kg/m^3. LOX is
+#: 1141 and RP-1 about 810; at O/F 2.56 the mass-weighted bulk figure is ~1020.
+PROPELLANT_BULK_DENSITY = 1020.0
+
+
+def cylinder_inertia(mass_kg: float, radius_m: float,
+                     length_m: float) -> tuple[float, float]:
+    """(Ixx about the centroid, Izz about the axis) for a uniform cylinder."""
+    m, r, ell = float(mass_kg), float(radius_m), float(length_m)
+    return m * (3.0 * r * r + ell * ell) / 12.0, m * r * r / 2.0
+
+
+def flight_vehicle_properties(
+    stages,
+    payload_kg: float,
+    radius_m: float,
+    bulk_density: float = PROPELLANT_BULK_DENSITY,
+    payload_length_m: float | None = None,
+) -> dict:
+    """Mass properties of the vehicle the trajectory actually flies.
+
+    This is deliberately separate from the mass properties of the analysed CAD.
+    The CAD is a set of scaled coupons: body radius is clamped to 50 mm so the
+    parts stay meshable, while the trajectory's reference diameter for this
+    mission is 569 mm -- a factor of 8 in radius. The coupons carry 672 g of
+    structure against the 151 kg the planner sized. Both numbers are correct
+    about different objects, and reporting the coupon figure as the vehicle's
+    would be wrong.
+
+    Stage lengths come from propellant volume at the given bulk density, and
+    each stage is treated as a uniform cylinder of its full wet mass. That is
+    coarse -- a real stage has domes, a dry engine at one end and a moving
+    liquid level -- but it is the right order and it uses only numbers the
+    planner actually produced.
+    """
+    r = float(radius_m)
+    if r <= 0.0:
+        raise ValueError("radius must be positive")
+
+    parts: list[Placed] = []
+    station = 0.0
+    # aft to forward: stage 1 first
+    for i, st in enumerate(stages):
+        wet = float(st.prop_mass_kg) + float(st.struct_mass_kg)
+        volume = float(st.prop_mass_kg) / float(bulk_density)
+        length = max(0.1, volume / (math.pi * r * r))
+        ixx, izz = cylinder_inertia(wet, r, length)
+        parts.append(Placed(
+            name=f"stage {i+1}", mass_kg=wet,
+            cx_m=0.0, cy_m=0.0, cz_m=0.0,
+            Ixx_kg_m2=ixx, Iyy_kg_m2=ixx, Izz_kg_m2=izz,
+            station_z_m=station + length / 2.0))
+        station += length
+
+    pay_len = payload_length_m if payload_length_m is not None else 2.0 * r
+    ixx, izz = cylinder_inertia(float(payload_kg), r, pay_len)
+    parts.append(Placed(
+        name="payload", mass_kg=float(payload_kg),
+        cx_m=0.0, cy_m=0.0, cz_m=0.0,
+        Ixx_kg_m2=ixx, Iyy_kg_m2=ixx, Izz_kg_m2=izz,
+        station_z_m=station + pay_len / 2.0))
+    station += pay_len
+
+    out = combine(parts)
+    out["length_m"] = station
+    out["radius_m"] = r
+    out["sections"] = [(p.name, p.mass_kg, p.station_z_m) for p in parts]
+    return out
