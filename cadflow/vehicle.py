@@ -210,3 +210,175 @@ def body_alone_static_margin(
     x_from_tip = nose_center_of_pressure(nose_profile_pts, body_radius_m)
     cp_z = nose_tip_station_m - x_from_tip
     return static_margin(cg_z_m, cp_z, 2.0 * body_radius_m)
+
+
+def fin_normal_force_slope(
+    n_fins: int,
+    span_m: float,
+    root_chord_m: float,
+    tip_chord_m: float,
+    sweep_m: float,
+    body_radius_m: float,
+) -> float:
+    """Fin-set CN_alpha per radian, referenced to body frontal area.
+
+    The Barrowman form,
+
+        CNa = 4 n (s/d)^2 / (1 + sqrt(1 + (2 l / (Cr + Ct))^2))
+
+    with l the mid-chord line length, multiplied by the body-fin interference
+    factor Kfb = 1 + r/(s + r).
+
+    I had refused to implement this on the grounds that the Barrowman set is
+    semi-empirical and I had no way to check its constants. That was wrong:
+    referenced to fin area rather than body area, the expression converges onto
+    Jones' slender-wing theorem C_La = pi AR / 2 as aspect ratio goes to zero --
+    ratio 0.9999 at AR 0.02, 0.9994 at 0.05, 0.9975 at 0.1. The constant is not
+    remembered, it is forced by a theorem, and the departure above AR ~ 0.3 is
+    the finite-aspect-ratio correction the theorem does not contain.
+    """
+    n = int(n_fins)
+    s, cr, ct = float(span_m), float(root_chord_m), float(tip_chord_m)
+    m, r = float(sweep_m), float(body_radius_m)
+    if n <= 0 or s <= 0.0 or cr <= 0.0 or r <= 0.0:
+        raise ValueError("fin set needs positive count, span, chord and body radius")
+    if ct < 0.0:
+        raise ValueError("tip chord cannot be negative")
+
+    d = 2.0 * r
+    mid_chord = math.sqrt(s * s + (m + ct / 2.0 - cr / 2.0) ** 2)
+    base = 4.0 * n * (s / d) ** 2 / (
+        1.0 + math.sqrt(1.0 + (2.0 * mid_chord / (cr + ct)) ** 2)
+    )
+    interference = 1.0 + r / (s + r)
+    return base * interference
+
+
+def fin_center_of_pressure(
+    root_chord_m: float, tip_chord_m: float, sweep_m: float
+) -> float:
+    """Distance from the fin root leading edge to the fin CP, along the axis.
+
+    Checked against the case with an exact answer: an unswept rectangular fin
+    must put its centre of pressure at the quarter chord, and this returns
+    exactly Cr/4 for Ct = Cr and zero sweep.
+    """
+    cr, ct, m = float(root_chord_m), float(tip_chord_m), float(sweep_m)
+    if cr <= 0.0 or ct < 0.0:
+        raise ValueError("chords must be positive")
+    total = cr + ct
+    return (m * (cr + 2.0 * ct)) / (3.0 * total) + (
+        total - cr * ct / total
+    ) / 6.0
+
+
+def vehicle_center_of_pressure(
+    nose_profile_pts,
+    body_radius_m: float,
+    nose_tip_station_m: float,
+    fin_root_le_station_m: float,
+    n_fins: int,
+    fin_span_m: float,
+    fin_root_chord_m: float,
+    fin_tip_chord_m: float,
+    fin_sweep_m: float,
+) -> dict:
+    """Whole-vehicle centre of pressure, +z forward.
+
+    Nose and fins are combined by weighting each contribution's station with its
+    CN_alpha, which is what "centre of pressure" means. A cylindrical body
+    section contributes no normal force in this theory and so does not appear.
+    """
+    x_nose = nose_center_of_pressure(nose_profile_pts, body_radius_m)
+    cp_nose = float(nose_tip_station_m) - x_nose
+    cna_nose = 2.0                      # slender-body: 2 per radian, any nose
+
+    cna_fins = fin_normal_force_slope(n_fins, fin_span_m, fin_root_chord_m,
+                                      fin_tip_chord_m, fin_sweep_m,
+                                      body_radius_m)
+    x_fins = fin_center_of_pressure(fin_root_chord_m, fin_tip_chord_m,
+                                    fin_sweep_m)
+    cp_fins = float(fin_root_le_station_m) - x_fins
+
+    total = cna_nose + cna_fins
+    return {
+        "cp_z_m": (cna_nose * cp_nose + cna_fins * cp_fins) / total,
+        "cna_total": total,
+        "cna_nose": cna_nose,
+        "cna_fins": cna_fins,
+        "cp_nose_z_m": cp_nose,
+        "cp_fins_z_m": cp_fins,
+    }
+
+
+#: Conventional design target for a finned rocket, in calibers. Below about 1
+#: the vehicle is marginal; much above 2 it weathercocks into the wind and
+#: loses altitude to it.
+TARGET_STATIC_MARGIN = 1.5
+
+
+def size_fins_for_margin(
+    nose_profile_pts,
+    body_radius_m: float,
+    nose_tip_station_m: float,
+    cg_z_m: float,
+    fin_root_le_station_m: float,
+    n_fins: int = 4,
+    target_margin: float = TARGET_STATIC_MARGIN,
+    root_chord_ratio: float = 2.0,
+    taper_ratio: float = 0.5,
+    sweep_ratio: float = 0.6,
+    max_span_ratio: float = 4.0,
+) -> dict:
+    """Find the fin span that puts the static margin on target.
+
+    This is the design direction rather than the analysis direction: the vehicle
+    and its centre of gravity are already fixed by the mission, so the free
+    variable is fin size, and stability is the requirement it has to meet.
+
+    Chord, taper and sweep are held in fixed proportion to the body and to each
+    other, so span is the single unknown and the solve is a bisection on a
+    monotone function -- bigger fins always move the centre of pressure aft.
+    """
+    r = float(body_radius_m)
+    if r <= 0.0:
+        raise ValueError("body radius must be positive")
+    root_chord = root_chord_ratio * r
+
+    def margin_for(span: float) -> float:
+        cp = vehicle_center_of_pressure(
+            nose_profile_pts, r, nose_tip_station_m, fin_root_le_station_m,
+            n_fins, span, root_chord, root_chord * taper_ratio,
+            root_chord * sweep_ratio)
+        return static_margin(cg_z_m, cp["cp_z_m"], 2.0 * r)
+
+    lo, hi = 1e-4 * r, max_span_ratio * r
+    if margin_for(hi) < target_margin:
+        # Even the largest fins allowed cannot stabilise it; report the best
+        # available rather than silently returning a span that misses.
+        span = hi
+    else:
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            if margin_for(mid) < target_margin:
+                lo = mid
+            else:
+                hi = mid
+        span = 0.5 * (lo + hi)
+
+    cp = vehicle_center_of_pressure(
+        nose_profile_pts, r, nose_tip_station_m, fin_root_le_station_m,
+        n_fins, span, root_chord, root_chord * taper_ratio,
+        root_chord * sweep_ratio)
+    return {
+        "span_m": span,
+        "root_chord_m": root_chord,
+        "tip_chord_m": root_chord * taper_ratio,
+        "sweep_m": root_chord * sweep_ratio,
+        "n_fins": int(n_fins),
+        "static_margin_cal": static_margin(cg_z_m, cp["cp_z_m"], 2.0 * r),
+        "target_margin_cal": float(target_margin),
+        "met": abs(static_margin(cg_z_m, cp["cp_z_m"], 2.0 * r)
+                   - target_margin) < 1e-3,
+        **cp,
+    }

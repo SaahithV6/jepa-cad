@@ -27,8 +27,9 @@ sys.path.insert(0, str(ROOT))
 
 from cadflow.planner import plan  # noqa: E402
 from cadflow.structural_sizing import size_wall
+from cadflow.profiles import nose_profile  # noqa: E402
 from cadflow.vehicle import (  # noqa: E402
-    Placed, combine, flight_vehicle_properties)
+    Placed, combine, flight_vehicle_properties, size_fins_for_margin)
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
@@ -390,7 +391,7 @@ def main() -> int:
             station_z_m=station + length_m / 2.0))
         station += length_m
 
-    coupon_stack = flight_vehicle = None
+    coupon_stack = flight_vehicle = stability = None
     if placed:
         veh = combine(placed)
         coupon_stack = dict(veh, length_m=station, sections=len(placed))
@@ -424,6 +425,42 @@ def main() -> int:
                  f"({100*fv['cg_z_m']/fv['length_m']:.0f}% of length) |")
         L.append(f"| pitch/yaw inertia Ixx | {fv['Ixx_kg_m2']:.1f} kg m^2 |")
         L.append(f"| roll inertia Izz | {fv['Izz_kg_m2']:.1f} kg m^2 |")
+        # Stability. The vehicle and its centre of gravity are fixed by the
+        # mission, so fin size is the free variable and the margin is the
+        # requirement -- design, not analysis.
+        nose_len = 2.0 * flight_r * 2.0
+        prof = nose_profile(flight_r, nose_len, "ogive", 4000)
+        root_le = 2.0 * flight_r
+        fins = size_fins_for_margin(prof, flight_r,
+                                    nose_tip_station_m=fv["length_m"],
+                                    cg_z_m=fv["cg_z_m"],
+                                    fin_root_le_station_m=root_le)
+        stability = dict(fins)
+        L.append("\n## Stability\n")
+        L.append("| quantity | value |")
+        L.append("|---|---|")
+        L.append(f"| fin span (each of {fins['n_fins']}) | "
+                 f"{fins['span_m']*1000:.0f} mm |")
+        L.append(f"| fin root / tip chord | {fins['root_chord_m']*1000:.0f} / "
+                 f"{fins['tip_chord_m']*1000:.0f} mm, sweep "
+                 f"{fins['sweep_m']*1000:.0f} mm |")
+        L.append(f"| centre of pressure | {fins['cp_z_m']:.3f} m from aft |")
+        L.append(f"| centre of gravity | {fv['cg_z_m']:.3f} m from aft |")
+        L.append(f"| static margin | {fins['static_margin_cal']:.2f} calibers "
+                 f"(target {fins['target_margin_cal']:.1f}) |")
+        L.append(f"| normal force slope | nose {fins['cna_nose']:.2f} + fins "
+                 f"{fins['cna_fins']:.2f} = {fins['cna_total']:.2f} /rad |")
+        L.append("\nFins are sized by solving for the span that meets the "
+                 "margin, not assumed and then checked. The nose centre of "
+                 "pressure comes from slender-body theory as L - V/A_base, which "
+                 "needs only the nose volume and reproduces the exact families "
+                 "(cone 2L/3, von Karman L/2) to the last digit. The fin set is "
+                 "Barrowman, whose CN_alpha converges onto Jones' slender-wing "
+                 "result pi AR/2 as aspect ratio goes to zero and whose "
+                 "unswept-rectangular centre of pressure is exactly the quarter "
+                 "chord -- two limits with known answers, which is what makes "
+                 "its constants checkable rather than merely quoted.")
+
         L.append("\nStage lengths come from propellant volume at LOX/RP-1 bulk "
                  "density and each stage is a uniform cylinder of its wet mass "
                  "-- coarse, since a real stage has domes, a dry engine at one "
@@ -457,7 +494,8 @@ def main() -> int:
         # because they describe two different objects: the coupons that were
         # meshed and analysed, and the vehicle that flew the trajectory.
         "coupon_stack": coupon_stack,
-        "flight_vehicle": flight_vehicle}, indent=2))
+        "flight_vehicle": flight_vehicle,
+        "stability": stability}, indent=2))
     print("\n".join(L))
     return 0
 

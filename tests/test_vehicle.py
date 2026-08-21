@@ -248,3 +248,131 @@ def test_nose_cp_rejects_a_nonsense_radius():
 
     with pytest.raises(ValueError):
         nose_center_of_pressure(nose_profile(1.0, 5.0, "ogive", 100), 0.0)
+
+
+# --- fin aerodynamics -------------------------------------------------------
+# These exist because I first refused to implement the Barrowman fin set,
+# reasoning that it is semi-empirical and its constants unverifiable here. That
+# was wrong. Both halves have a limit with an exact known answer, and those
+# limits pin the constants without anything having to be remembered.
+
+def test_fin_cna_converges_to_jones_slender_wing_theory():
+    """The check that makes the CN_alpha constant verifiable.
+
+    Referenced to fin area rather than body area, Barrowman's expression must
+    converge onto C_La = pi AR / 2 -- Jones' slender-wing result -- as aspect
+    ratio goes to zero.
+    """
+    from cadflow.vehicle import fin_normal_force_slope
+
+    n, r, chord = 4, 0.1, 1.0
+    body_area = math.pi * (2 * r) ** 2 / 4.0
+    ratios = []
+    for ar in (0.02, 0.05, 0.1):
+        span = ar * chord
+        # bare formula, interference divided back out
+        cna_body = fin_normal_force_slope(n, span, chord, chord, 0.0, r)
+        cna_body /= (1.0 + r / (span + r))
+        cna_fin = cna_body * body_area / (n * span * chord)
+        ratios.append(cna_fin / (math.pi * ar / 2.0))
+    assert ratios[0] == pytest.approx(1.0, abs=1e-3), ratios
+    # and it must get *better* as the limit is approached
+    assert all(abs(a - 1) < abs(b - 1) for a, b in zip(ratios, ratios[1:])), ratios
+
+
+def test_rectangular_fin_sits_at_the_quarter_chord():
+    """The check that pins the CP formula: an exact, classical answer."""
+    from cadflow.vehicle import fin_center_of_pressure
+
+    for cr in (1.0, 2.5, 10.0):
+        assert fin_center_of_pressure(cr, cr, 0.0) == pytest.approx(cr / 4.0, rel=1e-12)
+
+
+def test_sweeping_fins_back_moves_their_cp_back():
+    from cadflow.vehicle import fin_center_of_pressure
+
+    unswept = fin_center_of_pressure(1.0, 0.5, 0.0)
+    swept = fin_center_of_pressure(1.0, 0.5, 0.6)
+    assert swept > unswept
+
+
+def test_bigger_fins_make_more_normal_force():
+    from cadflow.vehicle import fin_normal_force_slope
+
+    small = fin_normal_force_slope(4, 0.05, 0.2, 0.1, 0.1, 0.1)
+    big = fin_normal_force_slope(4, 0.20, 0.2, 0.1, 0.1, 0.1)
+    assert big > small
+    more = fin_normal_force_slope(6, 0.20, 0.2, 0.1, 0.1, 0.1)
+    assert more > big
+
+
+def test_interference_factor_bounds():
+    """Kfb = 1 + r/(s+r) runs from 2 for a vanishing fin to 1 for a huge one."""
+    from cadflow.vehicle import fin_normal_force_slope
+
+    r, chord = 0.1, 0.2
+    tiny = 1e-6
+    bare_tiny = 4 * 4 * (tiny / (2 * r)) ** 2 / (
+        1 + math.sqrt(1 + (2 * math.sqrt(tiny**2) / (2 * chord)) ** 2))
+    assert fin_normal_force_slope(4, tiny, chord, chord, 0.0, r) / bare_tiny == \
+        pytest.approx(2.0, rel=1e-3)
+
+
+def test_fin_set_rejects_nonsense():
+    from cadflow.vehicle import fin_center_of_pressure, fin_normal_force_slope
+
+    with pytest.raises(ValueError):
+        fin_normal_force_slope(0, 0.1, 0.2, 0.1, 0.0, 0.1)
+    with pytest.raises(ValueError):
+        fin_normal_force_slope(4, 0.0, 0.2, 0.1, 0.0, 0.1)
+    with pytest.raises(ValueError):
+        fin_center_of_pressure(0.0, 0.1, 0.0)
+
+
+def test_fins_pull_the_vehicle_cp_aft_of_the_nose_alone():
+    """The whole point of fins, stated as an assertion."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import nose_center_of_pressure, vehicle_center_of_pressure
+
+    r, tip = 0.2845, 4.16
+    prof = nose_profile(r, 1.5, "ogive", 4000)
+    nose_only = tip - nose_center_of_pressure(prof, r)
+    both = vehicle_center_of_pressure(
+        prof, r, nose_tip_station_m=tip, fin_root_le_station_m=0.8,
+        n_fins=4, fin_span_m=0.30, fin_root_chord_m=0.50,
+        fin_tip_chord_m=0.25, fin_sweep_m=0.30)
+    assert both["cp_z_m"] < nose_only
+    assert both["cna_fins"] > 0.0
+    assert both["cna_total"] > both["cna_nose"]
+
+
+def test_a_finned_vehicle_can_be_made_stable():
+    """With fins far enough aft the static margin must go positive."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import static_margin, vehicle_center_of_pressure
+
+    r, tip, cg = 0.2845, 4.16, 1.841
+    prof = nose_profile(r, 1.5, "ogive", 4000)
+    cp = vehicle_center_of_pressure(
+        prof, r, nose_tip_station_m=tip, fin_root_le_station_m=0.7,
+        n_fins=4, fin_span_m=0.40, fin_root_chord_m=0.60,
+        fin_tip_chord_m=0.30, fin_sweep_m=0.35)
+    margin = static_margin(cg, cp["cp_z_m"], 2 * r)
+    assert margin > 0.0, (margin, cp)
+
+
+def test_moving_fins_aft_increases_the_margin():
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import static_margin, vehicle_center_of_pressure
+
+    r, tip, cg = 0.2845, 4.16, 1.841
+    prof = nose_profile(r, 1.5, "ogive", 4000)
+
+    def margin(station):
+        cp = vehicle_center_of_pressure(
+            prof, r, nose_tip_station_m=tip, fin_root_le_station_m=station,
+            n_fins=4, fin_span_m=0.35, fin_root_chord_m=0.55,
+            fin_tip_chord_m=0.28, fin_sweep_m=0.32)
+        return static_margin(cg, cp["cp_z_m"], 2 * r)
+
+    assert margin(0.6) > margin(1.6)
