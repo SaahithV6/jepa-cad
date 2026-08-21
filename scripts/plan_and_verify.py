@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cadflow.planner import plan  # noqa: E402
+from cadflow.planner import drag_coefficient, plan  # noqa: E402
 from cadflow.structural_sizing import size_wall
 from cadflow.profiles import nose_profile  # noqa: E402
 from cadflow.vehicle import (  # noqa: E402
@@ -138,21 +138,66 @@ def stack_order(names: list[str]) -> list[str]:
     return sorted(names, key=rank)
 
 
+#: Design angle of attack at max-Q, radians. A vehicle does not fly at zero
+#: incidence through the transonic region -- wind shear and guidance error put a
+#: few degrees on it, and that incidence is what loads the fins. 5 degrees is a
+#: conventional figure for a stable unguided vehicle; it is a stated assumption,
+#: named here so it can be changed in one place.
+DESIGN_ALPHA_RAD = math.radians(5.0)
+
+#: Ultimate factor on limit load. Standard aerospace practice.
+ULTIMATE_FACTOR = 1.5
+
+#: Floor on any design load, newtons. For a very light part the flight loads are
+#: not what sizes it -- being carried, clamped in a fixture, or leaned on during
+#: assembly is. Without a floor the aerodynamic cases for small components fall
+#: to a few tens of newtons and the "design" becomes minimum gauge against
+#: nothing at all. Named so it is visibly an assumption rather than a stray
+#: constant in a max().
+MIN_DESIGN_LOAD_N = 200.0
+
+
 def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
-                    payload_kg: float):
+                    payload_kg: float, cd: float = 0.42,
+                    cna_fins: float = 0.0, n_fins: int = 4):
+    """Load cases for each component.
+
+    The aerodynamic loads used to be max-Q dynamic pressure times frontal area
+    times a bare multiplier -- 1.8 for the nose, 0.9 for the fins -- with
+    nothing behind either number. They are now built from coefficients the rest
+    of the program already computes: the nose carries axial drag q Cd A plus its
+    share of normal force at the design incidence, and each fin carries the fin
+    set's normal force q CNa_fins A alpha divided by the number of fins. Both
+    then take the standard 1.5 ultimate factor.
+
+    Areas are the coupon's, so the loads stay consistent with the geometry that
+    is actually meshed.
+    """
     frontal = math.pi * (body_r_mm / 1000.0) ** 2
     thrust1 = gross_kg * 9.80665 * 4.5
+    q = float(max_q_pa)
+
+    # nose: axial drag plus normal force from CNa_nose = 2 (slender body)
+    nose_axial = q * float(cd) * frontal
+    nose_normal = q * 2.0 * frontal * DESIGN_ALPHA_RAD
+    nose_load = ULTIMATE_FACTOR * math.hypot(nose_axial, nose_normal)
+
+    # one fin's share of the fin set's normal force at the design incidence
+    fin_load = ULTIMATE_FACTOR * (
+        q * float(cna_fins) * frontal * DESIGN_ALPHA_RAD / max(1, int(n_fins)))
+
     specs = [
-        ("nose cone", "aerodynamic pressure at max-Q",
-         max(200.0, max_q_pa * frontal * 1.8),
+        ("nose cone", "drag plus normal force at max-Q, 1.5 ultimate",
+         max(MIN_DESIGN_LOAD_N, nose_load),
          dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 1.2,
               nose_height_mm=body_r_mm * 1.6, fin_thickness_mm=4.0)),
         ("thrust structure", "engine thrust into the aft ring",
          thrust1 * 1.3,
          dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 1.2,
               nose_height_mm=body_r_mm * 0.5, fin_thickness_mm=6.5)),
-        ("fin set", "aerodynamic side load at max-Q",
-         max(200.0, max_q_pa * frontal * 0.9),
+        ("fin set", f"one fin's share of fin normal force at "
+                    f"{math.degrees(DESIGN_ALPHA_RAD):.0f} deg, 1.5 ultimate",
+         max(MIN_DESIGN_LOAD_N, fin_load),
          dict(body_radius_mm=body_r_mm, body_height_mm=body_r_mm * 2.0,
               nose_height_mm=body_r_mm * 0.7, fin_thickness_mm=5.0)),
     ]
@@ -243,7 +288,9 @@ def main() -> int:
 
     results = []
     for name, why, load, geo in component_specs(
-            body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
+            body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"],
+            args.payload_kg, cd=drag_coefficient(),
+            cna_fins=fins["cna_fins"], n_fins=fins["n_fins"]):
         # Size the wall, mesh that shell, and thicken if the analysis says so.
         #
         # The membrane formula assumes a long cylinder. The thrust structure is
