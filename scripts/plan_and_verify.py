@@ -390,8 +390,10 @@ def main() -> int:
             station_z_m=station + length_m / 2.0))
         station += length_m
 
+    coupon_stack = flight_vehicle = None
     if placed:
         veh = combine(placed)
+        coupon_stack = dict(veh, length_m=station, sections=len(placed))
         L.append("\n## Coupon stack (what was analysed)\n")
         L.append(f"The six analysed parts stacked nose-forward: {station:.3f} m "
                  f"in {len(placed)} sections, {veh['mass_kg']*1000:.0f} g of "
@@ -409,6 +411,9 @@ def main() -> int:
                  f"describe the flight vehicle are below.")
 
         fv = flight_vehicle_properties(p.stack, args.payload_kg, flight_r)
+        flight_vehicle = {k: v for k, v in fv.items() if k != "sections"}
+        flight_vehicle["sections"] = [
+            {"name": n, "mass_kg": m, "station_z_m": z} for n, m, z in fv["sections"]]
         L.append("\n## Flight vehicle\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
@@ -446,7 +451,13 @@ def main() -> int:
         "specification": spec, "stages": p.stages, "split": p.split,
         "gross_kg": p.gross_kg, "achieved_km": p.achieved_km,
         "error_pct": err, "rationale": p.rationale,
-        "components": results, "all_passed": allp}, indent=2))
+        "components": results, "all_passed": allp,
+        # Vehicle-level results were markdown-only, so nothing downstream --
+        # including the model -- could consume them. Kept as two separate keys
+        # because they describe two different objects: the coupons that were
+        # meshed and analysed, and the vehicle that flew the trajectory.
+        "coupon_stack": coupon_stack,
+        "flight_vehicle": flight_vehicle}, indent=2))
     print("\n".join(L))
     return 0
 
