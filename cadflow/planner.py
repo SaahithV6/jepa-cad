@@ -313,50 +313,62 @@ def plan_sized(target_km: float, payload_kg: float, *,
 
     from cadflow.structural_sizing import stage_structural_mass
 
+    # Save and restore around the whole solve. The restore used to sit after
+    # the loop, outside any finally, and wrote a hardcoded 0.14 rather than
+    # whatever had been there -- so an exception anywhere in the iteration left
+    # the module permanently mis-configured, and every design made afterwards in
+    # the same process silently used the last iterate's coefficient. It happens
+    # to restore correctly on the happy path, which is exactly what makes that
+    # kind of bug survive.
+    _saved_coeff = STRUCT_COEFF
+    _saved_mr = MAX_STAGE_MR
+
     coeff = STRUCT_COEFF
     history = []
     p = None
-    for it in range(max_iters):
-        globals()["STRUCT_COEFF"] = coeff
-        globals()["MAX_STAGE_MR"] = 1.0 / coeff * 0.62
-        p = plan(target_km, payload_kg, propellant=propellant,
-                 chamber_bar=chamber_bar)
-        if p is None:
-            return None, coeff, history
+    try:
+      for it in range(max_iters):
+          globals()["STRUCT_COEFF"] = coeff
+          globals()["MAX_STAGE_MR"] = 1.0 / coeff * 0.62
+          p = plan(target_km, payload_kg, propellant=propellant,
+                   chamber_bar=chamber_bar)
+          if p is None:
+              return None, coeff, history
 
-        radius_m = max(0.05, (p.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
-        # Load each stage's structure with the acceleration this iterate's own
-        # trajectory actually reaches, not an assumed 4.5 g and 3.0 g. Those
-        # assumptions understated the load by a factor of three to five -- the
-        # flown peaks for a two-stage vehicle are 15.4 g and 16.5 g -- which is
-        # why this fixed point converged to a structural coefficient around
-        # 0.05 when real sounding rockets sit at 0.10 to 0.25. The structure was
-        # coming out light because it was being sized for a flight it does not
-        # make.
-        flown_g = p.trajectory.get("max_axial_g_by_stage") or []
-        total_struct = 0.0
-        total_prop = 0.0
-        for i, st in enumerate(p.stack):
-            supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
-                                         for s in p.stack[i:])
-            g_load = flown_g[i] if i < len(flown_g) else (4.5 if i == 0 else 3.0)
-            thrust = supported * G0 * g_load
-            m_struct, _parts = stage_structural_mass(
-                st.prop_mass_kg, radius_m, thrust)
-            total_struct += m_struct
-            total_prop += st.prop_mass_kg
+          radius_m = max(0.05, (p.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
+          # Load each stage's structure with the acceleration this iterate's own
+          # trajectory actually reaches, not an assumed 4.5 g and 3.0 g. Those
+          # assumptions understated the load by a factor of three to five -- the
+          # flown peaks for a two-stage vehicle are 15.4 g and 16.5 g -- which is
+          # why this fixed point converged to a structural coefficient around
+          # 0.05 when real sounding rockets sit at 0.10 to 0.25. The structure was
+          # coming out light because it was being sized for a flight it does not
+          # make.
+          flown_g = p.trajectory.get("max_axial_g_by_stage") or []
+          total_struct = 0.0
+          total_prop = 0.0
+          for i, st in enumerate(p.stack):
+              supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
+                                           for s in p.stack[i:])
+              g_load = flown_g[i] if i < len(flown_g) else (4.5 if i == 0 else 3.0)
+              thrust = supported * G0 * g_load
+              m_struct, _parts = stage_structural_mass(
+                  st.prop_mass_kg, radius_m, thrust)
+              total_struct += m_struct
+              total_prop += st.prop_mass_kg
 
-        new_coeff = total_struct / max(total_struct + total_prop, 1e-6)
-        new_coeff = min(0.60, max(0.03, new_coeff))
-        history.append({"iter": it, "coeff_in": coeff, "coeff_out": new_coeff,
-                        "gross_kg": p.gross_kg, "stages": p.stages,
-                        "struct_kg": total_struct, "prop_kg": total_prop})
-        if abs(new_coeff - coeff) / max(coeff, 1e-6) < tol:
-            coeff = new_coeff
-            break
-        # damped update: the map can oscillate when buckling and strength swap
-        coeff = 0.5 * coeff + 0.5 * new_coeff
+          new_coeff = total_struct / max(total_struct + total_prop, 1e-6)
+          new_coeff = min(0.60, max(0.03, new_coeff))
+          history.append({"iter": it, "coeff_in": coeff, "coeff_out": new_coeff,
+                          "gross_kg": p.gross_kg, "stages": p.stages,
+                          "struct_kg": total_struct, "prop_kg": total_prop})
+          if abs(new_coeff - coeff) / max(coeff, 1e-6) < tol:
+              coeff = new_coeff
+              break
+          # damped update: the map can oscillate when buckling and strength swap
+          coeff = 0.5 * coeff + 0.5 * new_coeff
 
-    globals()["STRUCT_COEFF"] = 0.14
-    globals()["MAX_STAGE_MR"] = 1.0 / 0.14 * 0.62
+    finally:
+        globals()["STRUCT_COEFF"] = _saved_coeff
+        globals()["MAX_STAGE_MR"] = _saved_mr
     return p, coeff, history

@@ -130,3 +130,51 @@ def test_solved_structural_coefficient_is_physically_plausible():
     assert plan is not None
     assert 0.08 <= coeff <= 0.30, coeff
     assert history
+
+
+def test_plan_sized_restores_module_state_even_when_it_fails():
+    """plan_sized mutates module-level constants while it iterates.
+
+    The restore used to sit after the loop, outside any finally, and wrote a
+    hardcoded 0.14 rather than whatever had been there. On the happy path it
+    looked fine -- which is precisely what let it survive -- but an exception
+    anywhere in the iteration left the module permanently mis-configured, and
+    every design made afterwards in the same process would silently use the last
+    iterate's structural coefficient.
+    """
+    import cadflow.planner as planner
+    import cadflow.structural_sizing as sizing
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    before = (planner.STRUCT_COEFF, planner.MAX_STAGE_MR)
+
+    planner.plan_sized(4000.0, 25.0)
+    assert (planner.STRUCT_COEFF, planner.MAX_STAGE_MR) == before
+
+    original = sizing.stage_structural_mass
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("solver blew up")
+
+    sizing.stage_structural_mass = explode
+    try:
+        with pytest.raises(RuntimeError):
+            planner.plan_sized(4000.0, 25.0)
+    finally:
+        sizing.stage_structural_mass = original
+
+    assert (planner.STRUCT_COEFF, planner.MAX_STAGE_MR) == before
+
+
+def test_plan_is_unaffected_by_a_preceding_plan_sized():
+    """The observable consequence: designs must not depend on call order."""
+    import cadflow.planner as planner
+    from generate_propulsion_trajectory_corpus import load_coupling
+
+    load_coupling()
+    first = planner.plan(4000.0, 25.0)
+    planner.plan_sized(4000.0, 25.0)
+    second = planner.plan(4000.0, 25.0)
+    assert first.stages == second.stages
+    assert first.gross_kg == pytest.approx(second.gross_kg, rel=1e-12)
