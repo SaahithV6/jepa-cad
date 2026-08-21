@@ -729,3 +729,42 @@ the same files, and silently reverted the corpus. The contract test failed by
 name on exactly the two slots. The generator now takes an exclusive lock and
 refuses to run alongside another, and writes through a temporary file and a
 rename so a reader never sees a half-written corpus.
+
+## Coupons are not the vehicle
+
+Worth stating plainly, because a packet section briefly claimed otherwise.
+
+The CAD body radius is clamped to 50 mm so the parts stay meshable. The
+trajectory's reference diameter for the 25 kg / 4,000 km mission is 569 mm. That
+is a factor of 8 in radius, and it means the six analysed parts carry 672 g of
+structure against the 151 kg the planner sized for the same vehicle. Every
+stress, mode and margin in the component table is a statement about a
+representative section, not about the flight article.
+
+This is a deliberate trade, not an oversight: meshing a 569 mm shell at a 3 mm
+wall with three elements through the thickness is a very different computation
+from meshing a 71 mm one, and the loop would not close in reasonable time. But
+the packet has to say which object each number is about, so it now reports the
+coupon stack and the flight vehicle as two separate sections with the scale
+factor written out between them.
+
+The flight vehicle is built only from numbers the planner produced -- stage
+lengths from propellant volume at LOX/RP-1 bulk density, each stage a uniform
+cylinder of its wet mass:
+
+    length             4.16 m
+    diameter           569 mm
+    wet mass           1106.6 kg   (planner gross 1106.6 kg)
+    centre of gravity  1.841 m from the aft end, 44% of length
+    pitch inertia      1288.7 kg m^2
+    roll inertia       44.8 kg m^2
+
+The wet mass reproducing the planner's gross exactly is what confirms this
+describes the same vehicle that flew the trajectory, and it is asserted rather
+than eyeballed. Pitch inertia is 29x roll, as it must be for something 4.16 m
+long and 0.57 m across.
+
+The stage model is coarse: a real stage has domes, a dry engine at one end, and
+a propellant level that moves through the burn. Centre of pressure is not
+reported at all, because it needs the Barrowman set and half-remembered
+coefficients do not belong next to numbers that are exact.
