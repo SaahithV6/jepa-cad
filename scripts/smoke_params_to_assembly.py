@@ -66,7 +66,12 @@ def constraints_to_geometry(constraints: dict) -> dict:
     # hollowed, the inner ones floated free inside the void and the assembly
     # stopped being one watertight body, so nothing could be meshed. Nose sits
     # on top of the body, fins attach to the outside of the wall at the aft end.
-    nose_z = (body_h + nose_h) / 2.0
+    # Overlap the stacked sections rather than butting them face to face.
+    # A coincident-face union leaves an internal interface that tessellates into
+    # near-duplicate facets, and gmsh then either rejects the mesh or falls back
+    # to a convex hull -- which for a hollow part is a solid billet.
+    stack_overlap = max(1.0, min(3.0, body_r * 0.05))
+    nose_z = (body_h + nose_h) / 2.0 - stack_overlap
     fin_x = body_r + fin_span / 2.0 - min(2.0, wall + 1.0)
     fin_z = -body_h / 2.0 + fin_chord / 2.0
 

@@ -128,10 +128,26 @@ def longest_axis(nodes: dict[int, tuple[float, float, float]]) -> str:
     Loading one transversely instead bends it as a cantilever, which for a thin
     shell is a completely different (and far more severe) problem.
     """
-    xs = [p[0] for p in nodes.values()]
-    ys = [p[1] for p in nodes.values()]
-    zs = [p[2] for p in nodes.values()]
-    spans = {"x": max(xs) - min(xs), "y": max(ys) - min(ys), "z": max(zs) - min(zs)}
+    def robust_span(vals: list[float]) -> float:
+        """5th-95th percentile span, so a protrusion does not define the axis.
+
+        Plain min/max is dominated by outliers: on a short tank section a fin
+        sticking out radially made the x extent (83.6 mm) exceed the axial z
+        extent (58.8 mm), so the part was loaded across its diameter instead of
+        along its length. That reported 2,538 MPa on a wall whose nominal stress
+        is 116 MPa. A fin is a handful of nodes and the body is thousands, so
+        trimming the tails picks the structural axis.
+        """
+        v = sorted(vals)
+        if len(v) < 20:
+            return v[-1] - v[0]
+        return v[int(0.95 * len(v))] - v[int(0.05 * len(v))]
+
+    spans = {
+        "x": robust_span([p[0] for p in nodes.values()]),
+        "y": robust_span([p[1] for p in nodes.values()]),
+        "z": robust_span([p[2] for p in nodes.values()]),
+    }
     return max(spans, key=spans.get)
 
 
@@ -177,6 +193,7 @@ def generate_fea_case_inp(
     case_dir: Path | str,
     mesh_filename: str = "mesh_solid.inp",
     case_filename: str = "case.inp",
+    load_axis: str | None = "z",
     total_load: float = 5_000_000.0,  # N; sized for meter-scale meshes + steel E
     youngs_modulus: float = 210_000_000_000.0,  # Pa; meshes are in meters
     poisson: float = 0.3,
@@ -194,7 +211,13 @@ def generate_fea_case_inp(
     mesh_inp = case_path / mesh_filename
     write_solid_mesh_inp(mesh, mesh_inp)
 
-    axis = longest_axis(mesh.nodes)
+    # Axis is specified, not inferred. Every part constraints_to_geometry
+    # builds is axial along z, and inference gets squat parts wrong: the thrust
+    # structure is 71.4 mm across and 58.9 mm long, so "longest axis" is
+    # legitimately x, and loading it across the diameter reported 2,538 MPa on a
+    # wall whose nominal stress is 116 MPa. Callers with genuinely non-axial
+    # geometry can pass load_axis=None to fall back to inference.
+    axis = load_axis or longest_axis(mesh.nodes)
     fixed, loaded = pick_face_boundary_nodes(mesh.nodes, axis=axis)
     if not fixed or not loaded:
         raise ValueError(f"Could not derive boundary nodes for {case_path}")
@@ -300,6 +323,7 @@ def prepare_fea_workdir_from_stl(
     mesh_timeout_s: int = 180,
     scale_to_meters: bool = True,
     allow_hull_fallback: bool = True,
+    load_axis: str | None = "z",
 ) -> FEASetupResult:
     """Mesh an STL (mm) → MSH2 (meters) → CalculiX ``case.inp`` in ``workdir``."""
     from cadflow.rocket_physics_suite import mesh_stl_volume
@@ -340,6 +364,7 @@ def prepare_fea_workdir_from_stl(
 
     return generate_fea_case_inp(
         case_path,
+        load_axis=load_axis,
         total_load=float(total_load_n),
         youngs_modulus=float(youngs_modulus),
         poisson=float(poisson),
