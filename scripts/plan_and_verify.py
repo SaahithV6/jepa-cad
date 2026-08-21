@@ -557,6 +557,73 @@ def main() -> int:
                      f"stages earlier to hold this down; this planner does "
                      f"neither, so the number is reported rather than hidden.")
         L.append("")
+    # Thermal. An engine is very often limited by what its throat can survive
+    # rather than by performance or structures, and nothing in this packet knew
+    # that. The throat is the worst place on the vehicle: densest gas, nearly
+    # chamber temperature, smallest area.
+    thermal = None
+    try:
+        from cadflow.combustion import COMBINATIONS, REFERENCE, chamber_equilibrium
+        from cadflow.thermal import (chamber_heat_load, exhaust_thermal_power,
+                                     regenerative_cooling)
+        if args.propellant in COMBINATIONS:
+            of = REFERENCE[args.propellant][0]
+            ch = chamber_equilibrium(args.propellant, of, args.chamber_bar * 1e5)
+            at = p.stack[0].throat_area_m2
+            mdot = ch.pressure_pa * at / ch.c_star_m_s
+            load = chamber_heat_load(ch, at, mdot)
+            power = exhaust_thermal_power(mdot, ch)
+            fuel_flow = mdot / (1.0 + of)
+            fuel = COMBINATIONS[args.propellant][1]
+            cool = regenerative_cooling(load["q_total_w"], fuel_flow, fuel)
+            thr = load["throat"]
+            thermal = {
+                "of_ratio": of,
+                "throat_diameter_mm": thr.throat_diameter_m * 1000.0,
+                "throat_heat_flux_MWm2": thr.heat_flux_mw_m2,
+                "wall_temp_max_K": thr.wall_temp_k,
+                "recovery_temp_K": thr.recovery_temp_k,
+                "prandtl": thr.prandtl,
+                "reynolds": thr.reynolds,
+                "q_total_kw": load["q_total_w"] / 1e3,
+                "rejected_fraction": load["q_total_w"] / power,
+                "coolant": cool,
+            }
+            L.append("\n## Thermal\n")
+            L.append("| quantity | value |")
+            L.append("|---|---|")
+            L.append(f"| throat diameter | {thermal['throat_diameter_mm']:.1f} mm |")
+            L.append(f"| throat heat flux | "
+                     f"{thermal['throat_heat_flux_MWm2']:.1f} MW/m^2 at a "
+                     f"{thr.wall_temp_k:.0f} K wall |")
+            L.append(f"| adiabatic wall temperature | "
+                     f"{thr.recovery_temp_k:.0f} K |")
+            L.append(f"| total heat into the walls | "
+                     f"{thermal['q_total_kw']:.0f} kW, "
+                     f"{100*thermal['rejected_fraction']:.2f}% of exhaust power |")
+            L.append(f"| regenerative cooling | {fuel} rises "
+                     f"{cool['delta_t_k']:.0f} K to {cool['outlet_temp_k']:.0f} K "
+                     f"(limit {cool['limit_temp_k']:.0f} K) |")
+            L.append(f"| cooling closes | "
+                     f"{'**yes**' if cool['feasible'] else '**NO**'}, margin "
+                     f"{cool['margin_k']:+.0f} K |")
+            L.append("\nGas properties are the real equilibrium mixture's -- "
+                     f"Prandtl {thr.prandtl:.3f}, Reynolds {thr.reynolds:.2e} -- "
+                     "not a textbook value for air. The convective correlation "
+                     "is the standard turbulent form; what makes it checkable is "
+                     "its scalings, and heat flux is asserted to go as throat "
+                     "diameter to the -0.200 and chamber pressure to the 0.8. "
+                     "The cooling check is an energy balance and involves no "
+                     "correlation at all.")
+            if not cool["feasible"]:
+                L.append(f"\n> The fuel flow cannot carry this heat load. The "
+                         f"engine needs film cooling, an ablative liner, or a "
+                         f"lower chamber pressure. Reported rather than ignored, "
+                         f"because it is a harder constraint than any structural "
+                         f"margin in the table below.")
+    except Exception as exc:  # noqa: BLE001 - thermal is an addition, not a gate
+        print(f"thermal analysis unavailable: {exc}", flush=True)
+
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
              " shell p99 | peak | 1st mode | mass | Izz | status |")
@@ -700,7 +767,8 @@ def main() -> int:
         # meshed and analysed, and the vehicle that flew the trajectory.
         "coupon_stack": coupon_stack,
         "flight_vehicle": flight_vehicle,
-        "stability": stability}, indent=2))
+        "stability": stability,
+        "thermal": thermal}, indent=2))
     print("\n".join(L))
     return 0
 
