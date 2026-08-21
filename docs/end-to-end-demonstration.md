@@ -903,3 +903,58 @@ The packet now reports both coefficients every run and flags the gap, because
 it is the most consequential thing it can say about its own vehicle: designed at
 0.14 while the mass model wants 0.251, the vehicle is optimistic and would fall
 short of its target. `--solve-structure` designs at the solved value instead.
+
+## The result parser was reading a hundredth of the results
+
+Every stress number in this document before this section was wrong, and the way
+it was wrong is worth stating precisely.
+
+CalculiX writes FRD in fixed-width columns: " -1", a 10-character node number,
+then six 12-character values. A negative value fills its entire field, so it
+abuts the previous one with no separator. `2.44293E+08-1.04280E+07` is two
+numbers, and `str.split()` returns six tokens where eight are needed.
+
+The parser caught the resulting unpack failure in a `try/except` and continued.
+So it discarded every line containing a negative stress component. On one
+14,013-line result it read 100 rows, and those hundred were exactly the rows
+where all six components happened to be positive -- not a sample of the field,
+a selection from it.
+
+Two consequences, one of them visible in every table that had been printed.
+p99 of 100 values is the 99th of 100, which is the maximum, which is why the
+"shell p99" and "peak" columns had been coming out identical run after run. The
+metric was chosen specifically so that they would differ -- a percentile
+describes the structure while the peak tracks a mesh singularity -- and the code
+had never once been able to demonstrate the property its own docstring claimed.
+
+Fixed by reading the fields by position, with the old whitespace path kept as a
+fallback. On that same result, 100 nodes became 2,034, and p99 557 MPa against a
+maximum of 1,624.
+
+Mesh convergence on the thrust structure, 170 kN at r/t = 4.1, now behaves the
+way an FEA is supposed to:
+
+    cl_max   elements   median    p95    p99     max
+     8.25       3,253     49.6   66.8  107.1    1589
+     6.00       8,387     50.2   62.9   78.4    1640
+     4.00      24,524     50.5   60.5   79.1    1062
+     3.00      50,737     51.0   58.7   78.4     445
+
+Median and p99 converge. The maximum swings by a factor of four across the same
+four meshes and never settles, which is precisely the corner singularity the
+percentile exists to step around.
+
+The 25 kg / 4,000 km packet re-run with the corrected parser, all six passing:
+
+  component         load      wall     driver     p99      peak   1st mode
+  nose cone          399 N   0.80 mm   min gauge    2.7      5     2201 Hz
+  thrust structure 63482 N   5.70 mm   analysis    94.0    398     8735 Hz
+  fin set            200 N   0.80 mm   min gauge   31.3     82      342 Hz
+  stage 1 tank    166740 N  12.00 mm   analysis   137.6    808     2221 Hz
+  interstage      166740 N  12.00 mm   analysis   195.1   1827     6761 Hz
+  stage 2 tank     35454 N   1.48 mm   strength   147.9    445     2152 Hz
+
+p99 and peak are now separated by a factor of three to ten, which is what a tet
+mesh with re-entrant corners should give. Two components sit at the 12 mm wall
+limit and converge below the allowable there; the stage 1 tank went from 3.06 mm
+to 12.00 mm once its stresses were being read in full.
