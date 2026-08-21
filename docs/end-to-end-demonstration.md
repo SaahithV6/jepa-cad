@@ -489,50 +489,81 @@ its own predicted engine:
 
 Mean 0.051 decades over a 1,000x span, 11 of 11 within 2x, five within 4%.
 
-## Nose shape, and a drag model that did not survive its own validation
+## Nose shape, and the wave-drag model
 
 The airframe was built entirely from cylinders and boxes, so the "nose cone" was
-a cylinder with a flat forward face. `cadflow/profiles.py` and the new
-`revolve_profile` backend op replace it with a real surface of revolution in four
-standard rocketry families -- tangent ogive, conical, elliptical, and von Karman.
-All four revolve to within 0.000% of their analytic volume, at 2 faces each
-because the meridian is fitted as a single spline.
+a cylinder with a flat forward face. `cadflow/profiles.py` and the `revolve_profile`
+backend op replace it with a real surface of revolution in four standard rocketry
+families -- tangent ogive, conical, elliptical, and von Karman. All four revolve
+to within 0.000% of their analytic volume, at 2 faces each because the meridian
+is fitted as a single spline.
 
-Making the shape *matter* is the harder half, and it is not done. Cd is drawn
-from the CFD corpus without reference to geometry and the planner uses a hard
-CD = 0.42, so a cone and a von Karman ogive still fly identically.
+Making the shape *matter* took two attempts, and the first one is worth recording
+because the failure was instructive.
 
-The attempt was Karman's slender-body wave drag,
+Karman's slender-body integral is
 
     D/q = -(1/2 pi) INT INT S''(x1) S''(x2) ln|x1 - x2| dx1 dx2
 
-discretised as a dense quadratic form with the log singularity absorbed into the
-diagonal via INT INT_cell ln|x-y| = h^2 (ln h - 3/2). The quadrature machinery is
-correct and was checked in isolation: integrating ln|x-y| over [0,L]^2 with a
-constant integrand converges cleanly to the exact L^2 (ln L - 3/2), to +0.03% at
-n=1600 for both L=1 and L=10.
+The first attempt discretised it on a uniform grid with the log singularity
+absorbed into the diagonal via INT INT_cell ln|x-y| = h^2 (ln h - 3/2). Against
+Sears-Haack it came out high by a factor that drifted 4.59 -> 5.20 across
+n=200..6400 without settling, so it was deleted rather than shipped.
 
-The physics did not validate. Against the Sears-Haack closed form
-D/q = 24 V^2/(pi L^4) the result is high by a factor that is constant in L and R
--- so the scaling law is right -- but that factor drifts with refinement,
-4.59 at n=200 through 5.20 at n=6400, extrapolating to about 5.3 rather than to
-1. The cause is that Sears-Haack has S'' ~ t^(-1/2) at both ends, which uniform
-finite differences cannot represent, and the integrand S'' S'' ln is delicate
-exactly there. Direct quadrature is the wrong method for this integral; the
-classical treatment expands the area distribution in a Fourier sine series under
-x = (L/2)(1 - cos theta) precisely to avoid it. The module was removed rather
-than shipped, since a drag model that misses a known closed form by 5x would
-teach the world model something false with full confidence.
+The fault was the numerical method, not the physics. The quadrature was already
+correct -- integrating ln|x-y| over [0,L]^2 with a constant integrand converges
+to the exact L^2(ln L - 3/2) to +0.03% at n=1600. What it could not handle was
+that S'' is *singular* at the ends of exactly the shapes that matter: the Haack
+family has S ~ x^(3/2) at the tip, hence S'' ~ x^(-1/2), and no uniform grid
+represents that.
 
-The CFD stack is not a way around this in its present form: the routes run
-simpleFoam, which is incompressible steady RANS and cannot produce wave drag at
-the Mach numbers where a rocket's drag actually matters.
+The fix is to integrate in theta under x = (L/2)(1 - cos theta), evaluated at
+midpoints so no node ever lands on an end. The Jacobian (L/2) sin(theta) vanishes
+at the ends exactly fast enough to cancel the singularity -- S'' * w stays finite
+-- and the clustering resolves the region that carries the drag. Sears-Haack then
+converges to six figures and Richardson-extrapolates to the same 1.395282 at
+every n from 100 to 6400, with D/q L^2/R^4 constant to one part in 1e6 across
+four bodies of different length and radius.
 
-What did land is the geometry that any of those methods needs, computed exactly:
-`profile_volume` and `wetted_area` are exact for a polyline meridian, and the
-cone reproduces pi R sqrt(R^2 + L^2) to 0.0000%. At R=0.5, L=2.0 an elliptical
-nose wets 5.062 against a cone's 3.238 -- 56% more skin for the same length and
-base radius, which is a real shape effect sitting ready for a friction model.
+That value is (9 pi^3 / 2) R^4 / L^2, equivalently 128 V^2/(pi L^4), which is
+16/3 times the 24 V^2/(pi L^4) that is often quoted. Since the quadrature is
+validated independently, the discrepancy is a constant in the physics rather than
+in the numerics, and the magnitudes alone do not settle it: at fineness 10 the
+two candidates give wave-drag coefficients of 0.111 and 0.021, and real slender
+bodies sit between. So the module is used **relatively**, normalised to a tangent
+ogive, where any common prefactor cancels exactly. Cd keeps its absolute level
+from the measured CFD corpus.
 
-Open: implement the sine-series wave drag, validate it against Sears-Haack, and
-key the corpus Cd on nose shape and fineness ratio instead of drawing it blind.
+What licenses the relative use is a check that holds whatever the prefactor is.
+The von Karman ogive is by construction the minimum-wave-drag nose for a given
+length and base radius, and it comes out minimal at every fineness ratio tested.
+The tangent ogive lands 4-20% above it and converges toward it as the nose slims,
+and the cone penalty falls with fineness, 2.83 -> 1.69, which is the right trend:
+shape matters most when blunt. tests/test_wave_drag.py holds 15 such checks.
+
+One limit of the theory is real and is honoured rather than papered over.
+Slender-body theory needs a *pointed* nose, S'(0) = 0 at the tip. Ogive, conical
+and von Karman satisfy it; an elliptical nose meets the axis with infinite slope,
+S'(0) = 2 pi R^2 / L, and a blunt nose at supersonic speed has a detached bow
+shock the theory does not model at all. It is flagged by `is_trustworthy` and
+excluded from corpus sampling rather than quietly assigned a number. The CFD
+stack cannot stand in here either: those routes run simpleFoam, which is
+incompressible steady RANS and produces no wave drag at all.
+
+Shape now reaches the trajectory. `cd_multiplier` scales the wave-drag share of
+Cd and returns exactly 1.0 for an ogive, so the default vehicle flies precisely
+as it did before. For 25 kg to 4,000 km:
+
+  von Karman   CD 0.4037   gross 1106.6 kg   apogee 4175.9 km
+  ogive        CD 0.4200   gross 1106.6 kg   apogee 4120.5 km
+  conical      CD 0.6044   gross 1380.6 kg   apogee 3848.7 km
+
+A conical nose costs 274 kg of vehicle on the same mission. The corpus samples
+pointed nose shapes and fineness, and carries `nose_wave_factor` as a 42nd
+conditioning slot -- shape as the physically meaningful scalar rather than a
+category index, so the model sees a continuous quantity it can interpolate.
+
+Supporting geometry is exact: `profile_volume` and `wetted_area` are exact for a
+polyline meridian, with the cone reproducing pi R sqrt(R^2 + L^2) and pi R^2 L/3
+to 0.0000%. At R=0.5, L=2.0 an elliptical nose wets 5.062 against a cone's 3.238
+-- 56% more skin for the same length and base radius.
