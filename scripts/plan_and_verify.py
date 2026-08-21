@@ -148,6 +148,11 @@ DESIGN_ALPHA_RAD = math.radians(5.0)
 #: Ultimate factor on limit load. Standard aerospace practice.
 ULTIMATE_FACTOR = 1.5
 
+#: Axial acceleration a payload is typically qualified to, in g. Exceeding it is
+#: not a solver error -- it is a real consequence of holding thrust constant
+#: while mass falls -- but it is a design finding and belongs in the packet.
+PAYLOAD_G_LIMIT = 10.0
+
 #: Ceiling on wall thickness, millimetres. Past this the part is not a thin
 #: shell any more and the sizing model behind it no longer applies, so hitting
 #: it means the design needs a different architecture rather than more metal.
@@ -467,6 +472,21 @@ def main() -> int:
              f"downrange {p.trajectory['downrange_m']/1000:.1f} km, "
              f"max-Q {p.trajectory['max_q_pa']/1000:.1f} kPa, "
              f"separations {seps}.\n")
+    gmax = p.trajectory.get("max_axial_g", 0.0)
+    gs_by = p.trajectory.get("max_axial_g_by_stage") or []
+    if gmax:
+        per = ", ".join(f"stage {i+1} {g:.1f} g"
+                        for i, g in enumerate(gs_by))
+        L.append(f"Peak axial acceleration **{gmax:.1f} g** ({per}). This is "
+                 f"what sizes the structure, and it is a property of the "
+                 f"architecture rather than a choice: thrust is held while mass "
+                 f"falls, so acceleration climbs through each burn.")
+        if gmax > PAYLOAD_G_LIMIT:
+            L.append(f"\n> That exceeds the {PAYLOAD_G_LIMIT:.0f} g a payload is "
+                     f"typically qualified to. A real vehicle throttles or "
+                     f"stages earlier to hold this down; this planner does "
+                     f"neither, so the number is reported rather than hidden.")
+        L.append("")
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
              " shell p99 | peak | 1st mode | mass | Izz | status |")
