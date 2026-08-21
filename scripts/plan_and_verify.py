@@ -29,7 +29,8 @@ from cadflow.planner import plan  # noqa: E402
 from cadflow.structural_sizing import size_wall
 from cadflow.profiles import nose_profile  # noqa: E402
 from cadflow.vehicle import (  # noqa: E402
-    Placed, combine, flight_vehicle_properties, size_fins_for_margin)
+    Placed, combine, flight_vehicle_properties, size_fins_for_margin,
+    static_margin)
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
@@ -431,11 +432,32 @@ def main() -> int:
         nose_len = 2.0 * flight_r * 2.0
         prof = nose_profile(flight_r, nose_len, "ogive", 4000)
         root_le = 2.0 * flight_r
+        # Margin has to hold through the burn, not just at liftoff. CG moves
+        # as propellant drains, so the fins are sized for whichever state is
+        # worst rather than for whichever one is convenient -- and which state
+        # that is gets computed, not assumed.
+        burn_states = [("liftoff", [1.0] * len(p.stack))]
+        if len(p.stack) > 1:
+            burn_states.append(("stage 1 burnout",
+                                [0.0] + [1.0] * (len(p.stack) - 1)))
+        else:
+            burn_states.append(("burnout", [0.0]))
+        cgs = []
+        for label, rem in burn_states:
+            st = flight_vehicle_properties(p.stack, args.payload_kg, flight_r,
+                                           propellant_remaining=rem)
+            cgs.append((label, st["cg_z_m"], st["mass_kg"]))
+        worst_label, worst_cg, _ = min(cgs, key=lambda c: c[1])
+
         fins = size_fins_for_margin(prof, flight_r,
                                     nose_tip_station_m=fv["length_m"],
-                                    cg_z_m=fv["cg_z_m"],
+                                    cg_z_m=worst_cg,
                                     fin_root_le_station_m=root_le)
-        stability = dict(fins)
+        margins = [(lbl, static_margin(cg, fins["cp_z_m"], 2.0 * flight_r), m)
+                   for lbl, cg, m in cgs]
+        stability = dict(fins, sized_for=worst_label,
+                         margins=[{"state": l, "margin_cal": mg, "mass_kg": m}
+                                  for l, mg, m in margins])
         L.append("\n## Stability\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
@@ -447,9 +469,15 @@ def main() -> int:
         L.append(f"| centre of pressure | {fins['cp_z_m']:.3f} m from aft |")
         L.append(f"| centre of gravity | {fv['cg_z_m']:.3f} m from aft |")
         L.append(f"| static margin | {fins['static_margin_cal']:.2f} calibers "
-                 f"(target {fins['target_margin_cal']:.1f}) |")
+                 f"(target {fins['target_margin_cal']:.1f}, sized for "
+                 f"{worst_label}) |")
         L.append(f"| normal force slope | nose {fins['cna_nose']:.2f} + fins "
                  f"{fins['cna_fins']:.2f} = {fins['cna_total']:.2f} /rad |")
+        L.append("")
+        L.append("| burn state | vehicle mass | centre of gravity | static margin |")
+        L.append("|---|---|---|---|")
+        for (lbl, mg, m), (_, cg, _) in zip(margins, cgs):
+            L.append(f"| {lbl} | {m:.1f} kg | {cg:.3f} m | {mg:.2f} cal |")
         L.append("\nFins are sized by solving for the span that meets the "
                  "margin, not assumed and then checked. The nose centre of "
                  "pressure comes from slender-body theory as L - V/A_base, which "

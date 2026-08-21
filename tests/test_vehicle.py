@@ -376,3 +376,59 @@ def test_moving_fins_aft_increases_the_margin():
         return static_margin(cg, cp["cp_z_m"], 2 * r)
 
     assert margin(0.6) > margin(1.6)
+
+
+def test_burning_propellant_moves_the_cg_and_lightens_the_vehicle():
+    """Margin has to hold through the burn, so the CG has to move with it."""
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    full = flight_vehicle_properties(stages, 25.0, 0.2845,
+                                     propellant_remaining=[1.0, 1.0])
+    burnt = flight_vehicle_properties(stages, 25.0, 0.2845,
+                                      propellant_remaining=[0.0, 1.0])
+    assert burnt["mass_kg"] < full["mass_kg"]
+    # bottom-heavy vehicle: emptying the aft stage moves the CG forward
+    assert burnt["cg_z_m"] > full["cg_z_m"]
+    # the tank does not shrink as it drains
+    assert burnt["length_m"] == pytest.approx(full["length_m"])
+
+
+def test_burnout_mass_is_exactly_structure_plus_upper_stages():
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    burnt = flight_vehicle_properties(stages, 25.0, 0.2845,
+                                      propellant_remaining=[0.0, 1.0])
+    expected = (124.16 + 167.42 + 27.26 + 25.0)
+    assert burnt["mass_kg"] == pytest.approx(expected, rel=1e-9)
+
+
+def test_propellant_fraction_is_clamped_and_validated():
+    stages = [_Stage(100.0, 20.0)]
+    over = flight_vehicle_properties(stages, 5.0, 0.2, propellant_remaining=[5.0])
+    full = flight_vehicle_properties(stages, 5.0, 0.2, propellant_remaining=[1.0])
+    assert over["mass_kg"] == pytest.approx(full["mass_kg"])
+    with pytest.raises(ValueError):
+        flight_vehicle_properties(stages, 5.0, 0.2, propellant_remaining=[1.0, 1.0])
+
+
+def test_liftoff_is_the_critical_state_for_a_bottom_heavy_vehicle():
+    """Which burn state is worst is computed, not assumed -- but for this
+    configuration it must come out as liftoff, since that is when the CG is
+    furthest aft and therefore closest to the centre of pressure."""
+    from cadflow.profiles import nose_profile
+    from cadflow.vehicle import size_fins_for_margin
+
+    stages = [_Stage(762.71, 124.16), _Stage(167.42, 27.26)]
+    r = 0.2845
+    cgs = {
+        lbl: flight_vehicle_properties(stages, 25.0, r,
+                                       propellant_remaining=rem)["cg_z_m"]
+        for lbl, rem in (("liftoff", [1.0, 1.0]), ("burnout", [0.0, 1.0]))
+    }
+    assert min(cgs, key=cgs.get) == "liftoff"
+
+    prof = nose_profile(r, 4 * r, "ogive", 2000)
+    fins = size_fins_for_margin(prof, r, nose_tip_station_m=4.16,
+                                cg_z_m=cgs["liftoff"],
+                                fin_root_le_station_m=2 * r)
+    burnout_margin = static_margin(cgs["burnout"], fins["cp_z_m"], 2 * r)
+    # sizing for the worst state must leave the other one no worse
+    assert burnout_margin >= fins["static_margin_cal"]

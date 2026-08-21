@@ -108,6 +108,7 @@ def flight_vehicle_properties(
     radius_m: float,
     bulk_density: float = PROPELLANT_BULK_DENSITY,
     payload_length_m: float | None = None,
+    propellant_remaining: list[float] | None = None,
 ) -> dict:
     """Mass properties of the vehicle the trajectory actually flies.
 
@@ -129,11 +130,18 @@ def flight_vehicle_properties(
     if r <= 0.0:
         raise ValueError("radius must be positive")
 
+    remaining = list(propellant_remaining) if propellant_remaining is not None \
+        else [1.0] * len(list(stages))
+    if len(remaining) != len(list(stages)):
+        raise ValueError("propellant_remaining must have one entry per stage")
+
     parts: list[Placed] = []
     station = 0.0
     # aft to forward: stage 1 first
     for i, st in enumerate(stages):
-        wet = float(st.prop_mass_kg) + float(st.struct_mass_kg)
+        frac = max(0.0, min(1.0, float(remaining[i])))
+        wet = float(st.prop_mass_kg) * frac + float(st.struct_mass_kg)
+        # the tank keeps its size as it drains, so length uses the full load
         volume = float(st.prop_mass_kg) / float(bulk_density)
         length = max(0.1, volume / (math.pi * r * r))
         ixx, izz = cylinder_inertia(wet, r, length)
