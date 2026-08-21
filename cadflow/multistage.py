@@ -38,12 +38,19 @@ class Stage:
     mol_mass: float
 
 
+try:  # aeroheating is an addition, not a gate on flying a trajectory
+    from cadflow.thermal import skin_temperature as _skin_temperature
+except Exception:  # noqa: BLE001
+    _skin_temperature = None
+
+
 def integrate_stack(
     stages: list[Stage],
     payload_kg: float,
     *,
     cd: float,
     ref_area_m2: float,
+    ref_length_m: float = 4.0,
     pitchover_time: float = 8.0,
     pitchover_angle: float = math.radians(3.0),
     dt: float = 0.2,
@@ -75,6 +82,12 @@ def integrate_stack(
     max_axial = 0.0
     max_axial_by_stage = [0.0] * len(stages)
     liftoff_thrust = 0.0
+    # Peak skin temperature on the way up. The structural analysis uses
+    # room-temperature allowables, and the skin does not stay at room
+    # temperature -- so this is the number that says whether that assumption
+    # holds. max_skin_temp_K was a conditioning slot with nothing behind it.
+    max_skin_temp = 0.0
+    skin_temp_alt = 0.0
     sep_times: list[float] = []
     coasting_until = -1.0
     pitched = False
@@ -99,6 +112,12 @@ def integrate_stack(
         v_safe = max(v, 1e-3)
         drag = 0.5 * rho * v_safe * v_safe * cd * ref_area_m2
         max_q = max(max_q, 0.5 * rho * v_safe * v_safe)
+
+        if _skin_temperature is not None and rho > 1e-6 and v > 50.0:
+            _, _, t_amb = atmosphere(h)
+            skin = _skin_temperature(t_amb, rho, v, ref_length_m)["skin_temp_k"]
+            if skin > max_skin_temp:
+                max_skin_temp, skin_temp_alt = skin, h
 
         if not pitched and t >= pitchover_time:
             fpa = math.pi / 2.0 - pitchover_angle
@@ -190,4 +209,6 @@ def integrate_stack(
         "max_axial_g": max_axial,
         "max_axial_g_by_stage": max_axial_by_stage,
         "liftoff_thrust_n": liftoff_thrust,
+        "max_skin_temp_k": max_skin_temp,
+        "max_skin_temp_altitude_m": skin_temp_alt,
     }

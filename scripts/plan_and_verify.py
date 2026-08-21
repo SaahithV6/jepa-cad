@@ -172,6 +172,11 @@ DESIGN_ALPHA_RAD = math.radians(5.0)
 #: Ultimate factor on limit load. Standard aerospace practice.
 ULTIMATE_FACTOR = 1.5
 
+#: Temperature above which aluminium alloys stop holding useful strength. Not a
+#: sharp limit -- 6061-T6 is already well down by 500 K -- but past it a
+#: room-temperature allowable is the wrong number to be designing against.
+ALUMINIUM_SERVICE_K = 450.0
+
 #: Axial acceleration a payload is typically qualified to, in g. Exceeding it is
 #: not a solver error -- it is a real consequence of holding thrust constant
 #: while mass falls -- but it is a design finding and belongs in the packet.
@@ -615,6 +620,27 @@ def main() -> int:
                      "diameter to the -0.200 and chamber pressure to the 0.8. "
                      "The cooling check is an energy balance and involves no "
                      "correlation at all.")
+            skin = p.trajectory.get("max_skin_temp_k") or 0.0
+            skin_alt = (p.trajectory.get("max_skin_temp_altitude_m") or 0.0) / 1000.0
+            if skin:
+                thermal["max_skin_temp_K"] = skin
+                thermal["max_skin_temp_altitude_km"] = skin_alt
+                L.append(f"| peak skin temperature | {skin:.0f} K at "
+                         f"{skin_alt:.1f} km |")
+                if skin > ALUMINIUM_SERVICE_K:
+                    L.append(f"\n> The skin reaches {skin:.0f} K, past the "
+                             f"{ALUMINIUM_SERVICE_K:.0f} K at which aluminium "
+                             f"keeps useful strength. Every allowable in the "
+                             f"component table below is a room-temperature "
+                             f"value, so those margins do not hold at this "
+                             f"condition: the vehicle needs a thermal "
+                             f"protection system, a different skin material, or "
+                             f"a trajectory that spends less time fast in thick "
+                             f"air. This is a radiation-equilibrium steady "
+                             f"state and the vehicle passes through quickly, so "
+                             f"it is an upper bound rather than what the "
+                             f"structure actually reaches -- but it is far "
+                             f"enough past the limit to matter.")
             if not cool["feasible"]:
                 L.append(f"\n> The fuel flow cannot carry this heat load. The "
                          f"engine needs film cooling, an ablative liner, or a "

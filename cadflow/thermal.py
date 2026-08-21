@@ -236,3 +236,101 @@ def exhaust_thermal_power(mass_flow_kg_s: float, chamber_state) -> float:
     cp_molar = chamber_state.gamma / (chamber_state.gamma - 1.0) * R_UNIVERSAL
     cp_mass = cp_molar / chamber_state.molecular_mass
     return float(mass_flow_kg_s) * cp_mass * chamber_state.chamber_temp_k
+
+
+# ---------------------------------------------------------------------------
+# Aeroheating
+# ---------------------------------------------------------------------------
+#
+# The airframe has its own thermal problem, and it was invisible: the structural
+# analysis uses room-temperature aluminium allowables while the skin can run
+# hundreds of degrees hotter than ambient on the way up. max_skin_temp_K was a
+# conditioning slot with nothing behind it.
+
+#: Stefan-Boltzmann constant, W/(m^2 K^4).
+SIGMA_SB = 5.670374419e-8
+
+#: Emissivity of an oxidised or painted metal skin. Bare polished aluminium is
+#: far lower, around 0.05, and would run much hotter -- which is itself a design
+#: decision rather than a property of the vehicle.
+SKIN_EMISSIVITY = 0.8
+
+#: Sutherland's law constants for air.
+_MU_REF, _T_REF_SUTH, _S_SUTH = 1.716e-5, 273.15, 110.4
+
+#: Air properties taken as constant across the flight envelope. Prandtl varies
+#: only between about 0.68 and 0.70 over the range that matters.
+AIR_PRANDTL = 0.70
+AIR_GAMMA = 1.4
+AIR_CP = 1005.0
+
+
+def sutherland_viscosity(temp_k: float) -> float:
+    """Dynamic viscosity of air, Pa s.
+
+    Checked against Cantera's transport data over the flight range: within 1%
+    below 600 K, drifting to -8% by 2000 K, which is Sutherland's known
+    high-temperature behaviour. Viscosity enters the heat transfer as Re^0.8, so
+    8% there is about 1.6% in the answer, and the alternative is a Cantera call
+    at every timestep of every trajectory.
+    """
+    t = max(1.0, float(temp_k))
+    return _MU_REF * (t / _T_REF_SUTH) ** 1.5 * (_T_REF_SUTH + _S_SUTH) / (t + _S_SUTH)
+
+
+def recovery_temperature(ambient_temp_k: float, mach: float,
+                         prandtl: float = AIR_PRANDTL,
+                         gamma: float = AIR_GAMMA) -> float:
+    """Temperature the skin would reach with no heat loss at all.
+
+    Exact given the Mach number: a turbulent boundary layer recovers Pr^(1/3) of
+    the kinetic energy rather than all of it. This is a hard ceiling on skin
+    temperature -- nothing the vehicle does can exceed it.
+    """
+    r = float(prandtl) ** (1.0 / 3.0)
+    return float(ambient_temp_k) * (1.0 + r * 0.5 * (gamma - 1.0) * float(mach) ** 2)
+
+
+def skin_temperature(ambient_temp_k: float, ambient_density: float,
+                     velocity_m_s: float, length_m: float,
+                     emissivity: float = SKIN_EMISSIVITY) -> dict:
+    """Radiation-equilibrium skin temperature.
+
+    The skin heats convectively and cools by radiating to space, and settles
+    where the two balance: h (T_recovery - T_wall) = eps sigma T_wall^4. Solved
+    by bisection, which is safe because the left side falls monotonically with
+    wall temperature and the right side rises.
+
+    Conduction into the structure and radiation from the atmosphere are both
+    neglected, which makes this an upper bound on the steady temperature at that
+    condition -- and the vehicle is often not there long enough to reach it.
+    """
+    rho = max(0.0, float(ambient_density))
+    v = max(0.0, float(velocity_m_s))
+    t_inf = max(1.0, float(ambient_temp_k))
+    if rho <= 0.0 or v <= 0.0:
+        return {"skin_temp_k": t_inf, "recovery_temp_k": t_inf,
+                "h_w_m2k": 0.0, "mach": 0.0, "flux_w_m2": 0.0}
+
+    sound = math.sqrt(AIR_GAMMA * 287.05 * t_inf)
+    mach = v / sound
+    t_rec = recovery_temperature(t_inf, mach)
+
+    mu = sutherland_viscosity(t_inf)
+    reynolds = rho * v * max(0.01, float(length_m)) / mu
+    # turbulent flat plate, averaged over the length
+    nusselt = 0.0296 * reynolds ** 0.8 * AIR_PRANDTL ** (1.0 / 3.0)
+    conductivity = mu * AIR_CP / AIR_PRANDTL
+    h = nusselt * conductivity / max(0.01, float(length_m))
+
+    eps = max(1e-6, float(emissivity))
+    lo, hi = t_inf, t_rec
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if h * (t_rec - mid) > eps * SIGMA_SB * mid ** 4:
+            lo = mid
+        else:
+            hi = mid
+    wall = 0.5 * (lo + hi)
+    return {"skin_temp_k": wall, "recovery_temp_k": t_rec, "h_w_m2k": h,
+            "mach": mach, "flux_w_m2": h * (t_rec - wall)}

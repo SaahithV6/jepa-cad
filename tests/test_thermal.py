@@ -189,3 +189,96 @@ def test_cooling_rejects_nonsense():
     state, mdot, _a = _engine()
     with pytest.raises(ValueError):
         throat_heat_flux(state, 0.0, mdot)
+
+
+# --- aeroheating ------------------------------------------------------------
+# The airframe's own thermal problem, and it was invisible: the structural
+# analysis uses room-temperature aluminium allowables while the skin can run
+# many hundreds of degrees hotter on the way up.
+
+def test_sutherland_matches_real_transport_data():
+    """Checked against Cantera rather than trusted.
+
+    Within 1% below 600 K and drifting to -8% by 2000 K, which is Sutherland's
+    known high-temperature behaviour. Viscosity enters as Re^0.8, so that is
+    about 1.6% in the answer.
+    """
+    ct = pytest.importorskip("cantera")
+    from cadflow.thermal import sutherland_viscosity
+
+    air = ct.Solution("air.yaml")
+    for temp in (200.0, 300.0, 600.0):
+        air.TPX = temp, 101325.0, {"O2": 0.21, "N2": 0.79}
+        assert sutherland_viscosity(temp) == pytest.approx(air.viscosity, rel=0.02)
+
+
+def test_recovery_temperature_is_the_isentropic_relation():
+    """Exact given Mach: a turbulent layer recovers Pr^(1/3) of the energy."""
+    from cadflow.thermal import AIR_PRANDTL, recovery_temperature
+
+    t_inf, mach, gamma = 250.0, 5.0, 1.4
+    r = AIR_PRANDTL ** (1.0 / 3.0)
+    want = t_inf * (1.0 + r * 0.5 * (gamma - 1.0) * mach**2)
+    assert recovery_temperature(t_inf, mach) == pytest.approx(want, rel=1e-12)
+    assert recovery_temperature(t_inf, 0.0) == pytest.approx(t_inf)
+
+
+def test_skin_never_exceeds_the_recovery_temperature():
+    """A hard ceiling: radiation can only cool, so the skin cannot pass the
+    temperature it would reach with no heat loss at all."""
+    from generate_propulsion_trajectory_corpus import atmosphere
+    from cadflow.thermal import skin_temperature
+
+    for alt_km, v in ((5, 400), (15, 1100), (30, 2400), (60, 3400)):
+        rho, _p, temp = atmosphere(alt_km * 1000.0)
+        s = skin_temperature(temp, rho, v, 4.0)
+        assert s["skin_temp_k"] <= s["recovery_temp_k"] + 1e-6, (alt_km, s)
+        assert s["skin_temp_k"] >= temp - 1e-6
+
+
+def test_thin_air_cannot_heat_the_skin():
+    """High above the atmosphere the recovery temperature is enormous and
+    entirely irrelevant, because there is nothing to carry the heat."""
+    from generate_propulsion_trajectory_corpus import atmosphere
+    from cadflow.thermal import skin_temperature
+
+    rho_lo, _p, t_lo = atmosphere(80_000.0)
+    rho_hi, _p2, t_hi = atmosphere(15_000.0)
+    high = skin_temperature(t_lo, rho_lo, 3800.0, 4.0)
+    low = skin_temperature(t_hi, rho_hi, 1100.0, 4.0)
+    assert high["recovery_temp_k"] > low["recovery_temp_k"] * 3
+    assert high["skin_temp_k"] < low["skin_temp_k"]
+
+
+def test_a_shinier_skin_runs_hotter():
+    """Emissivity is a design decision, not a property of the vehicle: polished
+    metal radiates poorly and pays for it."""
+    from generate_propulsion_trajectory_corpus import atmosphere
+    from cadflow.thermal import skin_temperature
+
+    rho, _p, temp = atmosphere(25_000.0)
+    dull = skin_temperature(temp, rho, 2000.0, 4.0, emissivity=0.9)
+    shiny = skin_temperature(temp, rho, 2000.0, 4.0, emissivity=0.05)
+    assert shiny["skin_temp_k"] > dull["skin_temp_k"]
+
+
+def test_stationary_vehicle_is_at_ambient():
+    from cadflow.thermal import skin_temperature
+
+    s = skin_temperature(250.0, 1.0, 0.0, 4.0)
+    assert s["skin_temp_k"] == pytest.approx(250.0)
+    assert s["flux_w_m2"] == pytest.approx(0.0)
+
+
+def test_trajectory_reports_peak_skin_temperature():
+    """The number that says whether room-temperature allowables hold."""
+    from generate_propulsion_trajectory_corpus import load_coupling
+    from cadflow.planner import plan
+
+    load_coupling()
+    traj = plan(4000.0, 25.0).trajectory
+    assert "max_skin_temp_k" in traj
+    assert traj["max_skin_temp_k"] > 300.0
+    assert traj["max_skin_temp_altitude_m"] > 0.0
+    # and it must peak in the atmosphere, not out of it
+    assert traj["max_skin_temp_altitude_m"] < 100_000.0

@@ -157,7 +157,11 @@ def fly_plan(total_prop: float, fractions: list[float], payload: float,
     dia = max(0.10, (gross / 1000.0) ** (1.0 / 3.0) * 0.55)
     r = integrate_stack(stages, payload,
                         cd=drag_coefficient(nose_shape, nose_fineness),
-                        ref_area_m2=math.pi * (dia / 2) ** 2, dt=0.2,
+                        ref_area_m2=math.pi * (dia / 2) ** 2,
+                        # boundary-layer length: a vehicle is roughly ten
+                        # diameters long, which is what sets its skin Reynolds
+                        ref_length_m=max(1.0, 10.0 * dia),
+                        dt=0.2,
                         pitchover_angle=math.radians(pitchover_deg))
     return r["apogee_m"] / 1000.0, gross, stages, split, r
 
