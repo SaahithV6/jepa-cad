@@ -141,68 +141,106 @@ def main() -> int:
     results = []
     for name, why, load, geo in component_specs(
             body_r, p.stack, p.gross_kg, p.trajectory["max_q_pa"], args.payload_kg):
-        # Size the wall first, then mesh THAT shell. Previously the component
-        # was meshed solid and the FEA reported margins of 200-300x, which is a
-        # property of a billet rather than of the structure being designed.
+        # Size the wall, mesh that shell, and thicken if the analysis says so.
+        #
+        # The membrane formula assumes a long cylinder. The thrust structure is
+        # 42.8 mm long on a 71 mm diameter, so end effects cover the whole part
+        # and the analytic wall under-sizes it: sized to 116 MPa nominal it came
+        # back at 279 MPa. Rather than trust either number alone, iterate --
+        # this is design-by-analysis, and it is why the analysis exists.
         wall = size_wall(load, geo["body_radius_mm"] / 1000.0,
                          geo["body_height_mm"] / 1000.0)
-        geom = {"body_radius_mm": geo["body_radius_mm"],
-                "body_height_mm": geo["body_height_mm"],
-                "nose_radius_mm": geo["body_radius_mm"],
-                "nose_height_mm": geo["nose_height_mm"],
-                "fin_span_mm": 14.0, "fin_thickness_mm": geo["fin_thickness_mm"],
-                "fin_chord_mm": 18.0, "fillet_radius_mm": 2.5,
-                "wall_thickness_mm": wall.thickness_m * 1000.0,
-                # Mesh sizing has to follow the wall: a thin shell needs about
-                # three elements through the thickness or gmsh fails with
-                # "PLC Error: a segment and a facet intersect". At 8/2 mm on a
-                # 1.11 mm wall it failed outright; at 1.5/0.4 it meshes to
-                # 51,403 nodes.
-                # Element size floors. Scaling purely with the wall drove
-                # cl_min to 0.27 mm on a 0.8 mm shell, which on a 70 mm part is
-                # millions of tets -- CalculiX then died with "Failed during
-                # initial partitioning" and the component returned nothing.
-                # 0.4 mm still gives two elements through the thinnest wall
-                # here while keeping the model solvable.
-                "cl_max_mm": max(0.8, wall.thickness_m * 1000.0 * 1.4),
-                "cl_min_mm": max(0.25, wall.thickness_m * 1000.0 / 3.0)}
-        try:
-            rep = run_confirmed(params_mm=geom,
-                out=args.out / "components" / name.replace(" ", "_").replace("/", "-"),
-                max_stress_mpa=ALLOWABLE_MPA, max_disp_mm=3.0, max_iters=1,
-                load_n=load, prompt=name)
-            acc = rep.get("accepted") or {}
-            vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
-            # If the mesher fell back to a convex hull the geometry solved was a
-            # solid billet, not this shell, so the stress means nothing here.
-            comp_dir = args.out / "components" / name.replace(" ", "_").replace("/", "-")
-            if any(comp_dir.rglob("MESH_IS_CONVEX_HULL")):
-                vm, ok, hulled = None, False, True
-            else:
-                hulled = False
-            err = None
-        except Exception as exc:  # noqa: BLE001
-            # Record why. Swallowing this left two components reporting a bare
-            # "-" with empty output directories and no way to tell a mesh
-            # failure from a solver failure.
-            vm, ok, hulled = None, False, False
-            err = f"{type(exc).__name__}: {exc}"
-            print(f"  [{name}] {err}", flush=True)
+        t_mm = wall.thickness_m * 1000.0
+        vm = None
+        ok = False
+        hulled = False
+        err = None
+        dist = None
         comp_dir = args.out / "components" / name.replace(" ", "_").replace("/", "-")
-        dist = None if hulled else frd_stress_percentiles(comp_dir)
-        if dist is not None:
-            # judge on the field, not the corner
-            ok = dist["p99"] <= ALLOWABLE_MPA
+
+        for attempt in range(3):
+            geom = {"body_radius_mm": geo["body_radius_mm"],
+                    "body_height_mm": geo["body_height_mm"],
+                    "nose_radius_mm": geo["body_radius_mm"],
+                    "nose_height_mm": geo["nose_height_mm"],
+                    # Only the fin set has fins. Every component was being
+                    # built with a fin stub, including the tanks and the thrust
+                    # structure, which welds an artificial stress riser onto
+                    # parts that do not have one -- and a partially embedded
+                    # stub in a thick wall makes a sharp internal T-joint whose
+                    # stress does not relieve when the wall is thickened. That
+                    # is why the thrust structure went 230 -> 817 MPa as it was
+                    # made heavier.
+                    "fin_span_mm": 14.0 if "fin" in name else 0.0,
+                    "fin_thickness_mm": geo["fin_thickness_mm"],
+                    "fin_chord_mm": 18.0, "fillet_radius_mm": 2.5,
+                    "wall_thickness_mm": t_mm,
+                    # Roughly three elements through the wall, but the element
+                    # size is also capped against the radius. Scaling cl purely
+                    # with the wall meant a 12 mm wall gave 16.8 mm elements, so
+                    # the loaded face carried only a handful of nodes and
+                    # load_per_node = total_load / len(loaded) turned into point
+                    # loads. Stress then *rose* with thickness -- 230 MPa at
+                    # 2.44 mm, 817 MPa at 6.48 mm -- which is a load-introduction
+                    # artifact, not structure.
+                    "cl_max_mm": min(max(0.8, t_mm * 1.4),
+                                     geo["body_radius_mm"] / 6.0),
+                    "cl_min_mm": min(max(0.25, t_mm / 3.0),
+                                     geo["body_radius_mm"] / 20.0)}
+            try:
+                rep = run_confirmed(
+                    params_mm=geom, out=comp_dir,
+                    max_stress_mpa=ALLOWABLE_MPA, max_disp_mm=3.0, max_iters=1,
+                    load_n=load, prompt=name)
+                acc = rep.get("accepted") or {}
+                vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
+                hulled = any(comp_dir.rglob("MESH_IS_CONVEX_HULL"))
+                if hulled:
+                    vm, ok = None, False
+                err = None
+            except Exception as exc:  # noqa: BLE001
+                vm, ok, hulled = None, False, False
+                err = f"{type(exc).__name__}: {exc}"
+                print(f"  [{name}] {err}", flush=True)
+                break
+
+            dist = None if hulled else frd_stress_percentiles(comp_dir)
+            if dist is None:
+                break
             vm = dist["p99"]
+            ok = vm <= ALLOWABLE_MPA
+            if ok:
+                break
+            # thicken in proportion to the overshoot and re-analyse
+            t_mm = min(t_mm * min(2.0, 1.15 * vm / ALLOWABLE_MPA), 12.0)
+            print(f"  [{name}] p99 {vm:.0f} MPa over {ALLOWABLE_MPA:.0f}; "
+                  f"thickening wall to {t_mm:.2f} mm", flush=True)
+
+        # Recompute wall properties at the thickness the analysis settled on,
+        # otherwise the packet reports mass and margin for the first estimate
+        # rather than the design that was actually verified.
+        import math as _m
+        from cadflow.structural_sizing import E_PA, RHO, SIGMA_YIELD_PA, _knockdown
+        t_final = t_mm / 1000.0
+        r_final = geo["body_radius_mm"] / 1000.0
+        L_final = geo["body_height_mm"] / 1000.0
+        wall_mass = RHO * 2.0 * _m.pi * r_final * t_final * L_final
+        sigma_app = load / (2.0 * _m.pi * r_final * t_final)
+        gamma_kd = _knockdown(r_final / t_final)
+        sigma_cr = gamma_kd * 0.605 * E_PA * t_final / r_final
+        wall_driver = wall.driver if abs(t_mm - wall.thickness_m * 1000.0) < 1e-6 \
+            else "analysis"
+        buckling_margin = sigma_cr / max(sigma_app, 1.0)
+        wall_mm_final = t_mm
         results.append({"name": name, "why": why, "load_n": load,
                         "error": err,
                         "mesh_was_hull": hulled, "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
                         "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
-                        "wall_mm": wall.thickness_m * 1000.0,
-                        "wall_mass_kg": wall.mass_kg,
-                        "wall_driver": wall.driver,
-                        "buckling_margin": wall.margin_buckling,
+                        "wall_mm": wall_mm_final,
+                        "wall_mass_kg": wall_mass,
+                        "wall_driver": wall_driver,
+                        "buckling_margin": buckling_margin,
                         "passed": ok and wall.margin_buckling >= 1.0})
 
     L = [f"# Design packet\n", f"**Specification:** {spec}\n", "## Architecture\n"]

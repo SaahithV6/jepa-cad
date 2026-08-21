@@ -80,6 +80,7 @@ def constraints_to_geometry(constraints: dict) -> dict:
         "parts": [
             tube(body_r, body_h),
             tube(nose_r, nose_h, at=[0.0, 0.0, nose_z]),
+        ] + ([] if fin_span <= 0.0 else [
             {
                 "kind": "box",
                 "params": {
@@ -90,10 +91,17 @@ def constraints_to_geometry(constraints: dict) -> dict:
                     "at": [fin_x, 0.0, fin_z],
                 },
             },
-        ],
-        "features": [
-            {"op": "fillet", "params": {"radius": min(1.5, fin_thick * 0.4)}},
-        ],
+        ]),
+        # Fillet solid parts only. The operation rounds *every* edge, which on
+        # a thin shell means rounding the wall edges themselves and leaving
+        # slivers: the nose cone came out at 54 faces against 12 for the same
+        # assembly unfilleted, and gmsh then ran past a 900 s timeout on it.
+        # Clamping the radius did not help because the problem is the number of
+        # sliver faces, not their size. The tank only ever worked because the
+        # fillet silently failed there and fell back to the clean solid.
+        "features": ([] if wall > 0.0 else
+                     [{"op": "fillet",
+                       "params": {"radius": min(1.5, fin_thick * 0.4)}}]),
     }
 
 
