@@ -115,7 +115,8 @@ def required_delta_v(apogee_km: float) -> float:
 
 
 def build_stack_n(total_prop: float, fractions: list[float], payload: float,
-                  pc: float, prop: str, of_ratio: float | None = None
+                  pc: float, prop: str, of_ratio: float | None = None,
+                  twr_by_stage: list[float] | None = None
                   ) -> tuple[list[Stage], float, list[tuple]]:
     """Build an N-stage stack given the propellant split."""
     gamma, tc, mol = chamber_properties(prop, of_ratio)
@@ -133,7 +134,12 @@ def build_stack_n(total_prop: float, fractions: list[float], payload: float,
 
     # expansion ratio rises with stage number: lower stages fight ambient
     eps_by_stage = [12.0, 30.0, 60.0, 80.0]
-    twr_by_stage = [4.5, 3.0, 2.2, 2.0]
+    # Liftoff thrust-to-weight per stage. Exposed as an argument because it is
+    # the lever that sets peak axial acceleration: hold thrust while mass falls
+    # and acceleration climbs through the burn in proportion to the starting
+    # ratio. A design loop that finds 16 g on a 10 g payload has to be able to
+    # act on something.
+    twr_by_stage = list(twr_by_stage or [4.5, 3.0, 2.2, 2.0])
 
     stages = []
     for i, (p_i, s_i) in enumerate(zip(props, structs)):
@@ -151,9 +157,10 @@ def fly_plan(total_prop: float, fractions: list[float], payload: float,
              pc: float, prop: str, pitchover_deg: float = 3.0,
              nose_shape: str = NOSE_SHAPE,
              nose_fineness: float = NOSE_FINENESS,
-             of_ratio: float | None = None):
+             of_ratio: float | None = None,
+             twr_by_stage: list[float] | None = None):
     stages, gross, split = build_stack_n(total_prop, fractions, payload, pc, prop,
-                                         of_ratio)
+                                         of_ratio, twr_by_stage)
     dia = max(0.10, (gross / 1000.0) ** (1.0 / 3.0) * 0.55)
     r = integrate_stack(stages, payload,
                         cd=drag_coefficient(nose_shape, nose_fineness),
@@ -171,14 +178,15 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
               pitchover_deg: float = 3.0,
               nose_shape: str = NOSE_SHAPE,
               nose_fineness: float = NOSE_FINENESS,
-              of_ratio: float | None = None):
+              of_ratio: float | None = None,
+              twr_by_stage: list[float] | None = None):
     """Bisect total propellant until the stack flies the target."""
     # Near-escape missions need mass ratios around 95, so the upper bound has
     # to allow a vehicle that heavy or the search reports no solution for a
     # mission that is merely expensive. 40,000 km already needs ~650x payload.
     lo, hi = payload * 0.3, payload * 400000.0
-    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
-    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
+    a_lo, *_ = fly_plan(lo, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio, twr_by_stage)
+    a_hi, *_ = fly_plan(hi, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio, twr_by_stage)
     if not (a_lo <= target_km <= a_hi):
         return None
 
@@ -194,7 +202,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     prev_x, prev_a = lo, a_lo
     for i in range(1, n_scan + 1):
         x = lo * (hi / lo) ** (i / n_scan)
-        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio)
+        a, *_ = fly_plan(x, fractions, payload, pc, prop, pitchover_deg, nose_shape, nose_fineness, of_ratio, twr_by_stage)
         if a >= target_km:
             lo, hi = prev_x, x
             break
@@ -213,7 +221,7 @@ def solve_for(target_km: float, fractions: list[float], payload: float,
     for _ in range(40):
         mid = math.sqrt(lo * hi)
         a, gross, stages, split, r = fly_plan(mid, fractions, payload, pc, prop,
-                                             pitchover_deg, nose_shape, nose_fineness, of_ratio)
+                                             pitchover_deg, nose_shape, nose_fineness, of_ratio, twr_by_stage)
         err = abs(a - target_km) / target_km if math.isfinite(a) else float("inf")
         if err < best_err:
             best_err, best = err, (mid, a, gross, stages, split, r)
@@ -255,7 +263,8 @@ def _splits_for(n: int) -> list[list[float]]:
 def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
          chamber_bar: float = 55.0, nose_shape: str = NOSE_SHAPE,
          nose_fineness: float = NOSE_FINENESS,
-         of_ratio: float | None = None) -> Plan | None:
+         of_ratio: float | None = None,
+         twr_by_stage: list[float] | None = None) -> Plan | None:
     """Choose an architecture for this mission and size it."""
     pc = chamber_bar * 1e5
     rationale: list[str] = []
@@ -300,7 +309,8 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
           for pitch in (1.5, 3.0, 6.0):
             got = solve_for(target_km, fr, payload_kg, pc, propellant,
                             pitchover_deg=pitch, nose_shape=nose_shape,
-                            nose_fineness=nose_fineness, of_ratio=of_ratio)
+                            nose_fineness=nose_fineness, of_ratio=of_ratio,
+                            twr_by_stage=twr_by_stage)
             if got is None:
                 continue
             tp, achieved, gross, stages, split, r = got
@@ -335,7 +345,8 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
 def plan_sized(target_km: float, payload_kg: float, *,
                propellant: str = "lox_rp1", chamber_bar: float = 55.0,
                max_iters: int = 8, tol: float = 0.01,
-               of_ratio: float | None = None):
+               of_ratio: float | None = None,
+              twr_by_stage: list[float] | None = None):
     """Plan a mission with structural mass solved rather than assumed.
 
     STRUCT_COEFF is a constant asserted in the source. Real structural mass
