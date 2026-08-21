@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from cadflow.manifest import JobManifest  # noqa: E402
 from cadflow.pipeline import run_pipeline  # noqa: E402
+from cadflow.profiles import NOSE_SHAPES, centred, nose_profile  # noqa: E402
 
 
 def constraints_to_geometry(constraints: dict) -> dict:
@@ -47,6 +48,33 @@ def constraints_to_geometry(constraints: dict) -> dict:
     # solid volume. A boolean cut is exact -- 0.00% against the analytic tube
     # volume.
     wall = float(constraints.get("wall_thickness_mm", 0.0))
+
+    # The nose is a surface of revolution, not a cylinder. A cylinder has
+    # neither the drag nor the load path of a nose cone, and its flat forward
+    # face made the FEA answer a question about a shape that would never fly.
+    nose_shape = str(constraints.get("nose_shape", "ogive")).lower()
+    if nose_shape not in NOSE_SHAPES:
+        nose_shape = "ogive"
+
+    def nose(radius: float, height: float, at=None) -> dict:
+        outer = centred(nose_profile(radius, height, nose_shape), height)
+        part = {"kind": "revolve", "params": {"profile": outer}}
+        if at is not None:
+            part["params"]["at"] = at
+        inner_r, inner_h = radius - wall, height - wall
+        if wall > 0.0 and inner_r > 0.5 and inner_h > wall:
+            # The cut tool is the same curve one wall in, pushed below the base
+            # so the aft end opens into the body it sits on. What is left at the
+            # tip is a solid plug, which is what a real nose cone has anyway.
+            pad = max(0.5, min(2.0, radius * 0.05))
+            prof = centred(nose_profile(inner_r, inner_h, nose_shape), inner_h)
+            dz = -height / 2.0 - pad + inner_h / 2.0
+            part["features"] = [{
+                "op": "cut",
+                "params": {"tool": {"kind": "revolve", "params": {
+                    "profile": prof, "at": [0.0, 0.0, dz]}}},
+            }]
+        return part
 
     def tube(radius: float, height: float, at=None) -> dict:
         params = {"radius": radius, "height": height}

@@ -1,0 +1,98 @@
+"""Nose-cone meridian profiles.
+
+The airframe used to be built entirely from cylinders and boxes, which meant the
+"nose cone" was a cylinder of the body radius with a flat forward face. That is
+wrong twice over: it has none of the drag behaviour of a real nose, and its flat
+face carries load nothing like a curved one, so an FEA on it was answering a
+question about a shape that would never fly.
+
+These are the standard rocketry meridian curves, each returned as (radius, z)
+points to be revolved about Z. z runs from 0 at the base to `length` at the tip;
+the caller re-centres. Every family satisfies r(0) = radius and r(length) = 0.
+
+  ogive       tangent ogive -- the common airframe nose; meets the body tangent
+              so there is no slope discontinuity at the joint
+  conical     straight taper; simple to make, higher drag
+  elliptical  blunt nose, best subsonic, poor transonic
+  vonkarman   the Haack series at C=0, the minimum-drag body of revolution for a
+              given length and base radius; not tangent at the base, so it has a
+              small slope break there
+
+A note on hollow noses: the shell is formed by revolving this profile and
+cutting an inner one built with (radius - wall, length - wall). That gives an
+exactly `wall` thickness at the base, where the surface is near-axial and where
+the hoop and axial stresses actually live, and somewhat less than `wall` normal
+thickness up near the tip where the surface is inclined. The tip is a solid plug
+either way, which is what real nose cones are.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Sequence
+
+NOSE_SHAPES = ("ogive", "conical", "elliptical", "vonkarman")
+
+
+def nose_profile(
+    radius: float,
+    length: float,
+    shape: str = "ogive",
+    n: int = 24,
+) -> list[tuple[float, float]]:
+    """Meridian of a nose cone as (radius, z), base at z=0, tip at z=length."""
+    r = float(radius)
+    ell = float(length)
+    if r <= 0.0 or ell <= 0.0:
+        raise ValueError(f"nose_profile needs positive radius/length, got {r}/{ell}")
+    shape = str(shape).lower()
+    if shape not in NOSE_SHAPES:
+        raise ValueError(f"unknown nose shape {shape!r}, expected one of {NOSE_SHAPES}")
+    n = max(8, int(n))
+
+    pts: list[tuple[float, float]] = []
+    for i in range(n + 1):
+        z = ell * i / n
+        x = ell - z  # distance from the tip, which is how the curves are defined
+        if shape == "conical":
+            y = r * x / ell
+        elif shape == "elliptical":
+            # r(z) = R sqrt(1 - (z/L)^2)
+            y = r * math.sqrt(max(0.0, 1.0 - (z / ell) ** 2))
+        elif shape == "ogive":
+            # rho is the ogive radius: the circle through tip and base that is
+            # tangent to the body at the base.
+            rho = (r * r + ell * ell) / (2.0 * r)
+            y = math.sqrt(max(0.0, rho * rho - z * z)) + r - rho
+        else:  # vonkarman
+            # theta = arccos(1 - 2x/L);  y = R/sqrt(pi) * sqrt(theta - sin(2 theta)/2)
+            theta = math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * x / ell)))
+            y = (r / math.sqrt(math.pi)) * math.sqrt(
+                max(0.0, theta - math.sin(2.0 * theta) / 2.0)
+            )
+        pts.append((max(0.0, y), z))
+
+    # Pin the ends exactly; the closed forms are within rounding of these but the
+    # revolve wants the base radius to match the body it joins, to the micron.
+    pts[0] = (r, 0.0)
+    pts[-1] = (0.0, ell)
+    return pts
+
+
+def profile_volume(profile: Sequence[tuple[float, float]]) -> float:
+    """Exact volume of the solid of revolution of a piecewise-linear profile.
+
+    Each segment sweeps a conical frustum, so this is exact for a polyline and a
+    good check on a spline fit through the same points.
+    """
+    total = 0.0
+    for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
+        dz = abs(z1 - z0)
+        total += math.pi * dz * (r0 * r0 + r0 * r1 + r1 * r1) / 3.0
+    return total
+
+
+def centred(profile: Sequence[tuple[float, float]], length: float) -> list[tuple[float, float]]:
+    """Shift a base-at-zero profile so it is centred on z=0, like the primitives."""
+    half = float(length) / 2.0
+    return [(r, z - half) for r, z in profile]

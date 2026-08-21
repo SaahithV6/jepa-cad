@@ -35,7 +35,49 @@ class CadBackend(Protocol):
 
     def sculpt_offset(self, shape: Any, distance: float) -> Any: ...
 
+    def revolve_profile(self, profile: Sequence[tuple[float, float]],
+                        angle_deg: float = 360.0, smooth: bool = True) -> Any:
+        """Revolve a 2-D profile about the Z axis.
+
+        This is what lets a nose cone actually be a nose cone. Until now the
+        "nose" was a cylinder -- a stand-in with neither the shape nor the drag
+        of an ogive, and with a flat forward face that carries load nothing like
+        a real one.
+
+        Points are (radius, z) with radius >= 0; the profile is closed back
+        along the axis automatically. smooth fits a single spline through the
+        points, so the revolve produces ONE lateral face rather than one per
+        segment -- a 24-segment polyline would give ~50 faces on a hollow part,
+        which is the face count that previously ran gmsh past its timeout.
+        """
+        cadquery = cq
+        assert cadquery is not None
+        pts = [(float(r), float(z)) for r, z in profile]
+        if len(pts) < 2:
+            raise ValueError("revolve_profile needs at least 2 points")
+        # Fit the curve through the caller's points only, then close back to
+        # the axis with straight lines. Feeding the axis-closure points into the
+        # spline puts a 90-degree corner in it, and the fit overshoots trying to
+        # round that corner -- an ogive came out 31% over its analytic volume
+        # and 23% longer than its own length.
+        wp = cadquery.Workplane("XZ").moveTo(*pts[0])
+        if smooth and len(pts) > 2:
+            wp = wp.spline(pts[1:], includeCurrent=True)
+        else:
+            wp = wp.polyline(pts[1:])
+        if pts[-1][0] > 1e-9:
+            wp = wp.lineTo(0.0, pts[-1][1])
+        if pts[0][0] > 1e-9:
+            wp = wp.lineTo(0.0, pts[0][1])
+        return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
+
     def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any: ...
+
+    def revolve_profile(
+        self,
+        profile: Sequence[tuple[float, float]],
+        angle_deg: float = 360.0,
+    ) -> Any: ...
 
     def boolean_cut(self, target: Any, tool: Any) -> Any: ...
 
@@ -106,6 +148,13 @@ class MockCadBackend:
 
     def sphere(self, radius: float) -> MockCadSolid:
         return MockCadSolid(kind="sphere", dimensions=(_require_positive("radius", radius),))
+
+    def revolve_profile(self, profile: Sequence[tuple[float, float]],
+                        angle_deg: float = 360.0, smooth: bool = True) -> MockCadSolid:
+        pts = tuple((float(x), float(y)) for x, y in profile)
+        r = max((abs(x) for x, _ in pts), default=1.0)
+        h = max((abs(y) for _, y in pts), default=1.0)
+        return MockCadSolid(kind="cylinder", dimensions=(r, h), profile=pts)
 
     def translate(self, shape: MockCadSolid, dx: float, dy: float, dz: float) -> MockCadSolid:
         # Position does not change the mock's volume estimate; record the move
@@ -368,6 +417,42 @@ class CadQueryBackend:
                 (zmax - zmin) + 2 * pad,
             )
 
+    def revolve_profile(self, profile: Sequence[tuple[float, float]],
+                        angle_deg: float = 360.0, smooth: bool = True) -> Any:
+        """Revolve a 2-D profile about the Z axis.
+
+        This is what lets a nose cone actually be a nose cone. Until now the
+        "nose" was a cylinder -- a stand-in with neither the shape nor the drag
+        of an ogive, and with a flat forward face that carries load nothing like
+        a real one.
+
+        Points are (radius, z) with radius >= 0; the profile is closed back
+        along the axis automatically. smooth fits a single spline through the
+        points, so the revolve produces ONE lateral face rather than one per
+        segment -- a 24-segment polyline would give ~50 faces on a hollow part,
+        which is the face count that previously ran gmsh past its timeout.
+        """
+        cadquery = cq
+        assert cadquery is not None
+        pts = [(float(r), float(z)) for r, z in profile]
+        if len(pts) < 2:
+            raise ValueError("revolve_profile needs at least 2 points")
+        # Fit the curve through the caller's points only, then close back to
+        # the axis with straight lines. Feeding the axis-closure points into the
+        # spline puts a 90-degree corner in it, and the fit overshoots trying to
+        # round that corner -- an ogive came out 31% over its analytic volume
+        # and 23% longer than its own length.
+        wp = cadquery.Workplane("XZ").moveTo(*pts[0])
+        if smooth and len(pts) > 2:
+            wp = wp.spline(pts[1:], includeCurrent=True)
+        else:
+            wp = wp.polyline(pts[1:])
+        if pts[-1][0] > 1e-9:
+            wp = wp.lineTo(0.0, pts[-1][1])
+        if pts[0][0] > 1e-9:
+            wp = wp.lineTo(0.0, pts[0][1])
+        return wp.close().revolve(float(angle_deg), (0, 0, 0), (0, 1, 0))
+
     def translate(self, shape: Any, dx: float, dy: float, dz: float) -> Any:
         """Move a part into place.
 
@@ -530,6 +615,10 @@ def build_from_spec(spec: dict[str, Any], backend: CadBackend | None = None) -> 
         shape = backend.sphere(params["radius"])
     elif kind in {"extrude", "extrusion", "extrude_profile"}:
         shape = backend.extrude_profile(params["profile"], params["height"])
+    elif kind in {"revolve", "revolve_profile"}:
+        shape = backend.revolve_profile(
+            params["profile"], float(params.get("angle_deg", 360.0)),
+            bool(params.get("smooth", True)))
     elif kind in {"assembly", "union"}:
         parts = list(params.get("parts") or spec.get("parts") or [])
         if len(parts) < 2:

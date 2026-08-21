@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import math
 import sys
 from pathlib import Path
@@ -44,12 +45,19 @@ def frd_stress_percentiles(case_dir: Path) -> dict | None:
     doubler is needed.
     """
     import math as _m
-    frds = sorted(case_dir.rglob("case.frd"))
+    # Newest by mtime, not first by name. Each solve writes to a hash-named
+    # directory, and the wall-thickening loop reuses comp_dir, so a component
+    # accumulates one FRD per iteration -- and comp_dir also survives between
+    # runs of this script. Taking sorted()[0] took whichever hash sorted first,
+    # which is a coin flip: a run with the ogive nose reported 109.3 and 167.0
+    # MPa for the thrust structure and stage 1 tank that were, to the decimal,
+    # the *previous* run's numbers read off its leftover files.
+    frds = sorted(case_dir.rglob("case.frd"), key=lambda f: f.stat().st_mtime)
     if not frds:
         return None
     vals = []
     in_stress = False
-    for line in open(frds[0], errors="ignore"):
+    for line in open(frds[-1], errors="ignore"):
         if "STRESS" in line:
             in_stress = True
             continue
@@ -157,6 +165,10 @@ def main() -> int:
         err = None
         dist = None
         comp_dir = args.out / "components" / name.replace(" ", "_").replace("/", "-")
+        # Start each component from clean ground so no earlier run's results can
+        # be picked up as this one's.
+        if comp_dir.exists():
+            shutil.rmtree(comp_dir)
 
         for attempt in range(3):
             geom = {"body_radius_mm": geo["body_radius_mm"],
