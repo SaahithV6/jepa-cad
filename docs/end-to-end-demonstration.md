@@ -841,3 +841,65 @@ the margin is the requirement:
     centre of gravity      1.841 m
     static margin          1.50 calibers, on target
     normal force slope     nose 2.00 + fins 7.78 = 9.78 /rad
+
+## Loads the vehicle actually sees
+
+Two assumptions were quietly setting most of the structure, and both were wrong
+by a large factor.
+
+**Axial acceleration.** Every axially loaded component was sized against a
+hardcoded 4.5 g. The trajectory integrator had the real figure at every timestep
+and discarded it. For the 25 kg / 4,000 km mission it reports 15.4 g while stage
+1 burns and 16.5 g while stage 2 does -- so the tanks, interstage and thrust
+structure had been designed for under a third of the load they carry. Per stage
+and not globally, because the global peak happens at final burnout when the
+lower stages have already separated, and sizing stage 1 against it would be
+sizing it for a flight it does not make.
+
+    component        load before -> after     wall             mass
+    stage 1 tank     48.8 -> 166.7 kN     3.06 -> 6.42 mm   268 -> 535 g
+    interstage 1/2   48.8 -> 166.7 kN     1.88 -> 12.00 mm   81 -> 441 g
+    stage 2 tank      9.7 ->  35.5 kN     0.80 -> 1.48 mm    67 -> 122 g
+
+All six still pass, but the interstage needed the design-by-analysis loop to
+carry it from 1.88 mm to 12.00 mm, converging at the wall limit rather than
+against it.
+
+The 16.5 g is itself a finding and the packet now says so: it exceeds what a
+payload is typically qualified to. It is not a solver error but a property of
+holding thrust constant while mass falls. A real vehicle throttles or stages
+earlier; this planner does neither.
+
+**Aerodynamic loads** were dynamic pressure times frontal area times a bare
+multiplier -- 1.8 for the nose, 0.9 for the fins -- with nothing behind either
+number. They are now built from coefficients the program already computes: the
+nose carries q Cd A plus normal force at the design incidence with CN_alpha = 2
+from slender-body theory, each fin carries the fin set's share, and both take
+the standard 1.5 ultimate factor.
+
+## The stage mass model had no engine in it
+
+Solving the structural coefficient as a fixed point converged near 0.06 where
+real sounding rockets sit at 0.10 to 0.25. The code's own comment flagged the
+discrepancy without explaining it.
+
+The explanation is that the model counted tank, interstage and thrust structure
+and no propulsion hardware whatsoever. That is not a rounding error: for a
+48.8 kN stage an engine weighs 50 kg at T/W 100 and 125 kg at T/W 40, against
+31 kg for everything the model did count. Measured against the shortfall --
+reaching 0.10 needed +21.9 kg and 0.25 needed +126.9 kg -- engine mass alone
+accounts for the entire gap.
+
+With it included the fixed point converges to 0.251, inside the physical band,
+and the architecture follows: heavier structure means a worse mass ratio per
+stage, so the same mission needs four stages instead of two.
+
+Feeding the fixed point the flown accelerations rather than the assumed ones
+moved it only 0.0563 -> 0.0590, which is informative in itself. At this scale
+the walls sit near minimum gauge, so tripling the load barely moves the mass,
+and the missing engine really was the whole story.
+
+The packet now reports both coefficients every run and flags the gap, because
+it is the most consequential thing it can say about its own vehicle: designed at
+0.14 while the mass model wants 0.251, the vehicle is optimistic and would fall
+short of its target. `--solve-structure` designs at the solved value instead.
