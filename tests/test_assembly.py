@@ -175,3 +175,47 @@ def test_no_thrust_means_no_engine_term():
     closure = mass_closure(asm, 100.0)
     assert closure["engine_kg"] == 0.0
     assert closure["accounted_kg"] == pytest.approx(50.0)
+
+
+# --- export round trip ------------------------------------------------------
+
+def test_exported_step_files_reimport_as_valid_solids(tmp_path, vehicle, backend):
+    """Build, export, re-import, and get the same mass back.
+
+    An exported file that a CAD system cannot open is not a deliverable, and
+    a volume that changes across the round trip means the geometry was not
+    watertight in the first place.
+    """
+    import cadquery as cq
+
+    from cadflow.assembly import export_assembly
+
+    files = export_assembly(vehicle, tmp_path, backend=backend)
+    assert len(files) == len([p for p in vehicle.parts if p.solid is not None])
+
+    total = 0.0
+    for name, path in files.items():
+        if name == "assembly" or name.endswith("_error"):
+            continue
+        shape = cq.importers.importStep(str(path))
+        solid = shape.val() if hasattr(shape, "val") else shape
+        assert solid.isValid(), name
+        assert len(solid.Solids()) == 1, name
+        total += backend.volume(shape)
+
+    # Same mass out as went in, to the precision STEP carries. The observed
+    # round-trip difference is 1.1 parts per million, which is the file format
+    # writing coordinates as decimal text rather than anything about the solid.
+    assert total / 1e9 * 2700.0 == pytest.approx(vehicle.mass_kg, rel=1e-5)
+
+
+def test_export_writes_one_file_per_part(tmp_path, vehicle, backend):
+    from cadflow.assembly import export_assembly
+
+    files = export_assembly(vehicle, tmp_path, backend=backend)
+    for part in vehicle.parts:
+        if part.solid is None:
+            continue
+        stem = part.name.replace(" ", "_").replace("/", "-")
+        assert stem in files, part.name
+        assert (tmp_path / f"{stem}.step").exists()
