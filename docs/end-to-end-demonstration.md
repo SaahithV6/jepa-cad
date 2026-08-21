@@ -488,3 +488,51 @@ its own predicted engine:
 | 50000 km | 3 | 41488.7 | 0.83x |
 
 Mean 0.051 decades over a 1,000x span, 11 of 11 within 2x, five within 4%.
+
+## Nose shape, and a drag model that did not survive its own validation
+
+The airframe was built entirely from cylinders and boxes, so the "nose cone" was
+a cylinder with a flat forward face. `cadflow/profiles.py` and the new
+`revolve_profile` backend op replace it with a real surface of revolution in four
+standard rocketry families -- tangent ogive, conical, elliptical, and von Karman.
+All four revolve to within 0.000% of their analytic volume, at 2 faces each
+because the meridian is fitted as a single spline.
+
+Making the shape *matter* is the harder half, and it is not done. Cd is drawn
+from the CFD corpus without reference to geometry and the planner uses a hard
+CD = 0.42, so a cone and a von Karman ogive still fly identically.
+
+The attempt was Karman's slender-body wave drag,
+
+    D/q = -(1/2 pi) INT INT S''(x1) S''(x2) ln|x1 - x2| dx1 dx2
+
+discretised as a dense quadratic form with the log singularity absorbed into the
+diagonal via INT INT_cell ln|x-y| = h^2 (ln h - 3/2). The quadrature machinery is
+correct and was checked in isolation: integrating ln|x-y| over [0,L]^2 with a
+constant integrand converges cleanly to the exact L^2 (ln L - 3/2), to +0.03% at
+n=1600 for both L=1 and L=10.
+
+The physics did not validate. Against the Sears-Haack closed form
+D/q = 24 V^2/(pi L^4) the result is high by a factor that is constant in L and R
+-- so the scaling law is right -- but that factor drifts with refinement,
+4.59 at n=200 through 5.20 at n=6400, extrapolating to about 5.3 rather than to
+1. The cause is that Sears-Haack has S'' ~ t^(-1/2) at both ends, which uniform
+finite differences cannot represent, and the integrand S'' S'' ln is delicate
+exactly there. Direct quadrature is the wrong method for this integral; the
+classical treatment expands the area distribution in a Fourier sine series under
+x = (L/2)(1 - cos theta) precisely to avoid it. The module was removed rather
+than shipped, since a drag model that misses a known closed form by 5x would
+teach the world model something false with full confidence.
+
+The CFD stack is not a way around this in its present form: the routes run
+simpleFoam, which is incompressible steady RANS and cannot produce wave drag at
+the Mach numbers where a rocket's drag actually matters.
+
+What did land is the geometry that any of those methods needs, computed exactly:
+`profile_volume` and `wetted_area` are exact for a polyline meridian, and the
+cone reproduces pi R sqrt(R^2 + L^2) to 0.0000%. At R=0.5, L=2.0 an elliptical
+nose wets 5.062 against a cone's 3.238 -- 56% more skin for the same length and
+base radius, which is a real shape effect sitting ready for a friction model.
+
+Open: implement the sine-series wave drag, validate it against Sears-Haack, and
+key the corpus Cd on nose shape and fineness ratio instead of drawing it blind.

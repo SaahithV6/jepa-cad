@@ -96,3 +96,19 @@ def centred(profile: Sequence[tuple[float, float]], length: float) -> list[tuple
     """Shift a base-at-zero profile so it is centred on z=0, like the primitives."""
     half = float(length) / 2.0
     return [(r, z - half) for r, z in profile]
+
+
+def wetted_area(profile: Sequence[tuple[float, float]]) -> float:
+    """Lateral surface area of the solid of revolution of a polyline meridian.
+
+    Each segment sweeps a conical frustum of area pi (r0 + r1) * slant, so this
+    is exact for a polyline and converges quickly for a sampled curve. Shape
+    reaches the trajectory through this: a blunt elliptical nose wets far more
+    skin than a cone of the same length and base, and skin friction scales with
+    wetted area.
+    """
+    total = 0.0
+    for (r0, z0), (r1, z1) in zip(profile, profile[1:]):
+        slant = math.hypot(r1 - r0, z1 - z0)
+        total += math.pi * (r0 + r1) * slant
+    return total
