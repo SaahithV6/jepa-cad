@@ -49,6 +49,18 @@ T_MIN_M = 0.0008          # 0.8 mm, a practical minimum for spun/welded shells
 # regardless of stage size.
 FIXED_STAGE_MASS_KG = 2.5
 
+#: Engine thrust-to-weight. The stage mass model had no engine in it at all,
+#: which is why solving for the structural coefficient converged near 0.06 when
+#: real sounding rockets sit at 0.10 to 0.25. The omission is not marginal: for
+#: a 48.8 kN stage an engine weighs 50 kg at T/W 100 and 125 kg at T/W 40,
+#: against 31 kg for everything the model did count. Engine mass alone more than
+#: closes the gap.
+#:
+#: This is an empirical design parameter, not a derived one, so it is named and
+#: adjustable rather than buried. 60 is mid-range for a small pump-fed engine;
+#: pressure-fed engines run lower, large pump-fed ones much higher.
+ENGINE_THRUST_TO_WEIGHT = 60.0
+
 
 @dataclass
 class Wall:
@@ -123,6 +135,9 @@ def stage_structural_mass(prop_mass_kg: float, radius_m: float,
                   **thrust_struct.__dict__})
 
     shell_mass = sum(p["mass_kg"] for p in parts)
+    engine_mass = thrust_n / (9.80665 * ENGINE_THRUST_TO_WEIGHT)
+    parts.append({"name": "engine", "length_m": 0.0, "mass_kg": engine_mass,
+                  "note": f"thrust/(g0 * T/W={ENGINE_THRUST_TO_WEIGHT:g})"})
     # Bulkheads, engine, plumbing scale with the stage; avionics, recovery and
     # separation hardware largely do not. Scaling everything with shell mass
     # makes small vehicles come out absurdly light -- the loop converged to a
@@ -131,4 +146,4 @@ def stage_structural_mass(prop_mass_kg: float, radius_m: float,
     # with the tank.
     scaling = shell_mass * 0.85
     fixed = FIXED_STAGE_MASS_KG
-    return shell_mass + scaling + fixed, parts
+    return shell_mass + scaling + fixed + engine_mass, parts

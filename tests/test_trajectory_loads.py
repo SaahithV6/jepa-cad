@@ -88,3 +88,45 @@ def test_acceleration_is_net_of_drag():
     clean = _fly([_stage(700.0, 110.0, 0.010)], cd=0.2)
     draggy = _fly([_stage(700.0, 110.0, 0.010)], cd=1.2, area=1.0)
     assert draggy["max_axial_g"] < clean["max_axial_g"]
+
+
+# --- stage mass model -------------------------------------------------------
+
+def test_stage_mass_model_includes_an_engine():
+    """The omission that made the solved structural coefficient unphysical.
+
+    The model counted tank, interstage and thrust structure and no engine at
+    all. For a 48.8 kN stage an engine weighs 50 kg at T/W 100 and 125 kg at
+    T/W 40, against 31 kg for everything else the model counted -- so leaving it
+    out was not a rounding error, it was most of the stage.
+    """
+    from cadflow.structural_sizing import (
+        ENGINE_THRUST_TO_WEIGHT, stage_structural_mass)
+
+    thrust = 48834.0
+    total, parts = stage_structural_mass(700.0, 0.28, thrust)
+    engine = [p for p in parts if p["name"] == "engine"]
+    assert engine, [p["name"] for p in parts]
+    assert engine[0]["mass_kg"] == pytest.approx(
+        thrust / (9.80665 * ENGINE_THRUST_TO_WEIGHT), rel=1e-9)
+    assert total > engine[0]["mass_kg"]
+
+
+def test_engine_mass_scales_with_thrust():
+    from cadflow.structural_sizing import stage_structural_mass
+
+    light, _ = stage_structural_mass(700.0, 0.28, 20000.0)
+    heavy, _ = stage_structural_mass(700.0, 0.28, 80000.0)
+    assert heavy > light
+
+
+def test_solved_structural_coefficient_is_physically_plausible():
+    """It converged near 0.06 with no engine; real vehicles sit at 0.10-0.25."""
+    from generate_propulsion_trajectory_corpus import load_coupling
+    from cadflow.planner import plan_sized
+
+    load_coupling()
+    plan, coeff, history = plan_sized(4000.0, 25.0)
+    assert plan is not None
+    assert 0.08 <= coeff <= 0.30, coeff
+    assert history

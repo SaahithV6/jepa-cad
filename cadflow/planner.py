@@ -325,12 +325,22 @@ def plan_sized(target_km: float, payload_kg: float, *,
             return None, coeff, history
 
         radius_m = max(0.05, (p.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
+        # Load each stage's structure with the acceleration this iterate's own
+        # trajectory actually reaches, not an assumed 4.5 g and 3.0 g. Those
+        # assumptions understated the load by a factor of three to five -- the
+        # flown peaks for a two-stage vehicle are 15.4 g and 16.5 g -- which is
+        # why this fixed point converged to a structural coefficient around
+        # 0.05 when real sounding rockets sit at 0.10 to 0.25. The structure was
+        # coming out light because it was being sized for a flight it does not
+        # make.
+        flown_g = p.trajectory.get("max_axial_g_by_stage") or []
         total_struct = 0.0
         total_prop = 0.0
         for i, st in enumerate(p.stack):
             supported = payload_kg + sum(s.prop_mass_kg + s.struct_mass_kg
                                          for s in p.stack[i:])
-            thrust = supported * G0 * (4.5 if i == 0 else 3.0)
+            g_load = flown_g[i] if i < len(flown_g) else (4.5 if i == 0 else 3.0)
+            thrust = supported * G0 * g_load
             m_struct, _parts = stage_structural_mass(
                 st.prop_mass_kg, radius_m, thrust)
             total_struct += m_struct
