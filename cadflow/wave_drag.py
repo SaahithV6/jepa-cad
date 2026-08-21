@@ -44,31 +44,59 @@ length and base radius, and it comes out minimal here at every fineness ratio.
 
 Validity
 --------
-Slender-body theory requires a *pointed* nose: S'(0) = 0 at the tip. Ogive,
-conical and von Karman all satisfy this. An elliptical nose does not -- it meets
-the axis with infinite slope, S'(0) = 2 pi R^2 / L, and a blunt nose at
-supersonic speed has a detached bow shock that this theory does not model at all.
-Its number is reported as an upper bound and flagged, not trusted.
+Two conditions, and the second is the one that bites.
 
-The theory also over-predicts sharp cones, where the exact conical solution
-differs, and degrades below fineness ratios of about 3. Factors are therefore
-computed on the real vehicle -- nose, cylinder, and one fixed closure shared by
-every shape -- so that what varies between shapes is only the nose and the joint
-it makes with the body, which is itself real: a tangent ogive meets the cylinder
-with no slope break, a cone does not.
+The nose must be *pointed*: S'(0) = 0 at the tip. An elliptical nose is not -- it
+meets the axis with infinite slope -- and a blunt nose at supersonic speed has a
+detached bow shock this theory does not model at all.
+
+The nose must also meet the cylinder *tangentially*. A slope break there puts a
+jump in S', and the wave drag of a body with a slope discontinuity is
+logarithmically divergent in linearised slender-body theory: it has no limit, so
+no amount of quadrature produces a number. This is visible directly. At fineness
+3, refining the quadrature from n=750 to n=12000 gives
+
+    ogive        0.2442  0.2447  0.2449  0.2450  0.2451     converged
+    vonkarman    0.2249  0.2257  0.2260  0.2262  0.2263     converged
+    conical      0.4266  0.4596  0.5109  0.5281  0.5846     still climbing
+
+and the reason is exactly the joint slope dr/dz, which is -1e-5 for the ogive
+and -1e-3 for von Karman -- both tangent to within rounding -- but -0.1667 for
+the cone, a real break. An earlier version of this module priced cones anyway.
+The number it produced moved 7% between adjacent fineness values and grew
+without bound under refinement; it was noise with a plausible magnitude.
+
+So only tangent noses are priced. What remains is a real and useful comparison:
+von Karman against the tangent ogive is smooth in fineness, n-converged, and
+behaves correctly -- 13% better at fineness 1.5, 3.5% at 5.5, the advantage
+shrinking as the nose slims, which is what must happen as every smooth shape
+converges in the slender limit.
+
+Factors are computed on the real vehicle -- nose, cylinder, and one fixed closure
+shared by every shape -- so what varies between shapes is only the nose and its
+joint with the body.
 """
 
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Sequence
 
 import numpy as np
 
 from .profiles import NOSE_SHAPES, nose_profile
 
-#: Nose families whose tip satisfies the pointed-body requirement S'(0) = 0.
-POINTED_SHAPES = ("ogive", "conical", "vonkarman")
+#: Nose families this model can actually price. The requirement is *tangency
+#: where the nose meets the cylinder*, which is stricter than having a pointed
+#: tip, and it is the condition under which the integral has a limit at all.
+#: See the "Validity" section below -- a cone fails it and its wave drag is
+#: logarithmically divergent, not merely inaccurate.
+TANGENT_SHAPES = ("ogive", "vonkarman")
+
+#: Kept as an alias: the pointed-tip condition S'(0) = 0 is necessary but, as it
+#: turned out, nowhere near sufficient.
+POINTED_SHAPES = TANGENT_SHAPES
 
 #: Reference vehicle proportions for shape comparison, in base radii.
 _CYLINDER_RADII = 10.0
@@ -148,6 +176,22 @@ def wave_drag_coefficient(
     return karman_drag_area(zs, rs, n) / (math.pi * r * r)
 
 
+#: Fineness is quantised to this step before the factor is looked up, so the
+#: memo actually hits. The factor varies slowly and smoothly with fineness --
+#: the conical/ogive ratio moves about 0.03 per unit -- so 0.02 is far below
+#: any resolution the drag model can honestly claim.
+_FINENESS_STEP = 0.02
+
+
+@lru_cache(maxsize=8192)
+def _shape_factor_quantised(shape: str, steps: int, n: int) -> float:
+    fineness = steps * _FINENESS_STEP
+    ref = wave_drag_coefficient("ogive", fineness, n=n)
+    if ref <= 0.0:
+        return 1.0
+    return wave_drag_coefficient(shape, fineness, n=n) / ref
+
+
 def shape_factor(shape: str, fineness: float, n: int = 1500) -> float:
     """Wave drag of `shape` relative to a tangent ogive of the same fineness.
 
@@ -155,21 +199,33 @@ def shape_factor(shape: str, fineness: float, n: int = 1500) -> float:
     absolute constant: any common prefactor cancels, and the ogive is the shape
     the existing Cd corpus is implicitly calibrated on, so the default vehicle
     keeps the drag it always had.
+
+    Memoised on a quantised fineness. Each call is two dense n x n quadratures,
+    56 ms at the default n, and corpus sampling calls this twice per record --
+    which turned generating 1500 records into minutes of pure drag integration
+    for a handful of distinct answers.
     """
     shape = str(shape).lower()
     if shape not in NOSE_SHAPES:
         raise ValueError(f"unknown nose shape {shape!r}")
+    if shape not in TANGENT_SHAPES:
+        raise ValueError(
+            f"{shape!r} does not meet the body tangentially, so its slender-body "
+            f"wave drag is divergent; only {TANGENT_SHAPES} can be priced")
     if shape == "ogive":
         return 1.0
-    ref = wave_drag_coefficient("ogive", fineness, n=n)
-    if ref <= 0.0:
-        return 1.0
-    return wave_drag_coefficient(shape, fineness, n=n) / ref
+    steps = max(1, int(round(float(fineness) / _FINENESS_STEP)))
+    return _shape_factor_quantised(shape, steps, int(n))
 
 
 def is_trustworthy(shape: str) -> bool:
-    """Whether slender-body theory applies to this nose family at all."""
-    return str(shape).lower() in POINTED_SHAPES
+    """Whether this model can price the shape at all.
+
+    False for a cone -- slope break at the body joint, divergent -- and for an
+    elliptical nose -- blunt tip, detached shock. Both are excluded rather than
+    given a number that looks like an answer.
+    """
+    return str(shape).lower() in TANGENT_SHAPES
 
 
 def sears_haack(length: float, max_radius: float, n: int = 400):
@@ -192,9 +248,9 @@ def sears_haack_drag_area(length: float, max_radius: float) -> float:
 #: It is a module constant so it can be moved in one place.
 WAVE_DRAG_SHARE = 0.5
 
-#: Slender-body theory over-predicts sharp cones, where the exact conical
-#: solution differs, and it is applied here at fineness ratios below the ~3 it
-#: is really good for. Cap the multiplier so a cone is penalised but not absurdly.
+#: Guard rail. With only tangent shapes priced the factor stays in 0.86..1.0,
+#: so this should never bind; it is here so a future shape cannot quietly move
+#: Cd by an arbitrary amount.
 MAX_SHAPE_FACTOR = 2.0
 
 

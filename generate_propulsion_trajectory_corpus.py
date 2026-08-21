@@ -46,7 +46,7 @@ import hashlib
 import json
 import math
 
-from cadflow.wave_drag import POINTED_SHAPES, cd_multiplier, shape_factor
+from cadflow.wave_drag import TANGENT_SHAPES, cd_multiplier, shape_factor
 import random
 from pathlib import Path
 
@@ -426,14 +426,16 @@ def sample_design(rng: random.Random, idx: int) -> dict:
     # why the raw Cd_proxy distribution cannot be taken at face value.
     cd, cd_coupled = _draw(rng, "cd", 0.25, 0.55)
 
-    # NOSE SHAPE. The corpus previously had no nose at all, so a cone and a von
-    # Karman ogive produced identical trajectories and the model had nothing to
-    # learn from shape. The drawn Cd is taken to describe a tangent ogive, which
-    # is what cd_multiplier normalises to, so every record that samples an ogive
-    # keeps exactly the drag it would have had before. Only pointed noses are
-    # sampled: slender-body theory needs S'(0) = 0 at the tip, and an elliptical
-    # nose is blunt, so its drag would be a number the theory cannot support.
-    nose_shape = rng.choice(list(POINTED_SHAPES))
+    # NOSE SHAPE. The corpus previously had no nose at all, so shape could not
+    # be learned from it. The drawn Cd is taken to describe a tangent ogive,
+    # which is what cd_multiplier normalises to, so an ogive record keeps
+    # exactly the drag it would have had before.
+    #
+    # Only tangent noses are sampled. A cone meets the body with a slope break,
+    # and slender-body wave drag is logarithmically divergent there -- its Cd
+    # grows without bound as the quadrature refines. Training on that would be
+    # training on the resolution of an integrator.
+    nose_shape = rng.choice(list(TANGENT_SHAPES))
     nose_fineness = rng.uniform(1.5, 5.5)
     cd = cd * cd_multiplier(nose_shape, nose_fineness)
 

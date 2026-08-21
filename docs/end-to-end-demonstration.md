@@ -541,13 +541,36 @@ The tangent ogive lands 4-20% above it and converges toward it as the nose slims
 and the cone penalty falls with fineness, 2.83 -> 1.69, which is the right trend:
 shape matters most when blunt. tests/test_wave_drag.py holds 15 such checks.
 
-One limit of the theory is real and is honoured rather than papered over.
-Slender-body theory needs a *pointed* nose, S'(0) = 0 at the tip. Ogive, conical
-and von Karman satisfy it; an elliptical nose meets the axis with infinite slope,
-S'(0) = 2 pi R^2 / L, and a blunt nose at supersonic speed has a detached bow
-shock the theory does not model at all. It is flagged by `is_trustworthy` and
-excluded from corpus sampling rather than quietly assigned a number. The CFD
-stack cannot stand in here either: those routes run simpleFoam, which is
+Two limits of the theory are real, and the second one was found only after the
+first version had already been committed pricing cones.
+
+The nose must be *pointed*, S'(0) = 0 at the tip. An elliptical nose is not: it
+meets the axis with infinite slope, and a blunt nose at supersonic speed has a
+detached bow shock the theory does not model at all.
+
+The nose must also meet the cylinder *tangentially*, and this is the condition
+that decides whether there is an answer at all. A slope break puts a jump in S',
+and linearised slender-body wave drag is logarithmically divergent at a slope
+discontinuity -- it has no limit, so no quadrature converges to anything. At
+fineness 3, refining n from 750 to 12,000:
+
+    ogive        0.2442  0.2447  0.2449  0.2450  0.2451     converged
+    vonkarman    0.2249  0.2257  0.2260  0.2262  0.2263     converged
+    conical      0.4266  0.4596  0.5109  0.5281  0.5846     still climbing
+
+The cause is the joint slope dr/dz: -1e-5 for the ogive and -1e-3 for von Karman,
+both tangent to within rounding, against -0.1667 for the cone. The first version
+priced cones anyway. Its number moved 7% between adjacent fineness values and
+grew without bound under refinement -- noise with a plausible magnitude, which
+is the worst kind, and it would have gone into the corpus as a conditioning
+signal for the model to fit. `shape_factor` now refuses any non-tangent nose,
+and only tangent shapes are sampled.
+
+What survives is smaller but real: von Karman against the tangent ogive, smooth
+in fineness, n-converged, 13% better at fineness 1.5 falling to 3.5% at 5.5 as
+the advantage shrinks in the slender limit, which is what must happen.
+
+The CFD stack cannot stand in here either: those routes run simpleFoam, which is
 incompressible steady RANS and produces no wave drag at all.
 
 Shape now reaches the trajectory. `cd_multiplier` scales the wave-drag share of
@@ -556,14 +579,53 @@ as it did before. For 25 kg to 4,000 km:
 
   von Karman   CD 0.4037   gross 1106.6 kg   apogee 4175.9 km
   ogive        CD 0.4200   gross 1106.6 kg   apogee 4120.5 km
-  conical      CD 0.6044   gross 1380.6 kg   apogee 3848.7 km
 
-A conical nose costs 274 kg of vehicle on the same mission. The corpus samples
-pointed nose shapes and fineness, and carries `nose_wave_factor` as a 42nd
-conditioning slot -- shape as the physically meaningful scalar rather than a
-category index, so the model sees a continuous quantity it can interpolate.
+Same hardware, 55 km further on the better nose. The corpus samples tangent nose
+shapes and fineness, and carries `nose_wave_factor` as a 42nd conditioning slot
+-- shape as the physically meaningful scalar rather than a category index, so
+the model sees a continuous quantity it can interpolate.
 
 Supporting geometry is exact: `profile_volume` and `wetted_area` are exact for a
 polyline meridian, with the cone reproducing pi R sqrt(R^2 + L^2) and pi R^2 L/3
 to 0.0000%. At R=0.5, L=2.0 an elliptical nose wets 5.062 against a cone's 3.238
 -- 56% more skin for the same length and base radius.
+
+
+## Modal analysis
+
+The FEA only ever ran `*STATIC`, so nothing in the loop could see a resonance,
+and `first_mode_hz` was a conditioning slot with nothing populating it. A part
+sized only for steady load can still be destroyed by one -- fin flutter is the
+classic case.
+
+`generate_modal_case_inp` writes a CalculiX `*FREQUENCY` deck, which also needs
+`*DENSITY`: a modal analysis is a mass problem and the static deck has no reason
+to carry a density. It reuses the mesh the static run already produced, so a
+component's modal solve costs a fraction of a second rather than a re-mesh.
+
+Validated against the one case with an exact answer, the first bending mode of a
+uniform cantilever, f1 = (1.875104)^2/(2 pi) sqrt(EI/(rho A L^4)). For a
+120 x 10 x 10 mm steel beam that is 580.2 Hz:
+
+    element size   elements   f1 Hz   FE/theory
+        5.0 mm          734   731.9      1.261
+        4.0 mm         1179   701.1      1.208
+        3.0 mm         2712   644.7      1.111
+        2.2 mm         6514   619.1      1.067
+        1.7 mm        13005   605.3      1.043
+
+Monotone, converging, and converging from above -- the signature of linear
+tetrahedra being too stiff. The test therefore asserts convergence rather than a
+tolerance: refining must move the answer toward theory, the result must stay
+above it, and the finer of two meshes must land within 15%. A fixed tolerance
+would have been measuring the mesh rather than the solver.
+
+The parser needed its own test because it was wrong. CalculiX prints mode,
+eigenvalue, frequency in rad/time, frequency in cycles/time, and an imaginary
+part; reading the last column took the imaginary part, identically zero for an
+undamped eigenproblem, so every frequency was discarded as rigid-body and a
+converged solve returned nothing at all.
+
+Every component in the packet now reports its first mode, and the ordering is
+the physical one -- 8,158 Hz for the short stubby thrust structure down to
+1,342 Hz for the long thin stage 2 tank.

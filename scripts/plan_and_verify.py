@@ -33,6 +33,39 @@ from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 ALLOWABLE_MPA = 200.0
 
 
+#: Aluminium 6061, for the modal analysis. The static deck does not need a
+#: density and does not carry one; a modal analysis is a mass problem.
+RHO_AL = 2700.0
+E_AL = 70e9
+NU_AL = 0.33
+
+
+def component_first_mode_hz(case_dir: Path) -> float | None:
+    """First elastic natural frequency of the part that was just analysed.
+
+    Reuses the mesh the static run already produced, so this costs a fraction of
+    a second rather than a re-mesh. A part sized only for steady load can still
+    be destroyed by a resonance -- fin flutter is the classic case -- and
+    first_mode_hz is a conditioning slot that nothing was populating.
+    """
+    from cadflow.msh_to_calculix import (
+        generate_modal_case_inp, parse_eigenfrequencies, run_calculix_case)
+
+    meshes = sorted(case_dir.rglob("mesh.msh"), key=lambda f: f.stat().st_mtime)
+    if not meshes:
+        return None
+    solver_dir = meshes[-1].parent
+    try:
+        generate_modal_case_inp(
+            solver_dir, case_filename="modal.inp", fix_axis="z", modes=6,
+            youngs_modulus=E_AL, poisson=NU_AL, density=RHO_AL)
+        run_calculix_case(solver_dir, job_name="modal", timeout=900)
+        freqs = parse_eigenfrequencies(solver_dir / "modal.dat")
+    except Exception:  # noqa: BLE001
+        return None
+    return freqs[0] if freqs else None
+
+
 def frd_stress_percentiles(case_dir: Path) -> dict | None:
     """Von Mises percentiles from the FRD.
 
@@ -244,7 +277,10 @@ def main() -> int:
             else "analysis"
         buckling_margin = sigma_cr / max(sigma_app, 1.0)
         wall_mm_final = t_mm
+        first_mode = None if (hulled or dist is None) else \
+            component_first_mode_hz(comp_dir)
         results.append({"name": name, "why": why, "load_n": load,
+                        "first_mode_hz": first_mode,
                         "error": err,
                         "mesh_was_hull": hulled, "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
@@ -275,21 +311,26 @@ def main() -> int:
              f"separations {seps}.\n")
     L.append("## Component verification\n")
     L.append("| component | load case | load | wall | driver | buckling margin |"
-             " shell p99 | peak | status |")
-    L.append("|---|---|---|---|---|---|---|---|---|")
+             " shell p99 | peak | 1st mode | status |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         vm = (f"{r['shell_von_mises_mpa']:.1f} MPa"
               if r["shell_von_mises_mpa"] else "-")
         d = r.get("stress_dist")
         peak = f"{d['max']:.0f} MPa" if d else ("hull" if r["mesh_was_hull"] else "-")
+        f1 = r.get("first_mode_hz")
+        mode = f"{f1:.0f} Hz" if f1 else "-"
         L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | "
                  f"{r['wall_mm']:.2f} mm | {r['wall_driver']} | "
-                 f"{r['buckling_margin']:.2f}x | {vm} | {peak} | "
+                 f"{r['buckling_margin']:.2f}x | {vm} | {peak} | {mode} | "
                  f"{'PASS' if r['passed'] else 'FAIL'} |")
     L.append("\nWall thickness and buckling margin size the thin shell; the "
              "shell FEA column is CalculiX on that same hollow geometry, so the "
              "meshed part is the part being designed rather than a solid billet "
-             "with the same outer dimensions.")
+             "with the same outer dimensions. The 1st mode column is a CalculiX "
+             "*FREQUENCY solve on that same mesh, clamped at the aft face: it is "
+             "what a static check cannot see, and it is the quantity a flutter "
+             "or coupled-loads assessment starts from.")
     allp = all(r["passed"] for r in results)
     L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
              f"All {len(results)} components passed: **{allp}**\n")
