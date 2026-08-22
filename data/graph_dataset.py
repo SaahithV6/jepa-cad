@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import random
 import re
 from pathlib import Path
 from typing import Any
@@ -521,6 +522,9 @@ class GraphBackedCADDataset(Dataset):
             raise FileNotFoundError(f"No graph-backed training nodes found in {self.graph_path}")
 
         self.records = records
+        #: Indices whose file would not parse. Populated lazily on first
+        #: failure so a later epoch does not pay for the same bad file twice.
+        self._bad_records: set[int] = set()
         self._outgoing = outgoing
         self._incoming = incoming
         self._type_code = {"TensorShard": 0.0, "Shard": 0.2, "Sample": 0.4, "Analogue": 0.6, "RawAsset": 1.0}
@@ -992,9 +996,56 @@ class GraphBackedCADDataset(Dataset):
             dtype=torch.float32,
         )
 
+    #: How many other records to try before declaring the corpus unusable.
+    #: Probing is random rather than sequential: neighbouring indices come from
+    #: the same directory, and the bad files are not scattered -- every one of
+    #: the 1,961 STLs in data/generated_spaceflight_cad is an empty solid, so
+    #: eight consecutive probes inside it all fail and a sequential fallback
+    #: gives up on a corpus that is 93% fine.
+    _FALLBACK_TRIES = 24
+
+    def _load_with_fallback(self, index: int):
+        """Load a record, stepping past any that will not parse.
+
+        The format filter at construction time rejects extensions this loader
+        cannot read, but it cannot know that a file with the right extension is
+        empty. One zero-vertex STL among 58,518 records was enough to kill a
+        training run outright -- the same failure mode as the SolidWorks parts,
+        arriving through a different door.
+
+        Bad records are remembered so the next epoch does not pay for them
+        again, and are reported so a corpus quietly rotting is visible rather
+        than merely survivable. It was rotting: 7% of a 600-record sample would
+        not parse, and the cause is that every one of the 1,961 STL files in
+        data/generated_spaceflight_cad is 84 bytes -- an empty binary header
+        with a triangle count of zero. Whatever generated them wrote out a
+        successful-looking file for a solid that did not exist, 1,961 times.
+        """
+        n = len(self.records)
+        rng = random.Random(index)
+        probes = [index % n] + [rng.randrange(n)
+                                for _ in range(self._FALLBACK_TRIES - 1)]
+        for probe in probes:
+            if probe in self._bad_records:
+                continue
+            record = self.records[probe]
+            try:
+                points, fields, max_stress = _load_sample_arrays(
+                    record.path, num_points=self.num_points,
+                    num_fields=self.num_fields)
+                return record, points, fields, max_stress
+            except Exception as exc:  # noqa: BLE001
+                self._bad_records.add(probe)
+                if len(self._bad_records) <= 10:
+                    print(f"[graph_dataset] unreadable sample skipped: "
+                          f"{record.path} ({type(exc).__name__}: "
+                          f"{str(exc)[:80]})", flush=True)
+        raise RuntimeError(
+            f"{self._FALLBACK_TRIES} records failed to load around index "
+            f"{index}; the corpus is not usable")
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
-        record = self.records[index]
-        points, fields, max_stress = _load_sample_arrays(record.path, num_points=self.num_points, num_fields=self.num_fields)
+        record, points, fields, max_stress = self._load_with_fallback(index)
         legacy = self._metadata_vector(record)
         assoc = self._association_vector(record)
         assoc_payload = self._walk_associations(record.node_id)

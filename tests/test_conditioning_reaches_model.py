@@ -145,3 +145,27 @@ def test_thermal_is_physical_across_the_corpus():
     # real throats run from a few to a couple of hundred MW/m^2
     assert all(0.5 < f < 500.0 for f in fluxes), (min(fluxes), max(fluxes))
     assert max(fluxes) > 2.0 * min(fluxes), "heat flux carries no variation"
+
+
+def test_the_configured_metadata_width_matches_the_dataset():
+    """A hardcoded width that has to track a computed one.
+
+    graph_metadata_dim is written out in the configs while the dataset derives
+    the same number from len(CONDITIONING_QUANTITIES). Adding the 42nd
+    conditioning slot moved the real width to 159 and left the configs at 158,
+    and the way that surfaced was a matrix shape mismatch forty seconds into a
+    training run -- "mat1 and mat2 shapes cannot be multiplied (8x159 and
+    158x192)". This is the cheap version of that discovery.
+    """
+    from data.graph_dataset import GRAPH_METADATA_DIM
+    from utils.config import load_yaml_with_family
+
+    for family in (None, "space", "space_cpu", "space_24b"):
+        cfg = (load_yaml_with_family("configs/base.yaml", family=family)
+               if family else load_yaml_with_family("configs/base.yaml"))
+        configured = cfg["data"].get("graph_metadata_dim")
+        if configured is None:
+            continue
+        assert configured == GRAPH_METADATA_DIM, (
+            f"family {family}: config says {configured}, dataset produces "
+            f"{GRAPH_METADATA_DIM}")

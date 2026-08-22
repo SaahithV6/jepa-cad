@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal, cast
 
 import torch
+from functools import partial
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from data.dataset import build_dataset
@@ -153,7 +154,10 @@ def build_dataloader(cfg: dict[str, Any], data_source: str) -> DataLoader:
         drop_last=dataset_len >= batch_size,
         num_workers=data_cfg.get("num_workers", 0),
         pin_memory=data_cfg.get("pin_memory", False),
-        collate_fn=lambda batch: collate_masked_batch(batch, cfg["masking"]),
+        # functools.partial, not a lambda: a lambda is not picklable, so any
+        # num_workers above zero died with "Can't pickle local object" the
+        # moment multiprocessing tried to hand the collate function to a worker.
+        collate_fn=partial(collate_masked_batch, masking_cfg=cfg["masking"]),
     )
 
 

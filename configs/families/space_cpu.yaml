@@ -1,0 +1,73 @@
+# Space-systems family tuned for training on a many-core CPU box.
+#
+# The defaults were costing a factor of 27 on this machine, for three reasons
+# that were each individually invisible:
+#
+#   * env.sh sets OMP_NUM_THREADS=1, which is right for running CalculiX and
+#     OpenFOAM cases in parallel and badly wrong for PyTorch. Torch was using
+#     one core out of twenty-four. Export OMP_NUM_THREADS before training.
+#
+#   * gradient_checkpointing was on. It recomputes the forward pass during the
+#     backward to save memory, which is a trade worth making on a GPU that is
+#     out of memory and pure waste on a CPU box that is not. Turning it off is
+#     23% for nothing.
+#
+#   * attention is 82% of the step -- 70.5 s of an 85.8 s profile -- and it is
+#     quadratic in num_points. 2048 -> 1024 is a little over 3x.
+#
+#     measured, batch 8, 16 threads, no checkpointing:
+#       2048 points   0.310 samples/sec
+#       1024 points   0.947
+#        512 points   3.175
+#
+# 1024 points is the compromise this profile takes: three times the throughput
+# for half the spatial resolution. That is a real loss of fidelity and it is the
+# reason this is a separate profile rather than a change to the default.
+#
+# Run with:
+#   OMP_NUM_THREADS=16 python train.py --config configs/base.yaml \
+#       --family space_cpu --data-source graph \
+#       --set data.graph_path=artifacts/jepa-train-bundle/graph.json
+
+data:
+  num_points: 1024
+  num_fields: 6
+  mix_ratio: 0.85
+  # Zero on purpose. The graph dataset serves 448 samples/sec against a model
+  # that consumes about one, so workers buy nothing here and each one costs a
+  # process and a copy of the batch.
+  num_workers: 0
+  pin_memory: false
+
+synthetic:
+  seed: 42
+  family: spaceflight
+  num_primitives: 4
+  noise_std: 0.04
+  field_scale: 1.0
+
+masking:
+  grid_size: [6, 6, 6]
+  context_ratio: 0.55
+
+model:
+  embed_dim: 192
+  gradient_checkpointing: false
+
+train:
+  batch_size: 8
+  grad_accum_steps: 4
+  precision: "fp32"
+  amp: false
+  lr: 1.5e-4
+  weight_decay: 0.05
+  warmup_steps: 50
+  grad_clip: 1.0
+  log_every: 25
+  checkpoint_every: 250
+  collapse_std_threshold: 0.01
+  device: "auto"
+  seed: 42
+
+logging:
+  experiment_name: "jepa-cad-space-cpu"
