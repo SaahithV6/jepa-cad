@@ -53,6 +53,31 @@ def embed(model, batch: dict) -> torch.Tensor:
     return enc
 
 
+def clean_targets(y: np.ndarray, log_space: bool = True):
+    """Drop placeholder values and put a heavy-tailed target in log space.
+
+    Two things make max_stress unusable as it stands. It spans 8.4 decades --
+    0.024 to 6.8 million -- so a squared error in linear space is decided
+    entirely by a handful of extremes, and R^2 came out at -2.0 for every model
+    including random weights. And 39% of the corpus carries max_stress exactly
+    1.0, which is a placeholder rather than a measurement: 234 identical values
+    out of 600, against 363 distinct values overall.
+
+    A single value taking more than a tenth of a continuous target is not a
+    coincidence, so it is treated as filler and removed. Returns the mask of
+    rows to keep alongside the transformed target.
+    """
+    keep = np.ones(len(y), dtype=bool)
+    values, counts = np.unique(np.round(y, 9), return_counts=True)
+    for value, count in zip(values, counts):
+        if count > 0.10 * len(y):
+            keep &= np.abs(y - value) > 1e-9
+    out = y[keep]
+    if log_space:
+        out = np.log10(np.clip(out, 1e-9, None))
+    return keep, out
+
+
 def collect(model, dataset, indices, target: str):
     """Embeddings and targets for a set of records.
 
@@ -78,6 +103,26 @@ def collect(model, dataset, indices, target: str):
         xs.append(embed(model, batch).squeeze(0).numpy())
         ys.append(y)
     return np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
+
+
+def ridge_r2_bootstrap(x_train, y_train, x_test, y_test, alpha: float = 1.0,
+                       draws: int = 400, seed: int = 0):
+    """Held-out R^2 with a bootstrap interval over the test set.
+
+    Eighty-nine held-out points is not many, and a difference of 0.03 in R^2
+    between two models is easy to read as a result when it is sampling noise.
+    Resampling the test set with replacement gives the spread that difference
+    has to clear before it means anything.
+    """
+    point = ridge_r2(x_train, y_train, x_test, y_test, alpha)
+    rng = np.random.default_rng(seed)
+    n = len(x_test)
+    draws_r2 = []
+    for _ in range(draws):
+        idx = rng.integers(0, n, size=n)
+        draws_r2.append(ridge_r2(x_train, y_train, x_test[idx], y_test[idx], alpha))
+    lo, hi = np.percentile(draws_r2, [2.5, 97.5])
+    return point, float(lo), float(hi)
 
 
 def ridge_r2(x_train, y_train, x_test, y_test, alpha: float = 1.0) -> float:
@@ -108,78 +153,116 @@ def ridge_r2(x_train, y_train, x_test, y_test, alpha: float = 1.0) -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--ckpt", type=Path, default=ROOT / "checkpoints/latest.pt")
+    ap.add_argument("--ckpt", type=Path, nargs="+",
+                    default=[ROOT / "checkpoints/latest.pt"],
+                    help="one or more checkpoints; probing several shows the "
+                         "trend, which a single number cannot -- 'learned "
+                         "steadily' and 'learned then degraded' end up in the "
+                         "same place")
     ap.add_argument("--samples", type=int, default=400)
     ap.add_argument("--target", type=str, default="max_stress")
     ap.add_argument("--family", type=str, default="space_cpu")
     ap.add_argument("--graph", type=Path,
                     default=ROOT / "artifacts/jepa-train-bundle/graph.json")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--linear-target", action="store_true",
+                    help="probe the raw target instead of its logarithm; the "
+                         "default is log because max_stress spans 8.4 decades")
     args = ap.parse_args()
 
     import train as train_mod
     from models.jepa import JEPAModel
     from utils.config import load_yaml_with_family
 
-    payload = torch.load(args.ckpt, map_location="cpu", weights_only=False)
-    cfg = payload.get("config") or load_yaml_with_family(
+    ckpts = sorted(args.ckpt, key=lambda p: _step_of(p))
+    first = torch.load(ckpts[0], map_location="cpu", weights_only=False)
+    cfg = first.get("config") or load_yaml_with_family(
         str(ROOT / "configs/base.yaml"), family=args.family)
     cfg["data"]["graph_path"] = str(args.graph)
 
+    # One dataset for every checkpoint: the graph is 430 MB and takes 39 s to
+    # load, which would otherwise dominate a four-checkpoint sweep.
     dataset = train_mod.build_dataloader(cfg, "graph").dataset
     rng = np.random.default_rng(args.seed)
     picks = rng.choice(len(dataset), size=min(args.samples, len(dataset)),
                        replace=False)
-    split = int(0.7 * len(picks))
 
-    # Check the checkpoint against the data before embedding anything. A
-    # mismatch here is the difference between "the model learned nothing" and
-    # "the model was never run", and those deserve different reactions.
     expected_fields = int(cfg["data"]["num_fields"])
-    weight = payload["model"].get("context_encoder.input_proj.weight")
-    if weight is not None:
-        ckpt_fields = int(weight.shape[1]) - 3          # xyz are concatenated
-        if ckpt_fields != expected_fields:
-            print(f"  checkpoint expects {ckpt_fields} fields, the dataset "
-                  f"serves {expected_fields}. This checkpoint was trained on a "
-                  f"different configuration and cannot be probed against this "
-                  f"corpus.")
-            return 2
 
-    trained = JEPAModel.from_config(cfg)
-    missing, unexpected = trained.load_state_dict(payload["model"], strict=False)
-    if missing:
-        print(f"  note: {len(missing)} parameters absent from the checkpoint "
-              f"and left at initialisation")
-    trained.eval()
-
+    # The random-init baseline is the same for every checkpoint, so it is
+    # embedded once. It is also not zero: random projections of a point cloud
+    # carry real information about its size and shape.
+    torch.manual_seed(0)
     untrained = JEPAModel.from_config(cfg)
     untrained.eval()
+    x0, y0_raw = collect(untrained, dataset, picks, args.target)
+    keep, y0 = clean_targets(y0_raw, log_space=not args.linear_target)
+    x0 = x0[keep]
+    dropped = int((~keep).sum())
+    if len(x0) < 40:
+        print(f"only {len(x0)} usable samples; too few to probe")
+        return 1
+    n_tr = int(0.7 * len(x0))
+    base_r2, base_lo, base_hi = ridge_r2_bootstrap(
+        x0[:n_tr], y0[:n_tr], x0[n_tr:], y0[n_tr:])
 
-    print(f"checkpoint step {payload.get('step')}, target {args.target!r}, "
-          f"{len(picks)} samples")
+    space = "raw" if args.linear_target else "log10"
+    print(f"target {args.target!r} in {space}, {len(x0)} usable samples "
+          f"({n_tr} train / {len(x0) - n_tr} held out); "
+          f"{dropped} placeholder rows dropped\n")
+    print(f"{'checkpoint':>14} {'step':>6} {'R^2':>8} {'95% interval':>18} "
+          f"{'vs random':>10}")
+    print(f"{'random init':>14} {0:>6} {base_r2:>8.4f} "
+          f"{f'[{base_lo:+.3f}, {base_hi:+.3f}]':>18} {0.0:>+10.4f}")
 
-    results = {}
-    for name, model in (("trained", trained), ("random init", untrained)):
-        x, y = collect(model, dataset, picks, args.target)
-        if len(x) < 20:
-            print(f"  {name}: only {len(x)} usable samples; cannot probe")
-            return 1
-        n_tr = int(0.7 * len(x))
-        r2 = ridge_r2(x[:n_tr], y[:n_tr], x[n_tr:], y[n_tr:])
-        results[name] = r2
-        print(f"  {name:12s} held-out R^2 = {r2:+.4f}   "
-              f"({len(x)} usable, {n_tr} train / {len(x)-n_tr} test)")
+    rows = []
+    for path in ckpts:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        weight = payload["model"].get("context_encoder.input_proj.weight")
+        if weight is not None and int(weight.shape[1]) - 3 != expected_fields:
+            print(f"{path.name:>14} {'--':>6}   trained on a different "
+                  f"configuration; skipped")
+            continue
+        model = JEPAModel.from_config(cfg)
+        model.load_state_dict(payload["model"], strict=False)
+        model.eval()
+        x, y_raw = collect(model, dataset, picks, args.target)
+        x = x[keep]
+        n = int(0.7 * len(x))
+        r2, lo, hi = ridge_r2_bootstrap(x[:n], y0[:n], x[n:], y0[n:])
+        step = int(payload.get("step") or _step_of(path))
+        rows.append((step, r2, lo, hi))
+        print(f"{path.name:>14} {step:>6} {r2:>8.4f} "
+              f"{f'[{lo:+.3f}, {hi:+.3f}]':>18} {r2 - base_r2:>+10.4f}")
 
-    gain = results["trained"] - results["random init"]
-    print(f"\n  training gained {gain:+.4f} R^2 over random initialisation")
-    if gain > 0.02:
-        print("  the representation carries physics the random one does not")
-    elif gain > -0.02:
-        print("  no measurable gain: the encoder has not learned this target")
-    else:
-        print("  training made the representation WORSE for this target")
+    if len(rows) >= 2:
+        first_r2, last_r2 = rows[0][1], rows[-1][1]
+        width = base_hi - base_lo
+        gain = max(r[1] for r in rows) - base_r2
+        print(f"\n  the bootstrap interval on a single R^2 is {width:.3f} wide, "
+              f"so a gain of {gain:+.3f} is {'inside' if abs(gain) < width/2 else 'outside'} "
+              f"the noise on one model alone.")
+        print(f"\n  across training: {first_r2:+.4f} -> {last_r2:+.4f} "
+              f"({last_r2 - first_r2:+.4f})")
+        best = max(rows, key=lambda r: r[1])
+        print(f"  best at step {best[0]}: {best[1]:+.4f} "
+              f"({best[1] - base_r2:+.4f} over random)")
+        if best[1] < 0.0:
+            print("  every probe is worse than predicting the mean; the target "
+                  "or the split is at fault, not the encoder")
+        elif best[1] - base_r2 > 0.02:
+            print("  the representation carries physics random weights do not")
+        elif best[1] - base_r2 > -0.02:
+            print("  no measurable gain over random projections on this target")
+        else:
+            print("  training made the representation worse for this target")
     return 0
+
+
+def _step_of(path: Path) -> int:
+    """Step number from a checkpoint filename, for ordering."""
+    digits = "".join(c for c in path.stem if c.isdigit())
+    return int(digits) if digits else 10**9
 
 
 if __name__ == "__main__":
