@@ -1,0 +1,26 @@
+grouping meshes by content
+[graph_dataset] skipped 5174 node(s) with unreadable formats (SolidWorks/docs); 58518 loadable record(s) remain
+39909 records with fields from geometry; probing 1600
+[31;1m**** ERR StepFile : Undefined Parsing: Line 2: Incorrect syntax: unexpected end of file, expecting STEP    ****[0m
+[graph_dataset] unreadable sample skipped: /home/lain_iwakura/Documents/jepa-cad-vm/data/raw_downloads/external/Cubesat-CAD/Electronic Subsystems/Solar Panels/SolarPanel_1.5U.STEP (ValueError: STEP File could not be loaded)
+target 'max_stress' in log10, 591 usable samples (413 train / 178 held out, split by file so no mesh is on both sides); 0 placeholder rows dropped
+
+    checkpoint   step      R^2   95% CI on the gain       gain  verdict
+   random init      0   0.7255          (reference)    +0.0000
+from_killed_run_step200.pt    200   0.7024   [-0.0501, -0.0021]    -0.0237  negative
+step_001000.pt   1000   0.6673   [-0.1718, +0.0230]    -0.0564  noise
+step_001500.pt   1500   0.6847   [-0.1644, +0.0451]    -0.0377  noise
+
+  3 group splits over one embedded pool (591 samples, 565 distinct meshes):
+
+    step   mean gain       min       max  sign
+     200     +0.0030   -0.0231   +0.0191  MIXED
+    1000     -0.0121   -0.0570   +0.0289  MIXED
+    1500     -0.0071   -0.0383   +0.0432  MIXED
+
+  Intervals are on the paired difference against random projections, not on each R^2 separately -- both models see the same held-out samples, so the shared variation cancels.
+
+  across training: +0.7024 -> +0.6847 (-0.0177)
+  worse than random projections at steps 200
+
+written: artifacts/verification/probe_seeds/seed_1.json

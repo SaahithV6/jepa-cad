@@ -21,8 +21,13 @@ _GMSH_NODE_COUNTS: dict[int, int] = {
     1: 2,   # line
     2: 3,   # triangle
     4: 4,   # tetrahedron
+    9: 6,   # 6-node triangle (second order)
+    11: 10,  # 10-node tetrahedron (second order)
     15: 1,  # point
 }
+
+#: Gmsh element types that carry a solid tetrahedron, linear then quadratic.
+_TET_TYPES = (4, 11)
 
 DEFAULT_CCX = Path.home() / ".local" / "bin" / "ccx"
 
@@ -101,7 +106,7 @@ def parse_msh2_solid(msh_file: Path | str) -> SolidMesh:
                 if node_count is None:
                     continue
                 node_ids = [int(parts[3 + num_tags + j]) for j in range(node_count)]
-                if elem_type == 4:
+                if elem_type in _TET_TYPES:
                     elements.append((elem_id, node_ids))
             continue
 
@@ -176,17 +181,74 @@ def pick_face_boundary_nodes(
     return fixed, loaded
 
 
+#: gmsh and CalculiX order the last two midside nodes of a quadratic tetrahedron
+#: differently: gmsh puts mid(3,4) in slot 9 and mid(2,4) in slot 10, CalculiX
+#: the other way round. Verified against element geometry rather than recalled,
+#: because a mis-ordered C3D10 mesh solves without complaint and returns a
+#: plausible field -- there is no symptom to notice.
+_GMSH_TO_CCX_TET10 = (0, 1, 2, 3, 4, 5, 6, 7, 9, 8)
+
+
+def _verify_tet10_order(mesh: SolidMesh, permuted: list[list[int]],
+                        sample: int = 200) -> None:
+    """Check a sample of permuted elements against the CalculiX face convention.
+
+    Uses a nearest-midpoint test with a wide tolerance rather than an equality
+    test: gmsh projects midside nodes onto curved geometry, so they do not sit
+    at straight-line midpoints -- on a 50 mm bore with 8 mm edges the offset is
+    about 0.16 mm. An exact test fires on correct meshes. A wrong slot, by
+    contrast, is a whole edge away, so the two are easy to separate.
+    """
+    pairs = ((1, 2), (2, 3), (3, 1), (1, 4), (2, 4), (3, 4))
+    for nds in permuted[:sample]:
+        corners = nds[:4]
+        for slot, (i, j) in enumerate(pairs, start=5):
+            p, q = mesh.nodes[corners[i - 1]], mesh.nodes[corners[j - 1]]
+            want = tuple(0.5 * (p[k] + q[k]) for k in range(3))
+            got = mesh.nodes[nds[slot - 1]]
+            d = math.dist(got, want)
+            edge = math.dist(p, q)
+            if edge > 0 and d > 0.25 * edge:
+                raise ValueError(
+                    f"C3D10 node ordering is wrong at slot {slot}: midside node "
+                    f"sits {d:.3e} m from the ({i},{j}) midpoint on a "
+                    f"{edge:.3e} m edge")
+
+
 def write_solid_mesh_inp(mesh: SolidMesh, output_file: Path | str) -> None:
-    """Write a CalculiX include deck with *NODE and C3D4 *ELEMENT blocks only."""
+    """Write a CalculiX include deck with *NODE and tetrahedral *ELEMENT blocks.
+
+    Element type follows the connectivity: four nodes give C3D4, ten give
+    C3D10. Both are supported because C3D4 is a poor stress element -- its own
+    solver manual says so, and a Lame verification case measured it converging
+    first-order and reading 9.8% low on surface stress at 34,493 elements,
+    where C3D10 does better with 661. See
+    artifacts/verification/fea_mesh_convergence.json.
+    """
     output = Path(output_file)
+    if not mesh.elements:
+        raise ValueError("mesh carries no solid elements")
+
+    width = len(mesh.elements[0][1])
+    if any(len(n) != width for _, n in mesh.elements):
+        raise ValueError("mixed element orders in one mesh")
+    if width == 4:
+        etype, conn = "C3D4", [list(n) for _, n in mesh.elements]
+    elif width == 10:
+        etype = "C3D10"
+        conn = [[n[i] for i in _GMSH_TO_CCX_TET10] for _, n in mesh.elements]
+        _verify_tet10_order(mesh, conn)
+    else:
+        raise ValueError(f"unsupported tetrahedral connectivity of {width} nodes")
+
     with output.open("w", encoding="utf-8") as handle:
         handle.write("*NODE\n")
         for node_id in sorted(mesh.nodes):
             x, y, z = mesh.nodes[node_id]
             handle.write(f"{node_id}, {x:.10e}, {y:.10e}, {z:.10e}\n")
-        handle.write("*ELEMENT, TYPE=C3D4, ELSET=ALL\n")
-        for elem_id, node_ids in mesh.elements:
-            handle.write(f"{elem_id}, {', '.join(map(str, node_ids))}\n")
+        handle.write(f"*ELEMENT, TYPE={etype}, ELSET=ALL\n")
+        for (elem_id, _), nds in zip(mesh.elements, conn):
+            handle.write(f"{elem_id}, {', '.join(map(str, nds))}\n")
 
 
 def generate_fea_case_inp(

@@ -334,3 +334,144 @@ def skin_temperature(ambient_temp_k: float, ambient_density: float,
     wall = 0.5 * (lo + hi)
     return {"skin_temp_k": wall, "recovery_temp_k": t_rec, "h_w_m2k": h,
             "mach": mach, "flux_w_m2": h * (t_rec - wall)}
+
+
+# --- thermal protection -----------------------------------------------------
+
+#: Loaded lazily from the NASA TPSX harvest. Each entry carries the density and
+#: conductivity a thickness calculation needs, plus the temperature the material
+#: is rated to -- distinguishing multiple-use from single-use, because a tile
+#: good for 1,590 K every flight and an ablator good for 1,760 K once are
+#: different engineering decisions and the catalogue should not blur them.
+_TPS_CACHE: list | None = None
+
+
+def tps_catalogue(path=None) -> list[dict]:
+    """TPS materials with the properties a sizing calculation requires.
+
+    Records missing density or conductivity are dropped rather than defaulted:
+    a thickness computed from an assumed conductivity is a number with no
+    provenance, and this project has already paid for one of those.
+    """
+    global _TPS_CACHE
+    if _TPS_CACHE is not None and path is None:
+        return _TPS_CACHE
+
+    import json
+    from pathlib import Path as _Path
+
+    src = _Path(path) if path else (
+        _Path(__file__).resolve().parents[1] / "data/materials/tpsx_materials.json")
+    if not src.exists():
+        return []
+
+    out = []
+    for rec in json.loads(src.read_text()):
+        props = rec.get("properties") or {}
+        rho = props.get("Density")
+        if not rho or rho.get("unit") != "kg/m^3":
+            continue
+        cond = None
+        for key, entry in props.items():
+            if key.lower().startswith("thermal conductivity") and \
+                    entry.get("unit", "").replace(" ", "") in ("W/m-K", "W/mK"):
+                cond = entry if cond is None else (
+                    cond if cond["value"] <= entry["value"] else entry)
+        if cond is None:
+            continue
+        multi = single = None
+        for key, entry in props.items():
+            low = key.lower()
+            if entry.get("unit", "").upper() != "K":
+                continue
+            if low.startswith("multiple use"):
+                multi = entry["value"]
+            elif low.startswith("single use"):
+                single = entry["value"]
+        if multi is None and single is None:
+            continue
+        out.append({
+            "name": rec.get("name", "?"),
+            "density_kg_m3": float(rho["value"]),
+            "conductivity_w_mk": float(cond["value"]),
+            "multiple_use_temp_k": multi,
+            "single_use_temp_k": single,
+            "specific_heat_j_kgk": (props.get("Specific Heat") or {}).get("value"),
+            "emissivity": (props.get("Emissivity") or {}).get("value"),
+            "tpsx_id": rec.get("tpsx_id"),
+        })
+    if path is None:
+        _TPS_CACHE = out
+    return out
+
+
+def size_tps(surface_temp_k: float, heating_duration_s: float,
+             backface_limit_k: float, *, reusable: bool = True,
+             max_thickness_m: float = 0.20, margin: float = 3.0,
+             catalogue=None) -> dict | None:
+    """Lightest TPS that keeps the structure cool for the duration of heating.
+
+    Sized by thermal penetration depth, not by a steady-state gradient. The
+    first version of this used
+
+        t = k (T_surface - T_backface) / q_aeroheating
+
+    and asked for 0.7 mm of blanket under a 1,400 K surface -- against real
+    Shuttle tiles at 50 to 90 mm. The error is that at radiation equilibrium
+    the surface re-radiates nearly all of the incident flux and almost none of
+    it conducts, so feeding the convective flux into a conduction equation
+    massively overstates the heat crossing the layer.
+
+    TPS is a transient problem. Heat diffuses a distance of order
+
+        delta = sqrt(alpha * tau),    alpha = k / (rho * cp)
+
+    in time tau, so a layer several diffusion depths thick still has a cold
+    backface when heating stops. Three depths is the usual engineering rule and
+    it reproduces flight hardware: LI-900 (k 0.048, rho 144, cp 628) over a
+    1,000 s reentry gives alpha 5.3e-7 m^2/s, delta 23 mm, 3 delta = 69 mm --
+    which is where the Shuttle tiles actually sat.
+
+    Returns None when nothing catalogued survives the surface temperature. That
+    is a real answer: the fix is then a different trajectory, not a thicker
+    blanket.
+    """
+    import math as _math
+
+    materials = catalogue if catalogue is not None else tps_catalogue()
+    if not materials or heating_duration_s <= 0.0:
+        return None
+
+    t_surf = float(surface_temp_k)
+    tau = float(heating_duration_s)
+    if float(backface_limit_k) >= t_surf:
+        return {"required": False, "reason": "structure already survives this"}
+
+    best = None
+    for mat in materials:
+        limit = mat["multiple_use_temp_k"] if reusable else (
+            mat["single_use_temp_k"] or mat["multiple_use_temp_k"])
+        if limit is None or limit < t_surf:
+            continue
+        cp = mat.get("specific_heat_j_kgk")
+        if not cp or cp <= 0.0:
+            continue
+        alpha = mat["conductivity_w_mk"] / (mat["density_kg_m3"] * cp)
+        thickness = margin * _math.sqrt(alpha * tau)
+        if thickness <= 0.0 or thickness > max_thickness_m:
+            continue
+        areal = thickness * mat["density_kg_m3"]
+        if best is None or areal < best["areal_mass_kg_m2"]:
+            best = {
+                "required": True,
+                "material": mat["name"],
+                "thickness_m": thickness,
+                "areal_mass_kg_m2": areal,
+                "diffusivity_m2_s": alpha,
+                "rated_temp_k": limit,
+                "surface_temp_k": t_surf,
+                "heating_duration_s": tau,
+                "reusable": bool(reusable),
+                "tpsx_id": mat.get("tpsx_id"),
+            }
+    return best

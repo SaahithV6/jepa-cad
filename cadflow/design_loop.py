@@ -134,6 +134,47 @@ def _mutation_factor(solver: str, objective: float | None, target_value: float |
     return 1.02
 
 
+def _screen_for_factor(surrogate, geometry, heuristic_factor, n, next_cycle,
+                       backend, workdir):
+    """Let the surrogate choose among mutation factors around the heuristic.
+
+    The heuristic factor is always among the candidates, so screening can only
+    change the choice when the model prefers something else -- it cannot lose
+    the fallback. If screening fails for any reason the heuristic stands, and
+    the reason is recorded: a design loop that silently changes strategy when a
+    model errors is worse than one that never had the model.
+    """
+    span = [heuristic_factor * m for m in _factor_spread(n)]
+    candidates = [(f"c{next_cycle:03d}_{i}", _scale_geometry(dict(geometry), f, next_cycle))
+                  for i, f in enumerate(span)]
+    try:
+        picks = surrogate.screen_specs(candidates, backend=backend,
+                                       workdir=Path(workdir) / "screen", keep=1)
+    except Exception as exc:  # noqa: BLE001
+        return heuristic_factor, {"used": False, "reason": str(exc)[:160],
+                                  "heuristic_factor": heuristic_factor}
+    if not picks:
+        return heuristic_factor, {"used": False, "reason": "no candidate ranked",
+                                  "heuristic_factor": heuristic_factor}
+    chosen_index = int(picks[0].candidate_id.rsplit("_", 1)[1])
+    return span[chosen_index], {
+        "used": True,
+        "heuristic_factor": heuristic_factor,
+        "chosen_factor": span[chosen_index],
+        "candidate_id": picks[0].candidate_id,
+        "predicted_log10_mpa": picks[0].predicted_log10_mpa,
+        "considered": len(candidates),
+        "accuracy": surrogate.accuracy.summary(),
+    }
+
+
+def _factor_spread(n: int) -> list[float]:
+    """Multipliers bracketing the heuristic, including 1.0 (the heuristic itself)."""
+    n = max(2, int(n))
+    half = (n - 1) / 2.0
+    return [1.0 + 0.05 * (i - half) / max(half, 1.0) * 2.0 for i in range(n)]
+
+
 def run_design_loop(
     *,
     manifest: JobManifest | None = None,
@@ -153,6 +194,8 @@ def run_design_loop(
     allow_solver_fallback: bool = True,
     prefer_real_cad: bool = True,
     solver_payload_factory: Callable[[JobManifest, int], Mapping[str, Any] | None] | None = None,
+    surrogate: Any = None,
+    screen_candidates: int = 0,
 ) -> DesignLoopResult:
     """Iteratively run solver/verification cycles and adjust the manifest between cycles.
 
@@ -161,6 +204,20 @@ def run_design_loop(
     - CFD targets shrink frontal area when drag is above the bound.
     - If the project was intake'd from an existing directory, the derived envelope
       from the source geometry is used as the starting point.
+
+    Pass ``surrogate`` with ``screen_candidates > 1`` to let the learned model
+    choose between several mutation factors instead of taking the single
+    heuristic one. Each candidate costs a CAD build and a parse -- seconds --
+    where a cycle costs a solver run. This is the only place in the system where
+    the trained representation influences a design decision; until it was added,
+    `autodesign`, `design_loop`, `planner`, `flywheel_loop` and `promotion`
+    contained no reference to the model between them, and the plan's claim that
+    JEPA is "the core informed-modeling loop" was not true of the code.
+
+    The surrogate never replaces the solver: it picks which geometry gets
+    solved, and every pick is recorded against the objective that follows so the
+    question "did screening help" is answered from data rather than assumed. A
+    checkpoint that does not beat random projections raises rather than ranking.
     """
 
     if manifest is None:
@@ -190,6 +247,7 @@ def run_design_loop(
     latest_manifest_path = root / "latest_manifest.json"
     history_path = root / "history.jsonl"
     stop_reason = "repeat-exhausted"
+    pending_screen_id: str | None = None
 
     for cycle_index in range(max(1, repeat)):
         cycle_dir = root / f"cycle_{cycle_index:03d}"
@@ -207,6 +265,17 @@ def run_design_loop(
             runtime=runtime,
         )
         objective = pipeline.solver_result.objective
+        # Judge the previous cycle's screening pick against what the solver
+        # actually returned. Without this the surrogate's usefulness stays an
+        # assumption; with it, `surrogate.screening_error()` reports how far the
+        # predictions landed from the results that followed them.
+        if pending_screen_id is not None and surrogate is not None:
+            if isinstance(objective, (int, float)) and float(objective) > 0:
+                try:
+                    surrogate.record_solver_outcome(pending_screen_id, float(objective))
+                except Exception:  # noqa: BLE001
+                    pass
+            pending_screen_id = None
         if isinstance(objective, (int, float)):
             objective = float(objective)
             if best_objective is None or objective < best_objective:
@@ -226,8 +295,17 @@ def run_design_loop(
         else:
             factor = _mutation_factor(str(latest_manifest.parameters.get("solver", solver or "fea")), objective, target_value, cycle_index)
             geometry = dict(latest_manifest.inputs.get("geometry") or {"kind": "box", "width": 1.0, "height": 1.0, "depth": 1.0})
+            screened: dict[str, Any] = {}
+            if surrogate is not None and int(screen_candidates) > 1:
+                factor, screened = _screen_for_factor(
+                    surrogate, geometry, factor, int(screen_candidates),
+                    cycle_index + 1, backend, cycle_dir)
             next_geometry = _scale_geometry(geometry, factor, cycle_index + 1)
             mutation = {"factor": factor, "geometry": next_geometry}
+            if screened:
+                mutation["screening"] = screened
+                if screened.get("used"):
+                    pending_screen_id = screened.get("candidate_id")
             latest_manifest = JobManifest(
                 name=latest_manifest.name,
                 inputs={**latest_manifest.inputs, "geometry": next_geometry},

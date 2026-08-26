@@ -146,6 +146,7 @@ def mesh_stl_volume(
     angle_deg: float = 40.0,
     mesh_timeout_s: int = 120,
     allow_hull_fallback: bool = True,
+    element_order: int = 1,
 ) -> MeshResult:
     """Classify STL surfaces, create a volume, tet-mesh, write MSH2 (SI meters).
 
@@ -169,7 +170,8 @@ def mesh_stl_volume(
     q: mp.Queue = ctx.Queue()
     proc = ctx.Process(
         target=_mesh_stl_volume_child,
-        args=(str(stl), str(out), cl_max_mm, cl_min_mm, scale_to_meters, angle_deg, q),
+        args=(str(stl), str(out), cl_max_mm, cl_min_mm, scale_to_meters,
+              angle_deg, q, element_order),
     )
     proc.start()
     proc.join(timeout=max(30, int(mesh_timeout_s)))
@@ -262,6 +264,7 @@ def _mesh_stl_volume_child(
     scale_to_meters: bool,
     angle_deg: float,
     q: Any,
+    element_order: int = 1,
 ) -> None:
     """Child-process gmsh body (must be top-level for spawn)."""
     import gmsh
@@ -296,6 +299,31 @@ def _mesh_stl_volume_child(
         # we keep Delaunay as primary and let the hull fallback handle hard STLs.
         gmsh.option.setNumber("Mesh.Algorithm3D", 1)
         gmsh.model.mesh.generate(3)
+        if element_order == 2:
+            # Straight-sided quadratic elements, and the reason matters.
+            #
+            # By default setOrder(2) projects each midside node onto the
+            # underlying surface. On this corpus the surface is an STL that has
+            # been through classifySurfaces/createGeometry, so it is faceted
+            # discrete geometry -- there is no true curvature to recover, and
+            # the projection only distorts elements. On thin fins and nose
+            # cones it distorted them past inversion: CalculiX rejected the
+            # mesh with "nonpositive jacobian determinant" on six of twelve
+            # parts, which first looked like a defect in the C3D10 support
+            # itself.
+            #
+            # Keeping the edges straight removes that failure by construction
+            # while retaining the quadratic displacement field, which is where
+            # the accuracy comes from. A true CAD solid with real curvature
+            # would want the projection; STL input has nothing to project onto.
+            gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)
+            # Quadratic tetrahedra. A Lame verification case measured the
+            # linear ones converging first-order in stress and reading 9.8%
+            # low on surface stress at 34,493 elements, where C3D10 does
+            # better with 661 -- see
+            # artifacts/verification/fea_mesh_convergence.json. Surface stress
+            # is exactly what pressure vessel sizing reads.
+            gmsh.model.mesh.setOrder(2)
         gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
         gmsh.write(str(out_p))
     except Exception as exc:  # noqa: BLE001
@@ -328,8 +356,12 @@ def _mesh_stl_volume_child(
             x, y, z = mesh.nodes[nid]
             lines.append(f"{nid} {x * 1e-3:.10e} {y * 1e-3:.10e} {z * 1e-3:.10e}")
         lines += ["$EndNodes", "$Elements", str(len(mesh.elements))]
+        # Element type must follow the connectivity actually present. Writing
+        # "4" (linear tet) ahead of ten node ids produces a file that parses
+        # without error and silently drops six nodes per element.
+        gmsh_type = 11 if len(mesh.elements[0][1]) == 10 else 4
         for eid, nids in mesh.elements:
-            lines.append(f"{eid} 4 2 0 0 " + " ".join(map(str, nids)))
+            lines.append(f"{eid} {gmsh_type} 2 0 0 " + " ".join(map(str, nids)))
         lines.append("$EndElements")
         out_p.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

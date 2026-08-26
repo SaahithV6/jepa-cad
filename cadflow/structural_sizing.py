@@ -78,18 +78,31 @@ def _knockdown(r_over_t: float) -> float:
 
 
 def size_wall(load_n: float, radius_m: float, length_m: float,
-              *, sigma_allow_pa: float = SIGMA_YIELD_PA / SAFETY_FACTOR
-              / STRESS_CONCENTRATION) -> Wall:
-    """Wall thickness and mass for a thin cylinder under axial compression."""
+              *, sigma_allow_pa: float | None = None,
+              density_kg_m3: float | None = None,
+              yield_pa: float | None = None,
+              modulus_pa: float | None = None) -> Wall:
+    """Wall thickness and mass for a thin cylinder under axial compression.
+
+    Material defaults to the Al-6061-T6 constants at module scope. It is an
+    argument because a vehicle that gets too hot for aluminium has to be built
+    from something denser, and both the thickness (through yield and modulus)
+    and the mass (through density) have to feel that.
+    """
+    rho = float(density_kg_m3 or RHO)
+    sigma_y = float(yield_pa or SIGMA_YIELD_PA)
+    young = float(modulus_pa or E_PA)
+    if sigma_allow_pa is None:
+        sigma_allow_pa = sigma_y / SAFETY_FACTOR / STRESS_CONCENTRATION
     load = max(load_n, 1.0)
 
     t_strength = load / (2.0 * math.pi * radius_m * sigma_allow_pa)
 
     # buckling: iterate because the knockdown depends on r/t
-    t_buckle = math.sqrt(load / (1.21 * math.pi * 0.5 * E_PA))
+    t_buckle = math.sqrt(load / (1.21 * math.pi * 0.5 * young))
     for _ in range(40):
         gamma = _knockdown(radius_m / max(t_buckle, 1e-6))
-        t_new = math.sqrt(load / (1.21 * math.pi * gamma * E_PA))
+        t_new = math.sqrt(load / (1.21 * math.pi * gamma * young))
         if abs(t_new - t_buckle) < 1e-9:
             t_buckle = t_new
             break
@@ -99,38 +112,52 @@ def size_wall(load_n: float, radius_m: float, length_m: float,
     driver = ("buckling" if t == t_buckle else
               "strength" if t == t_strength else "minimum gauge")
 
-    mass = RHO * 2.0 * math.pi * radius_m * t * length_m
+    mass = rho * 2.0 * math.pi * radius_m * t * length_m
 
     sigma_applied = load / (2.0 * math.pi * radius_m * t)
     gamma = _knockdown(radius_m / t)
-    sigma_cr = gamma * 0.605 * E_PA * t / radius_m
+    sigma_cr = gamma * 0.605 * young * t / radius_m
     return Wall(
         thickness_m=t, mass_kg=mass, driver=driver,
-        margin_yield=SIGMA_YIELD_PA / max(sigma_applied, 1.0),
+        margin_yield=sigma_y / max(sigma_applied, 1.0),
         margin_buckling=sigma_cr / max(sigma_applied, 1.0),
     )
 
 
 def stage_structural_mass(prop_mass_kg: float, radius_m: float,
-                          thrust_n: float, *, propellant_density: float = 1030.0
+                          thrust_n: float, *, propellant_density: float = 1030.0,
+                          density_kg_m3: float | None = None,
+                          yield_pa: float | None = None,
+                          modulus_pa: float | None = None
                           ) -> tuple[float, list[dict]]:
     """Structural mass of a stage, summed from its sized components.
 
     Tank length follows from the propellant it must hold at the given radius,
     so a bigger stage gets a longer tank and a heavier one -- the coupling that
     a constant structural coefficient throws away.
+
+    The material properties default to the Al-6061-T6 constants above. They are
+    arguments because skin material became a design variable: a vehicle whose
+    peak skin temperature exceeds what aluminium holds has to be built from
+    something else, and titanium is 64% denser and twice as strong. Passing the
+    material through means that trade lands in the mass budget instead of being
+    granted for free.
     """
+    rho = float(density_kg_m3 or RHO)
+    sigma = float(yield_pa or SIGMA_YIELD_PA)
+    young = float(modulus_pa or E_PA)
     vol = prop_mass_kg / propellant_density
     tank_len = max(0.2, vol / (math.pi * radius_m ** 2))
 
+    mat = {"density_kg_m3": rho, "yield_pa": sigma, "modulus_pa": young}
     parts = []
-    tank = size_wall(thrust_n, radius_m, tank_len)
+    tank = size_wall(thrust_n, radius_m, tank_len, **mat)
     parts.append({"name": "tank", "length_m": tank_len, **tank.__dict__})
 
-    inter = size_wall(thrust_n, radius_m, radius_m * 1.5)
+    inter = size_wall(thrust_n, radius_m, radius_m * 1.5, **mat)
     parts.append({"name": "interstage", "length_m": radius_m * 1.5, **inter.__dict__})
 
-    thrust_struct = size_wall(thrust_n * 1.3, radius_m, radius_m * 1.2)
+    thrust_struct = size_wall(thrust_n * 1.3, radius_m, radius_m * 1.2, **mat)
     parts.append({"name": "thrust structure", "length_m": radius_m * 1.2,
                   **thrust_struct.__dict__})
 

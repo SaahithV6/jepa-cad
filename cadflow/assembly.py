@@ -55,12 +55,34 @@ class VehicleAssembly:
                 for p in self.parts]
 
 
+#: The drag model and the geometry module disagree on one name: `wave_drag`
+#: and the CFD corpus call it "cone", `profiles.nose_profile` calls it
+#: "conical". Passing one to the other raises, which is the good outcome --
+#: silently defaulting to an ogive would have built the wrong body while every
+#: number in the packet said otherwise.
+_SHAPE_ALIASES = {"cone": "conical"}
+
+
+def _geometry_shape_name(shape: str) -> str:
+    """Translate a drag-model shape name into the geometry module's spelling."""
+    from cadflow.profiles import NOSE_SHAPES
+
+    key = str(shape).lower()
+    key = _SHAPE_ALIASES.get(key, key)
+    if key not in NOSE_SHAPES:
+        raise ValueError(
+            f"nose shape {shape!r} has no geometry; known shapes are "
+            f"{NOSE_SHAPES} (aliases: {_SHAPE_ALIASES})")
+    return key
+
+
 def build_vehicle(stages, payload_kg: float, body_radius_m: float,
                   wall_mm: float = 3.0, nose_fineness: float = 2.0,
                   fin_span_m: float = 0.0, fin_root_chord_m: float = 0.0,
                   n_fins: int = 4, nozzle=None, backend=None,
                   skin_density: float = 2700.0,
-                  taper_per_stage: float = 0.92) -> VehicleAssembly:
+                  taper_per_stage: float = 0.92,
+                  nose_shape: str = "ogive") -> VehicleAssembly:
     """Assemble the complete vehicle from the planner's stack.
 
     Stage lengths come from propellant volume at the loaded bulk density, the
@@ -137,17 +159,24 @@ def build_vehicle(stages, payload_kg: float, body_radius_m: float,
             add(f"interstage {i+1}/{i+2}", "loft", solid, t_len, max(r, r_next))
             z += t_len
 
-    # nose cone on top, at the topmost stage's radius
+    # nose cone on top, at the topmost stage's radius.
+    #
+    # The shape is an argument because it was hardcoded to "ogive" while the
+    # design loop had already begun choosing between shapes on measured drag.
+    # The vehicle was being sized for a von Karman nose -- 59.9 kg lighter --
+    # and then built with an ogive, so the mass and drag numbers in the packet
+    # described a body the exported STEP was not.
+    shape = _geometry_shape_name(nose_shape)
     r_top = radii[-1]
     nose_len = 2.0 * r_top * float(nose_fineness)
-    prof = centred(nose_profile(r_top, nose_len, "ogive"), nose_len)
+    prof = centred(nose_profile(r_top, nose_len, shape), nose_len)
     nose = b.revolve_profile(prof)
     # Hollow it the same way the coupon geometry does: the same curve one wall
     # in, pushed below the base so the aft end opens. Left solid, the nose came
     # out at 339 kg -- more than the rest of the vehicle put together, for the
     # lightest-loaded part on it.
     if r_top - wall > 1.0 and nose_len - wall > wall:
-        inner = centred(nose_profile(r_top - wall, nose_len - wall, "ogive"),
+        inner = centred(nose_profile(r_top - wall, nose_len - wall, shape),
                         nose_len - wall)
         pad = max(1.0, min(4.0, 0.05 * r_top))
         cut = b.revolve_profile(inner)

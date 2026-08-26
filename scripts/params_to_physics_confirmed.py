@@ -54,6 +54,8 @@ def run_confirmed(
     max_iters: int,
     load_n: float,
     prompt: str = "",
+    youngs_modulus_pa: float = 70e9,
+    poisson: float = 0.33,
 ) -> dict[str, Any]:
     out.mkdir(parents=True, exist_ok=True)
     cycles: list[dict[str, Any]] = []
@@ -84,8 +86,13 @@ def run_confirmed(
                 # defaults this from job.timeout_s, which left the nose cone
                 # timing out in gmsh and reporting nothing at all.
                 "mesh_timeout_s": int(current.get("mesh_timeout_s", 900)),
-                "youngs_modulus": 70e9,
-                "poisson": 0.33,
+                # Defaulted to aluminium rather than hard-coded to it. The FEA
+                # previously ran every component at 70 GPa no matter which
+                # alloy the design loop had selected, so a vehicle reported as
+                # Inconel was verified as aluminium -- three times too soft and
+                # gated against a third of the stress it could carry.
+                "youngs_modulus": float(youngs_modulus_pa),
+                "poisson": float(poisson),
             },
             tags=("physics_confirmed", f"cycle{cycle}"),
         )

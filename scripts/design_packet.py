@@ -33,7 +33,16 @@ from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 from solve_multistage_corpus import build_stack, fly  # noqa: E402
 
-ALLOWABLE_MPA = 200.0
+#: This path has no material selection -- every component is aluminium -- so
+#: unlike `plan_and_verify` it does not need a per-design allowable. It does
+#: need the number to be derived rather than asserted: 200 MPa appeared here as
+#: a bare constant with no material, no basis and no factor of safety attached
+#: to it, which happened to be close to a 6061-T6 value and gave no way to tell
+#: that from a coincidence.
+from cadflow.allowables import design_allowable  # noqa: E402
+
+_ALLOWABLE = design_allowable("al-6061-t6")
+ALLOWABLE_MPA = _ALLOWABLE.allowable_mpa
 MAX_DISP_MM = 3.0
 
 
@@ -210,7 +219,12 @@ def main() -> int:
         mg = f"{r['margin']:.1f}x" if r["margin"] else "-"
         st = "PASS" if r["passed"] else "FAIL"
         L.append(f"| {r['name']} | {r['why']} | {r['load_n']:.0f} N | {vm} | {mg} | {st} |")
-    L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa, displacement limit {MAX_DISP_MM:.1f} mm. "
+    L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa, displacement limit "
+             f"{MAX_DISP_MM:.1f} mm. Derived from {_ALLOWABLE.material_id} at "
+             f"{_ALLOWABLE.source_strength_mpa:.0f} MPa "
+             f"({_ALLOWABLE.strength_basis}) with a yield factor of safety of "
+             f"{_ALLOWABLE.factor_of_safety} and a {_ALLOWABLE.knockdown} "
+             f"knockdown; not a certifiable allowable. "
              f"All components passed: **{packet['all_components_passed']}**\n")
     (args.out / "PACKET.md").write_text("\n".join(L))
 

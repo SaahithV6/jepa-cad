@@ -254,11 +254,51 @@ WAVE_DRAG_SHARE = 0.5
 MAX_SHAPE_FACTOR = 2.0
 
 
-def cd_multiplier(shape: str, fineness: float) -> float:
+#: Forebody shape factors measured by CFD, relative to a tangent ogive.
+#:
+#: `shape_factor` compares CLOSED bodies -- the slender-body integral needs a
+#: body that closes at both ends -- so it prices a von Karman tail that every
+#: shape shares, and that common tail pulls every ratio toward 1.0. A launch
+#: vehicle has no such tail; it ends in a blunt base with an engine. For
+#: choosing a nose on an open-based vehicle the forebody ratio is the relevant
+#: one, and it is 9-14 points more favourable to von Karman.
+#:
+#: Measured from 48 axisymmetric rhoCentralFoam cases over fineness 1.5-4 and
+#: Mach 1.5-3, validated on cones to -1.8% against exact Taylor-Maccoll. The
+#: ratio is near-constant over that whole range (0.777-0.823 for von Karman),
+#: which is what a shape factor should be. See
+#: data/drag_corpus/shape_factor_calibration.json.
+CFD_FOREBODY_FACTOR = {
+    "ogive": 1.000,        # reference
+    "vonkarman": 0.801,    # 16 cases, spread 0.777-0.823
+    "cone": 0.913,         # 16 cases, spread 0.812-1.088 -- Mach dependent
+}
+
+#: Cones are Mach-dependent in a way the others are not: their factor crosses
+#: above 1.0 at Mach 1.5 and falls to 0.82 by Mach 3, because a cone's own drag
+#: is Mach-sensitive while slender-body wave drag is not. The single number
+#: above is the mean; callers wanting the trend should read the corpus.
+CONE_FACTOR_IS_MACH_DEPENDENT = True
+
+
+def cd_multiplier(shape: str, fineness: float, *, forebody: bool = False) -> float:
     """Factor on zero-lift Cd for a nose shape, relative to a tangent ogive.
 
     Only the wave-drag share is scaled, so an ogive returns exactly 1.0 and the
     existing corpus calibration is preserved for the default vehicle.
+
+    `forebody=True` uses the CFD-measured open-base ratio instead of the
+    closed-body slender-body factor. That is the right choice for a launch
+    vehicle and the wrong one for a body that actually closes; it is opt-in so
+    no existing caller silently changes its answer.
     """
-    factor = min(shape_factor(shape, fineness), MAX_SHAPE_FACTOR)
+    if forebody:
+        key = str(shape).lower()
+        if key not in CFD_FOREBODY_FACTOR:
+            raise ValueError(
+                f"no CFD forebody factor for {shape!r}; measured shapes are "
+                f"{sorted(CFD_FOREBODY_FACTOR)}")
+        factor = CFD_FOREBODY_FACTOR[key]
+    else:
+        factor = min(shape_factor(shape, fineness), MAX_SHAPE_FACTOR)
     return (1.0 - WAVE_DRAG_SHARE) + WAVE_DRAG_SHARE * factor

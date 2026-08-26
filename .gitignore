@@ -5,7 +5,15 @@ __pycache__/
 .pytest_cache/
 runs/
 checkpoints/
-artifacts/
+# Ignore the contents rather than the directory itself: git will not re-include
+# anything inside a directory it has already excluded, so `artifacts/` here made
+# the negation below silently do nothing.
+artifacts/*
+# ...except the verification results. These are small, they are the evidence
+# behind the numbers in the packets, and a claim whose supporting run is not in
+# the repository cannot be checked. Four completed probe sweeps were lost once
+# because their output lived only outside it.
+!artifacts/verification/
 data/processed/
 *.egg-info/
 dist/
