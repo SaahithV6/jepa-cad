@@ -51,3 +51,10 @@ colab/solver-env.tar.gz
 # Environment captured from the decommissioned VM (apt/pip manifests,
 # dotfiles, git state). Reference material, not source.
 _vm_environment/
+
+# OpenFOAM working directories for the supersonic drag sweep. The sweep deletes
+# each case as it finishes unless --keep-cases is passed, so what survives here
+# is scratch: meshes, time directories and solver logs, regenerable from the
+# BodySpec that produced them. The results are drag_corpus.json and
+# shape_factor_calibration.json, which are tracked.
+data/drag_corpus/_cases/
