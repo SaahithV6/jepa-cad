@@ -1,6 +1,14 @@
 {
-  "total_generated": 1961,
-  "component_types": 5,
+  "verified_solids": 1961,
+  "per_family": {
+    "nozzle": 1368,
+    "tank": 240,
+    "strut": 117,
+    "fairing": 156,
+    "injector": 80
+  },
+  "failed": 0,
   "output_directory": "data/generated_spaceflight_cad",
-  "format": "STL"
+  "format": "STL",
+  "note": "counts are files that were re-read after writing and found to have triangles, be watertight and have positive volume"
 }
