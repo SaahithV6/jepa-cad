@@ -30,10 +30,16 @@ the loop pays it only when the acceleration limit demands it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 
 #: Design limits. Each is a real constraint with a real consequence, and each
 #: has a knob below that moves it.
+#: A limit at or above this is not a limit. No structural alloy survives 1e8 K
+#: and no vehicle reaches it, so a caller passing one is saying "do not gate on
+#: this", which several tests do to isolate the constraint they are about.
+_NO_GATE_K = 1e8
+
 DEFAULT_LIMITS = {
     #: axial acceleration a payload is typically qualified to
     "payload_g": 10.0,
@@ -42,8 +48,18 @@ DEFAULT_LIMITS = {
     "coolant_margin_k": 25.0,
     #: what a well-cooled copper throat survives
     "throat_flux_mw_m2": 90.0,
-    #: aluminium stops holding useful strength somewhere here
-    "skin_temp_k": 450.0,
+    #: Not a limit any more -- the skin material provides the physical one, and
+    #: this stays only so a caller can impose something *stricter* or switch the
+    #: gate off entirely. It was 450 K (aluminium) from before materials were
+    #: modelled, and left at that it capped every alloy at aluminium's rating:
+    #: Inconel 718 was reported as surviving 450 K rather than 920 K, and the
+    #: loop bought thermal protection for a skin that did not need it.
+    "skin_temp_k": _NO_GATE_K,
+    #: how far the structural coefficient the loads demand may exceed the one
+    #: the vehicle was sized at before the design is called unclosed. Two
+    #: percent, because the planner picks architectures discretely and the
+    #: implied coefficient moves in small jumps as it switches between them.
+    "struct_closure_tol": 0.02,
     #: static margin in calibers
     "static_margin_min": 1.0,
 }
@@ -55,6 +71,24 @@ class Knobs:
     chamber_bar: float = 55.0
     twr_by_stage: tuple[float, ...] = (4.5, 3.0, 2.2, 2.0)
     propellant: str = "lox_rp1"
+    #: Structural mass fraction the vehicle is designed at. None means the
+    #: planner's asserted constant. This is a design variable because the
+    #: constant is a guess: for 25 kg to 4,000 km the vehicle's own loads demand
+    #: 0.29 where the source asserts 0.14, and a loop that cannot move this
+    #: number can only ever report that failure, never fix it.
+    struct_coeff: float | None = None
+    #: Skin material. A design variable because the alternative is the loop
+    #: reporting "needs thermal protection, no knob here" and stopping -- which
+    #: it did for 25 kg to 4,000 km, where the skin reaches 854 K and aluminium
+    #: holds 420. The catalogue already carried titanium to 670 K and Inconel
+    #: to 920; nothing was missing except the loop's permission to use them.
+    skin_material: str = "al-6061-t6"
+    #: Nose shape. A design variable because it was hardcoded: the planner held
+    #: NOSE_SHAPE = "ogive" and the loop had no way to consider anything else,
+    #: despite plan() accepting the argument and the drag model supporting three
+    #: shapes. CFD now prices all three on an open-base vehicle, so the choice
+    #: can be made on measured drag rather than left at a default.
+    nose_shape: str = "ogive"
 
 
 @dataclass(frozen=True)
@@ -81,11 +115,138 @@ class Evaluation:
     coolant_outlet_k: float = 0.0
     gross_kg: float = 0.0
     stages: int = 0
+    struct_coeff_asserted: float = 0.0
+    struct_coeff_required: float = 0.0
+    skin_material: str = ""
+    skin_limit_k: float = 0.0
+    #: Thermal protection this design needs, or None if the skin survives bare.
+    tps: dict | None = None
+    tps_mass_kg: float = 0.0
     violations: list[Violation] = field(default_factory=list)
 
     @property
     def feasible(self) -> bool:
         return not self.violations
+
+
+def _material(material_id: str):
+    from cadflow.space_materials import iter_materials
+
+    for m in iter_materials():
+        if m.material_id == material_id:
+            return m
+    raise KeyError(f"unknown material {material_id!r}")
+
+
+def best_material_for(temp_k: float):
+    """Lightest-per-strength catalogue material that survives this temperature.
+
+    Returns the material itself rather than "an upgrade or nothing", so a design
+    that has grown cooler can be moved back down. The loop otherwise ratchets:
+    it picks Rene 41 for an 1,100 K iterate, the vehicle then grows and reaches
+    only 854 K, and it flies the refractory alloy anyway -- 22% more structural
+    mass per unit strength than the Inconel that temperature actually calls for.
+    """
+    from cadflow.space_materials import iter_materials
+
+    capable = [m for m in iter_materials()
+               if m.yield_mpa and m.max_service_temp_k >= temp_k
+               and m.category in ("aluminum", "titanium", "steel", "superalloy")]
+    if not capable:
+        return None
+    capable.sort(key=lambda m: -(m.yield_mpa / m.density_kg_m3))
+    return capable[0]
+
+
+def coolest_capable_material(temp_k: float, incumbent_id: str):
+    """Lightest-per-strength material that survives this temperature.
+
+    Ranked by yield over density, so the choice is the one that costs the least
+    mass for the strength it must carry rather than simply the most refractory
+    thing in the catalogue -- Inconel survives 920 K but is 3x the density of
+    aluminium, and reaching for it when titanium would do is how a design gets
+    heavy for no reason.
+
+    Returns None when nothing in the catalogue survives, which is a real answer:
+    at that point the vehicle needs ablative or reusable TPS, not a different
+    alloy, and that is a different design decision.
+    """
+    from cadflow.space_materials import iter_materials
+
+    best = best_material_for(temp_k)
+    return None if best is None or best.material_id == incumbent_id else best
+
+
+#: Heating is not sustained for the whole flight. Ascent through the dense
+#: atmosphere is the heating pulse, and it is roughly the interval around max-Q
+#: rather than the full burn. Taken as a fraction of burnout time -- crude, and
+#: stated here because TPS thickness goes as its square root, so a factor of
+#: four error in duration is only a factor of two in mass.
+_HEATING_FRACTION = 0.35
+
+
+def _size_tps_for(ev, knobs, backface_limit_k: float) -> dict | None:
+    """Thermal protection for a vehicle no alloy can skin, and what it weighs.
+
+    Areal mass becomes vehicle mass through the wetted area, which is taken as
+    a cylinder of the planner's own radius and length. That understates a
+    finned vehicle and overstates a stubby one; it is the same approximation
+    the mass-properties model already makes, so at least the two agree.
+    """
+    from cadflow.thermal import size_tps
+
+    plan = getattr(ev, "plan", None)
+    if plan is None:
+        return None
+    traj = getattr(plan, "trajectory", {}) or {}
+    burnout = float(traj.get("burnout_s") or 0.0)
+    if burnout <= 0.0:
+        return None
+
+    got = size_tps(ev.skin_temp_k, burnout * _HEATING_FRACTION,
+                   backface_limit_k, reusable=False)
+    if got is None or not got.get("required"):
+        return got
+
+    radius_m = max(0.05, (plan.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
+    length_m = 0.0
+    for st in plan.stack:
+        volume = st.prop_mass_kg / 1020.0
+        length_m += max(0.2, volume / (math.pi * radius_m ** 2))
+    wetted_m2 = 2.0 * math.pi * radius_m * max(length_m, 2.0 * radius_m)
+    got["wetted_area_m2"] = wetted_m2
+    got["mass_kg"] = got["areal_mass_kg_m2"] * wetted_m2
+    return got
+
+
+def _plan_at_coeff(apogee_km: float, payload_kg: float, knobs: "Knobs"):
+    """Plan at this iterate's structural coefficient.
+
+    The planner keeps its coefficient in a module global and derives a staging
+    limit from it, so both have to move together and both have to be put back.
+    `plan_solved` learned this the hard way: its restore once sat outside a
+    finally and wrote a hardcoded 0.14, so any exception left every later design
+    in the process silently mis-configured.
+    """
+    from cadflow import planner as _pl
+
+    if knobs.struct_coeff is None:
+        return _pl.plan(apogee_km, payload_kg, propellant=knobs.propellant,
+                        chamber_bar=knobs.chamber_bar,
+                        nose_shape=knobs.nose_shape,
+                        twr_by_stage=list(knobs.twr_by_stage))
+    saved_coeff, saved_mr = _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR
+    try:
+        _pl.STRUCT_COEFF = float(knobs.struct_coeff)
+        _pl.MAX_STAGE_MR = 1.0 / float(knobs.struct_coeff) * 0.62
+        _pl.clear_plan_cache()
+        return _pl.plan(apogee_km, payload_kg, propellant=knobs.propellant,
+                        chamber_bar=knobs.chamber_bar,
+                        nose_shape=knobs.nose_shape,
+                        twr_by_stage=list(knobs.twr_by_stage))
+    finally:
+        _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR = saved_coeff, saved_mr
+        _pl.clear_plan_cache()
 
 
 def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
@@ -97,9 +258,7 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
     if limits:
         lim.update(limits)
 
-    p = plan(apogee_km, payload_kg, propellant=knobs.propellant,
-             chamber_bar=knobs.chamber_bar,
-             twr_by_stage=list(knobs.twr_by_stage))
+    p = _plan_at_coeff(apogee_km, payload_kg, knobs)
     if p is None:
         return Evaluation(knobs=knobs, violations=[Violation(
             "architecture", "closure", 0.0, 1.0,
@@ -128,6 +287,30 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
     except Exception:  # noqa: BLE001 - thermal is an addition, not a gate
         pass
 
+    # Does the structure close? The vehicle is sized at an asserted structural
+    # coefficient; its own flown loads imply another. When the second exceeds
+    # the first the design is lighter on paper than it can be built, which is
+    # the failure the design packet reports for this mission (-27.9 kg of
+    # slack) and the one this loop was previously unable to see, let alone act
+    # on -- it checked loads, heat flux, coolant margin and skin temperature,
+    # and nothing about whether the vehicle could contain itself.
+    try:
+        from cadflow.planner import STRUCT_COEFF, required_struct_coeff
+
+        asserted = float(knobs.struct_coeff or STRUCT_COEFF)
+        required = required_struct_coeff(p, material_id=knobs.skin_material)
+        ev.struct_coeff_asserted = asserted
+        ev.struct_coeff_required = required
+        if required > asserted * (1.0 + lim["struct_closure_tol"]):
+            ev.violations.append(Violation(
+                "structure", "mass closure", required, asserted,
+                "raise structural coefficient"))
+    except Exception:  # noqa: BLE001 - closure is a gate, not a crash
+        pass
+
+    if ev.tps:
+        ev.tps_mass_kg = float(ev.tps.get("mass_kg") or 0.0)
+
     if ev.peak_g > lim["payload_g"]:
         ev.violations.append(Violation(
             "loads", "peak axial acceleration", ev.peak_g, lim["payload_g"],
@@ -140,10 +323,46 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
         ev.violations.append(Violation(
             "thermal", "coolant margin", ev.coolant_margin_k,
             lim["coolant_margin_k"], "raise chamber pressure"))
-    if ev.skin_temp_k > lim["skin_temp_k"]:
-        ev.violations.append(Violation(
-            "aeroheating", "peak skin temperature", ev.skin_temp_k,
-            lim["skin_temp_k"], "needs thermal protection, no knob here"))
+    # The temperature the skin must survive is a property of the material the
+    # skin is made of, not a global constant. It was a constant (450 K, which is
+    # Al-2219) and the violation it raised said "no knob here" -- so a vehicle
+    # reaching 854 K was declared unfixable while the catalogue held titanium at
+    # 670 K and Inconel at 920 K.
+    try:
+        skin = _material(knobs.skin_material)
+        skin_limit = float(skin.max_service_temp_k)
+        ev.skin_material = skin.material_id
+    except KeyError:
+        skin_limit = float(lim["skin_temp_k"])
+    # The physical limit is what the material survives. `limits["skin_temp_k"]`
+    # remains meaningful in two ways: a *lower* value is a caller demanding more
+    # margin than the alloy needs, and an absurd value disables the gate for
+    # callers testing something else. Reading the material and ignoring the
+    # limit entirely -- which is what this did at first -- silently took that
+    # switch away from every caller that had been using it.
+    caller_cap = float(lim["skin_temp_k"])
+    gate_disabled = caller_cap >= _NO_GATE_K
+    skin_limit = min(skin_limit, caller_cap) if not gate_disabled else skin_limit
+    ev.skin_limit_k = skin_limit
+    if ev.skin_temp_k > skin_limit and not gate_disabled:
+        upgrade = coolest_capable_material(ev.skin_temp_k, knobs.skin_material)
+        if upgrade is not None:
+            ev.violations.append(Violation(
+                "aeroheating", "peak skin temperature", ev.skin_temp_k,
+                skin_limit, "upgrade skin material"))
+        else:
+            # No alloy survives. That used to end the loop with "needs thermal
+            # protection, no knob here" -- a correct diagnosis and a dead end.
+            # Thermal protection IS a knob: a blanket or tile over a cooler
+            # structure, sized by how long the heating lasts, paid for in areal
+            # mass that the closure constraint then has to accommodate.
+            ev.tps = _size_tps_for(ev, knobs, skin_limit)
+            if ev.tps is None:
+                ev.violations.append(Violation(
+                    "aeroheating", "peak skin temperature", ev.skin_temp_k,
+                    skin_limit,
+                    "exceeds every alloy and every catalogued TPS; "
+                    "needs a different trajectory"))
     return ev
 
 
@@ -170,6 +389,8 @@ def remedy(knobs: Knobs, violations: list[Violation]) -> Knobs:
     """
     chamber = knobs.chamber_bar
     twr = list(knobs.twr_by_stage)
+    struct = knobs.struct_coeff
+    material = knobs.skin_material
 
     for v in violations:
         target = v.limit * _TARGET_MARGIN
@@ -186,8 +407,25 @@ def remedy(knobs: Knobs, violations: list[Violation]) -> Knobs:
             # needs a large multiplier to move the constraint at all
             shortfall = max(1.05, (v.limit + 1.0) / max(v.value, 1.0))
             chamber = min(300.0, chamber * min(2.0, shortfall ** 2.0))
+        elif v.remedy == "upgrade skin material":
+            # Take the lightest alloy that survives the temperature actually
+            # reached. The density it brings lands in the structural sizing, so
+            # the next iteration re-checks closure carrying the real penalty --
+            # titanium is 15% heavier here, Inconel 48%.
+            pick = coolest_capable_material(v.value, knobs.skin_material)
+            if pick is not None:
+                material = pick.material_id
+        elif v.remedy == "raise structural coefficient":
+            # v.value is the coefficient the loads demand, v.limit the one the
+            # vehicle was sized at. Adopting the demand outright overshoots: a
+            # heavier structure needs more propellant, which needs more
+            # structure, so the demand itself moves. Step most of the way and
+            # let the next iteration re-measure -- this is the same fixed point
+            # `plan_solved` walks, driven here one step per design cycle.
+            struct = min(0.60, v.limit + _DAMPING * (v.value - v.limit))
 
-    return replace(knobs, chamber_bar=chamber, twr_by_stage=tuple(twr))
+    return replace(knobs, chamber_bar=chamber, twr_by_stage=tuple(twr),
+                   struct_coeff=struct, skin_material=material)
 
 
 def _detect_conflict(violations: list[Violation]) -> dict | None:
@@ -213,6 +451,56 @@ def _detect_conflict(violations: list[Violation]) -> dict | None:
                     f"propellant."),
             }
     return None
+
+
+def _choose_nose_shape(payload_kg, apogee_km, knobs, ev, limits):
+    """Try each measured nose shape and keep the lightest feasible vehicle.
+
+    Nose shape does not fix a violation, so it has no place in `remedy` -- it
+    lowers gross mass, which is what the loop is otherwise silent about. Run
+    after convergence for the same reason material right-sizing is: a cheaper
+    design that breaks a constraint is not cheaper.
+
+    Only shapes with a measured CFD forebody factor are candidates. The
+    closed-body slender-body factor is not used here because a launch vehicle
+    has no tail closure, and it refuses cones outright.
+    """
+    from cadflow.wave_drag import CFD_FOREBODY_FACTOR
+
+    best = (knobs, ev)
+    for shape in sorted(CFD_FOREBODY_FACTOR, key=CFD_FOREBODY_FACTOR.get):
+        if shape == knobs.nose_shape:
+            continue
+        trial = replace(knobs, nose_shape=shape)
+        try:
+            got = evaluate(payload_kg, apogee_km, trial, limits)
+        except Exception:  # noqa: BLE001
+            continue
+        if not got.feasible or got.gross_kg <= 0:
+            continue
+        if got.gross_kg < best[1].gross_kg * 0.999:
+            best = (trial, got)
+    return best if best[0] is not knobs else None
+
+
+def _right_size_material(payload_kg, apogee_km, knobs, ev, limits):
+    """Swap down to the lightest alloy this design's own temperature allows.
+
+    Returns None unless the swap both changes something and stays feasible --
+    a cheaper design that violates a constraint is not a cheaper design.
+    """
+    want = best_material_for(ev.skin_temp_k)
+    if want is None or want.material_id == knobs.skin_material:
+        return None
+    try:
+        current = _material(knobs.skin_material)
+    except KeyError:
+        return None
+    if (want.yield_mpa / want.density_kg_m3) <= (current.yield_mpa / current.density_kg_m3):
+        return None
+    trial = replace(knobs, skin_material=want.material_id)
+    got = evaluate(payload_kg, apogee_km, trial, limits)
+    return (trial, got) if got.feasible else None
 
 
 def autodesign(payload_kg: float, apogee_km: float,
@@ -245,8 +533,33 @@ def autodesign(payload_kg: float, apogee_km: float,
         if best is None or (len(ev.violations) < len(best.violations)):
             best = ev
         if ev.feasible:
+            # Feasible is not the same as right-sized. The material knob only
+            # ever moved upward, so a design that cooled as it grew keeps the
+            # alloy its hottest iterate needed. Try the one this vehicle's
+            # actual temperature calls for and keep it only if it still closes.
+            trimmed = _right_size_material(payload_kg, apogee_km, knobs, ev, limits)
+            if trimmed is not None:
+                knobs, ev = trimmed
+                history.append({"iteration": i + 1, "note": "material right-sized",
+                                "skin_material": knobs.skin_material,
+                                "gross_kg": ev.gross_kg, "stages": ev.stages,
+                                "violations": []})
+            nosed = _choose_nose_shape(payload_kg, apogee_km, knobs, ev, limits)
+            if nosed is not None:
+                before = ev.gross_kg
+                knobs, ev = nosed
+                history.append({"iteration": i + 1, "note": "nose shape chosen",
+                                "nose_shape": knobs.nose_shape,
+                                "gross_kg": ev.gross_kg,
+                                "saved_kg": round(before - ev.gross_kg, 1),
+                                "stages": ev.stages, "violations": []})
+            # `conflict` is present on every return path. It used to appear
+            # only when the loop gave up, so a caller had to know which branch
+            # ran before it could read the result -- and once the loop gained
+            # enough knobs to escape a conflict, four callers that had always
+            # taken the giving-up path started raising KeyError.
             return {"converged": True, "iterations": i + 1, "evaluation": ev,
-                    "knobs": knobs, "history": history}
+                    "knobs": knobs, "history": history, "conflict": None}
 
         actionable = [v for v in ev.violations if "no knob" not in v.remedy]
         if not actionable:

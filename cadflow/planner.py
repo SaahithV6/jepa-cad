@@ -75,7 +75,11 @@ NOSE_FINENESS = 3.0
 def drag_coefficient(nose_shape: str = NOSE_SHAPE,
                      nose_fineness: float = NOSE_FINENESS) -> float:
     """Zero-lift CD for a vehicle with the given nose."""
-    return CD * cd_multiplier(nose_shape, nose_fineness)
+    # forebody=True: a launch vehicle has no tail closure, so the CFD-measured
+    # open-base ratio is the right one. The closed-body slender-body factor
+    # dilutes every shape difference with a tail this vehicle does not have,
+    # and refuses cones outright.
+    return CD * cd_multiplier(nose_shape, nose_fineness, forebody=True)
 # Above this mass ratio a stage's structure cannot be closed at STRUCT_COEFF:
 # dry mass would have to be smaller than the tank holding the propellant.
 MAX_STAGE_MR = 1.0 / STRUCT_COEFF * 0.62
@@ -460,6 +464,48 @@ def plan_sized(target_km: float, payload_kg: float, *,
         globals()["STRUCT_COEFF"] = _saved_coeff
         globals()["MAX_STAGE_MR"] = _saved_mr
     return p, coeff, history
+
+
+def required_struct_coeff(p, *, material_id: str | None = None) -> float:
+    """The structural coefficient this plan's own loads demand.
+
+    One pass of the fixed point in `plan_solved`, exposed on its own so a design
+    loop can ask "does this vehicle's structure close?" without paying for the
+    whole solve. Sizes each stage's structure from the acceleration its own
+    trajectory reaches and the mass it actually carries, then reports the
+    coefficient that implies.
+
+    When this comes back above the coefficient the plan was built at, the
+    vehicle is lighter on paper than it can be built -- the design does not
+    close, and no amount of iterating on chamber pressure will change that.
+    """
+    from cadflow.structural_sizing import stage_structural_mass
+
+    mat: dict = {}
+    if material_id:
+        from cadflow.space_materials import iter_materials
+
+        for m in iter_materials():
+            if m.material_id == material_id and m.yield_mpa:
+                mat = {"density_kg_m3": m.density_kg_m3,
+                       "yield_pa": m.yield_mpa * 1e6,
+                       "modulus_pa": m.youngs_modulus_gpa * 1e9}
+                break
+
+    radius_m = max(0.05, (p.gross_kg / 1000.0) ** (1.0 / 3.0) * 0.55 / 2.0)
+    flown_g = p.trajectory.get("max_axial_g_by_stage") or []
+    total_struct = 0.0
+    total_prop = 0.0
+    for i, st in enumerate(p.stack):
+        supported = sum(s.prop_mass_kg + s.struct_mass_kg for s in p.stack[i:])
+        g_load = flown_g[i] if i < len(flown_g) else (4.5 if i == 0 else 3.0)
+        thrust = supported * G0 * g_load
+        m_struct, _parts = stage_structural_mass(st.prop_mass_kg, radius_m,
+                                                 thrust, **mat)
+        total_struct += m_struct
+        total_prop += st.prop_mass_kg
+    coeff = total_struct / max(total_struct + total_prop, 1e-6)
+    return float(min(0.60, max(0.03, coeff)))
 
 
 def optimise_mixture_ratio(target_km: float, payload_kg: float, *,

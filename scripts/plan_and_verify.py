@@ -34,7 +34,13 @@ from cadflow.vehicle import (  # noqa: E402
 from generate_propulsion_trajectory_corpus import load_coupling  # noqa: E402
 from scripts.params_to_physics_confirmed import run_confirmed  # noqa: E402
 
-ALLOWABLE_MPA = 200.0
+#: The structural gate is no longer a constant. It is derived per design from
+#: the alloy the loop selected, in `cadflow.allowables`, because a fixed 200 MPa
+#: applied to every material at aluminium stiffness meant an Inconel vehicle was
+#: verified as aluminium: charged 8,190 kg/m3 in the mass budget and forbidden
+#: from carrying more than a third of the stress the alloy is good for. The name
+#: is left removed rather than repointed so that anything still importing it
+#: fails loudly instead of picking up a plausible default.
 
 
 #: Aluminium 6061, for the modal analysis. The static deck does not need a
@@ -294,6 +300,17 @@ def main() -> int:
     ap.add_argument("--solve-structure", action="store_true",
                     help="design at the structural coefficient the mass model "
                          "solves for, instead of the asserted constant")
+    ap.add_argument("--autodesign", action="store_true",
+                    help="run the repair loop before reporting, so the packet "
+                         "describes a design that closes rather than one that "
+                         "does not. Without it the packet can only diagnose: "
+                         "for 25 kg to 4,000 km it reports the vehicle 27.9 kg "
+                         "short of containing its own skin and engine, which is "
+                         "true and unactionable. The loop raises the structural "
+                         "coefficient until the mass closes, picks a skin "
+                         "material that survives the peak temperature, sizes "
+                         "thermal protection when no alloy does, and chooses a "
+                         "nose shape on CFD-measured drag.")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     load_coupling()
@@ -307,6 +324,67 @@ def main() -> int:
     # consequential thing this packet can say about its own vehicle: if the mass
     # model is right, a vehicle sized at the asserted value is too light to
     # exist and will not make the mission.
+    # The repair loop, when asked for. It returns the knobs it converged on,
+    # and those knobs -- not the defaults -- are what the rest of the packet
+    # must describe, or the report and the vehicle diverge again.
+    design_knobs = None
+    design_history = None
+    repaired_plan = None
+    if args.autodesign:
+        try:
+            from cadflow.autodesign import autodesign as _autodesign
+
+            _res = _autodesign(args.payload_kg, args.apogee_km, max_iters=12)
+            design_knobs = _res["knobs"]
+            design_history = _res["history"]
+            _ev = _res["evaluation"]
+            # Use the repaired PLAN, not just the repaired knobs. Wiring only
+            # the knobs through produced a packet whose header announced
+            # "converged, 0 violations" while every section below still
+            # described the unrepaired vehicle -- gross 1136.8 kg, 27.1 kg short
+            # of containing itself. A report that contradicts itself in the
+            # reader's favour is worse than one that simply reports the failure.
+            repaired_plan = getattr(_ev, "plan", None)
+            print(f"repair loop: converged={_res['converged']} in "
+                  f"{_res['iterations']} iterations; "
+                  f"coeff {_ev.struct_coeff_asserted:.4f}, "
+                  f"skin {design_knobs.skin_material}, "
+                  f"nose {design_knobs.nose_shape}, "
+                  f"{len(_ev.violations)} violations", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"repair loop failed ({exc}); reporting the unrepaired "
+                  f"design", flush=True)
+
+    repaired_plan = repaired_plan if args.autodesign else None
+
+    # Size against the material the design actually selected.
+    #
+    # The gate used to be a flat 200 MPa with aluminium elastic properties, no
+    # matter what autodesign picked. That number is close to a 6061-T6
+    # allowable, so for aluminium vehicles it was roughly right by accident;
+    # for the Inconel 718 skin this loop now selects it was gating a 700 MPa
+    # material at 200, while the mass budget charged the full 8,190 kg/m3. The
+    # design paid for the alloy and was forbidden from using it.
+    skin_material = getattr(design_knobs, "skin_material", None) or "al-6061-t6"
+    try:
+        from cadflow.allowables import design_allowable, elastic_properties
+
+        allowable = design_allowable(skin_material)
+        skin_e_pa, skin_nu = elastic_properties(skin_material)
+    except (KeyError, ValueError) as exc:
+        print(f"no allowable for {skin_material} ({exc}); "
+              f"falling back to al-6061-t6", flush=True)
+        from cadflow.allowables import design_allowable, elastic_properties
+
+        allowable = design_allowable("al-6061-t6")
+        skin_e_pa, skin_nu = elastic_properties("al-6061-t6")
+    allowable_mpa = allowable.allowable_mpa
+    print(f"structural gate: {allowable_mpa:.1f} MPa "
+          f"({allowable.material_id}, {allowable.source_strength_mpa:.0f} MPa "
+          f"{allowable.strength_basis} / FoS {allowable.factor_of_safety} "
+          f"x knockdown {allowable.knockdown}), E {skin_e_pa/1e9:.0f} GPa",
+          flush=True)
+
     solved_coeff = None
     try:
         _sp, solved_coeff, _hist = plan_sized(
@@ -324,6 +402,11 @@ def main() -> int:
               f"coefficient", flush=True)
         p = plan(args.apogee_km, args.payload_kg,
                  propellant=args.propellant, chamber_bar=args.chamber_bar)
+    if args.autodesign and repaired_plan is not None:
+        p = repaired_plan
+        print(f"reporting the repaired design: gross {p.gross_kg:.1f} kg, "
+              f"{p.stages} stages", flush=True)
+
     if p is None:
         print(f"# Design packet\n\n**Specification:** {spec}\n")
         print("No architecture up to 3 stages closes this mission.")
@@ -431,8 +514,9 @@ def main() -> int:
             try:
                 rep = run_confirmed(
                     params_mm=geom, out=comp_dir,
-                    max_stress_mpa=ALLOWABLE_MPA, max_disp_mm=3.0, max_iters=1,
-                    load_n=load, prompt=name)
+                    max_stress_mpa=allowable_mpa, max_disp_mm=3.0, max_iters=1,
+                    load_n=load, prompt=name,
+                    youngs_modulus_pa=skin_e_pa, poisson=skin_nu)
                 acc = rep.get("accepted") or {}
                 vm, ok = acc.get("max_von_mises_mpa"), bool(acc.get("targets_met"))
                 hulled = any(comp_dir.rglob("MESH_IS_CONVEX_HULL"))
@@ -471,22 +555,22 @@ def main() -> int:
             # since it ignores the whole loaded upper field. p95 keeps the
             # structure in view and leaves the singularity out of it.
             vm = dist["p95"]
-            ok = vm <= ALLOWABLE_MPA
+            ok = vm <= allowable_mpa
             if ok:
                 break
             # thicken in proportion to the overshoot and re-analyse
-            thicker = min(t_mm * min(2.0, 1.15 * vm / ALLOWABLE_MPA), MAX_WALL_MM)
+            thicker = min(t_mm * min(2.0, 1.15 * vm / allowable_mpa), MAX_WALL_MM)
             if thicker <= t_mm + 1e-9:
                 # Already at the cap and still over. Re-solving identical
                 # geometry cannot change the answer, so stop and say so rather
                 # than burning the remaining iterations on the same mesh.
-                print(f"  [{name}] p99 {vm:.0f} MPa over {ALLOWABLE_MPA:.0f} at "
+                print(f"  [{name}] p99 {vm:.0f} MPa over {allowable_mpa:.0f} at "
                       f"the {MAX_WALL_MM:.0f} mm wall limit; not converging",
                       flush=True)
                 wall_capped = True
                 break
             t_mm = thicker
-            print(f"  [{name}] p99 {vm:.0f} MPa over {ALLOWABLE_MPA:.0f}; "
+            print(f"  [{name}] p99 {vm:.0f} MPa over {allowable_mpa:.0f}; "
                   f"thickening wall to {t_mm:.2f} mm", flush=True)
 
         # Recompute wall properties at the thickness the analysis settled on,
@@ -530,7 +614,7 @@ def main() -> int:
                         "mesh_was_coarsened": coarsened,
                         "stress_dist": dist,
                         "shell_von_mises_mpa": vm, "coupon_passed": ok,
-                        "coupon_margin": (ALLOWABLE_MPA / vm) if vm else None,
+                        "coupon_margin": (allowable_mpa / vm) if vm else None,
                         "wall_mm": wall_mm_final,
                         "wall_mass_kg": wall_mass,
                         "wall_driver": ("wall limit" if wall_capped
@@ -566,6 +650,28 @@ def main() -> int:
         L.append(f"| {i+1} | {st.prop_mass_kg:.2f} kg | "
                  f"{st.struct_mass_kg:.2f} kg | {st.expansion_ratio:.0f} |")
     L.append(f"\npayload {args.payload_kg:.1f} kg, gross {p.gross_kg:.1f} kg\n")
+
+    # Every other check in this packet is internal: the solvers agree with
+    # theory and the budget closes. All of that can be true of a vehicle nobody
+    # could build, and the structural coefficient is where that shows first,
+    # because it is asserted rather than solved for.
+    try:
+        from cadflow.flown_envelope import check as _envelope_check
+
+        _stage1_wet = (p.stack[0].prop_mass_kg + p.stack[0].struct_mass_kg
+                       if p.stack else p.gross_kg)
+        _sigma = (p.stack[0].struct_mass_kg / _stage1_wet
+                  if p.stack and _stage1_wet > 0 else None)
+        if _sigma is not None:
+            _v = _envelope_check(_sigma, stage_wet_kg=_stage1_wet)
+            L.append(f"\n**Structure against flown hardware.** Stage 1 "
+                     f"structural coefficient is {_sigma:.4f}. Ten flown stages "
+                     f"from Saturn V's S-IC to Electron's first stage span "
+                     f"{_v.flown_min:.3f} to {_v.flown_max:.3f}, median "
+                     f"{_v.flown_median:.3f}. {_v.note}\n")
+    except Exception as _exc:  # noqa: BLE001
+        L.append(f"\n(flown-hardware comparison unavailable: {_exc})\n")
+
     L.append("## Mission verification\n")
     err = abs(p.achieved_km - args.apogee_km) / args.apogee_km * 100
     seps = ", ".join(f"{s:.1f} s" for s in p.trajectory["separations"]) or "none"
@@ -852,7 +958,9 @@ def main() -> int:
                 fin_span_m=fins["span_m"],
                 fin_root_chord_m=fins["root_chord_m"],
                 n_fins=fins["n_fins"],
-                nozzle=bell if nozzle else None)
+                nozzle=bell if nozzle else None,
+                nose_shape=(design_knobs.nose_shape if design_knobs
+                            else "ogive"))
             budget = sum(st.struct_mass_kg for st in p.stack)
             closure = mass_closure(
                 asm, budget,
@@ -932,8 +1040,33 @@ def main() -> int:
              "computed on that same solid, exact for the geometry, in kg and "
              "kg m^2 about the centroid.")
     allp = all(r["passed"] for r in results)
-    L.append(f"\nAllowable {ALLOWABLE_MPA:.0f} MPa. "
+    L.append(f"\nAllowable {allowable_mpa:.0f} MPa, derived from "
+             f"{allowable.material_id} at {allowable.source_strength_mpa:.0f} MPa "
+             f"({allowable.strength_basis}) with a yield factor of safety of "
+             f"{allowable.factor_of_safety} and a {allowable.knockdown} knockdown. "
              f"All {len(results)} components passed: **{allp}**\n")
+    L.append("\nThis allowable is not certifiable and the packet should not be "
+             "read as though it were. The catalogue carries typical strengths "
+             "rather than A- or B-basis values, so the knockdown above stands in "
+             "for a statistical basis that does not exist here:\n")
+    for c in allowable.caveats:
+        L.append(f"- {c}")
+    L.append(
+        "\nDiscretisation error is measured separately and is not included in "
+        "any margin quoted here. Against an exact Lame solution "
+        "(`artifacts/verification/fea_mesh_convergence.json`) the C3D4 linear "
+        "tetrahedra this pipeline writes converge first-order in stress "
+        "(p = 1.31) and read 9.8% low on surface stress at 34,493 elements, "
+        "against a 40,000 element budget; quadratic C3D10 elements reach a "
+        "lower field error with 661.\n\n"
+        "On the real corpus parts that number is larger and two-sided. Solving "
+        "twelve components at identical meshes and loads under both element "
+        "types (`artifacts/verification/element_order_ab.json`) moved the p95 "
+        "this loop sizes against by a median of 1.1% but a range of -13.9% to "
+        "+14.5%. The small median belongs to smooth parts like body tubes; the "
+        "double-digit ends belong to fins and nose cones, where the field is "
+        "dominated by stress concentrations. Read the component margins below "
+        "as carrying at least that much numerical uncertainty.\n")
 
     (args.out / "PACKET.md").write_text("\n".join(L))
     (args.out / "PACKET.json").write_text(json.dumps({

@@ -1,0 +1,5 @@
+# Generated meshes go through LFS. There are 1,961 of them and they total
+# 466 MB; committed as ordinary blobs they would sit in the history forever,
+# and this set has already been regenerated once -- every file in it was an
+# 84-byte empty mesh that a generator reported as a success.
+data/generated_spaceflight_cad/*.stl filter=lfs diff=lfs merge=lfs -text

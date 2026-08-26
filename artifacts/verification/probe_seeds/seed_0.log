@@ -1,0 +1,24 @@
+grouping meshes by content
+[graph_dataset] skipped 5174 node(s) with unreadable formats (SolidWorks/docs); 58518 loadable record(s) remain
+39909 records with fields from geometry; probing 1600
+target 'max_stress' in log10, 628 usable samples (445 train / 183 held out, split by file so no mesh is on both sides); 0 placeholder rows dropped
+
+    checkpoint   step      R^2   95% CI on the gain       gain  verdict
+   random init      0   0.6684          (reference)    +0.0000
+from_killed_run_step200.pt    200   0.7364   [+0.0175, +0.1369]    +0.0688  significant
+step_001000.pt   1000   0.4876   [-0.5857, +0.0216]    -0.1944  noise
+step_001500.pt   1500   0.5046   [-0.4388, +0.0050]    -0.1710  noise
+
+  3 group splits over one embedded pool (628 samples, 592 distinct meshes):
+
+    step   mean gain       min       max  sign
+     200     +0.0124   -0.0394   +0.0684  MIXED
+    1000     -0.0858   -0.2050   +0.0355  MIXED
+    1500     -0.0735   -0.1711   +0.0395  MIXED
+
+  Intervals are on the paired difference against random projections, not on each R^2 separately -- both models see the same held-out samples, so the shared variation cancels.
+
+  across training: +0.7364 -> +0.5046 (-0.2318)
+  beats random projections at step 200 and after: gain lower bound +0.0175
+
+written: artifacts/verification/probe_seeds/seed_0.json

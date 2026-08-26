@@ -75,8 +75,10 @@ class CADSimulationDataset(Dataset):
             if "max_stress" in data:
                 sample["max_stress"] = torch.tensor(float(data["max_stress"]), dtype=torch.float32)
             else:
+                # Derived from the input fields, so not a measurement -- named
+                # apart from the real thing. See data/graph_dataset.py.
                 stress_col = min(2, sample["fields"].shape[-1] - 1)
-                sample["max_stress"] = sample["fields"][:, stress_col].max()
+                sample["max_stress_proxy"] = sample["fields"][:, stress_col].max()
             return sample
 
         obj = torch.load(path, weights_only=True)

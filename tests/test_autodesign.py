@@ -35,8 +35,26 @@ def _coupling():
 
 def _limits(**over):
     lim = dict(DEFAULT_LIMITS)
-    # aeroheating has no knob in this loop, so it would block every run
+    # Aeroheating now HAS a knob -- the loop picks a skin material that
+    # survives the temperature -- but these tests predate it and several assert
+    # on iteration counts that a material swap would change. Left pinned so each
+    # test exercises the constraint it is about.
     lim["skin_temp_k"] = 1e9
+    lim.update(over)
+    return lim
+
+
+def _unconstrained(**over):
+    """Every limit loosened, including the ones added after these tests.
+
+    `_limits` loosens what existed when it was written. Mass closure came later,
+    and it fires on the default 25 kg / 4,000 km vehicle -- correctly, since
+    that design is 27.9 kg short of containing its own skin and engine. A test
+    that means "nothing is binding" has to say so about every constraint, not
+    just the ones that existed the day it was written.
+    """
+    lim = _limits(payload_g=1e9, throat_flux_mw_m2=1e9, coolant_margin_k=-1e9)
+    lim["struct_closure_tol"] = 1e9
     lim.update(over)
     return lim
 
@@ -89,9 +107,7 @@ def test_evaluation_covers_every_discipline():
 
 
 def test_a_loose_specification_is_already_feasible():
-    ev = evaluate(PAYLOAD, APOGEE, Knobs(),
-                  _limits(payload_g=1e9, throat_flux_mw_m2=1e9,
-                          coolant_margin_k=-1e9))
+    ev = evaluate(PAYLOAD, APOGEE, Knobs(), _unconstrained())
     assert ev.feasible, [str(v) for v in ev.violations]
 
 
@@ -129,11 +145,10 @@ def test_a_tight_flux_limit_drives_pressure_down():
 
 
 def test_an_already_feasible_design_converges_immediately():
-    res = autodesign(PAYLOAD, APOGEE,
-                     limits=_limits(payload_g=1e9, throat_flux_mw_m2=1e9,
-                                    coolant_margin_k=-1e9), max_iters=5)
+    res = autodesign(PAYLOAD, APOGEE, limits=_unconstrained(), max_iters=5)
     assert res["converged"]
     assert res["iterations"] == 1
+    assert res["conflict"] is None
 
 
 # --- over-constrained problems ---------------------------------------------
@@ -141,8 +156,14 @@ def test_an_already_feasible_design_converges_immediately():
 def test_opposing_constraints_are_reported_as_a_conflict():
     """Not 'did not converge' -- which is true and useless -- but which pair of
     requirements cannot coexist and on which knob."""
+    # 120 K used to be unsatisfiable and no longer is: with structural
+    # coefficient and skin material as knobs the vehicle can restructure until
+    # both thermal constraints hold, and it converges at 120.3 K. That is a real
+    # gain in reach, so the test moved to a margin the enlarged design space
+    # still cannot deliver rather than being deleted -- conflict detection is
+    # the feature here, and it needs a genuine conflict to detect.
     res = autodesign(PAYLOAD, APOGEE,
-                     limits=_limits(coolant_margin_k=120.0), max_iters=10)
+                     limits=_limits(coolant_margin_k=250.0), max_iters=10)
     assert not res["converged"]
     conflict = res.get("conflict")
     assert conflict is not None, res["history"][-1]
@@ -155,7 +176,7 @@ def test_a_conflict_stops_the_loop_early():
     """Iterating an over-constrained problem just oscillates; an earlier
     version bounced between 167 and 172 bar until it ran out of iterations."""
     res = autodesign(PAYLOAD, APOGEE,
-                     limits=_limits(coolant_margin_k=120.0), max_iters=20)
+                     limits=_limits(coolant_margin_k=250.0), max_iters=20)
     assert res["conflict"] is not None
     assert res["iterations"] < 20
 

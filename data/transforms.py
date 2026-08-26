@@ -149,8 +149,16 @@ def collate_masked_batch(
         "target_block_ids": masks["target_block_ids"],
         "block_ids": masks["block_ids"],
     }
-    if "max_stress" in batch[0]:
-        out["max_stress"] = torch.stack([item["max_stress"] for item in batch])
+    for key in ("max_stress", "max_stress_proxy"):
+        # Every sample used to carry `max_stress`, because a record without a
+        # solver result was given max() of an input field column instead. Now
+        # that the fabricated value is named apart from the measured one,
+        # either key may be absent from any given sample, so a batch is
+        # heterogeneous and testing batch[0] alone raises KeyError on the first
+        # mixed batch. Present-for-all or not at all: a partially stacked
+        # target would silently misalign with the rows it labels.
+        if all(key in item for item in batch):
+            out[key] = torch.stack([item[key] for item in batch])
     if "is_synthetic" in batch[0]:
         out["is_synthetic"] = torch.stack([item["is_synthetic"] for item in batch])
     if "graph_metadata" in batch[0]:

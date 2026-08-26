@@ -1,0 +1,98 @@
+{
+ "what_this_is": "Published dry and propellant masses for flown launch vehicle stages, used to check whether this project's structural mass model sits in the regime real hardware occupies.",
+ "definition": "structural_coefficient = dry_kg / (dry_kg + propellant_kg), matching cadflow.planner: structs = prop * s / (1 - s).",
+ "provenance_warning": "These are SECONDARY-SOURCE figures from published vehicle descriptions and user guides, not primary mass statements from the manufacturers. Individual values are quoted differently across sources -- Saturn V S-II dry mass appears as both 36,000 and 40,100 kg, and Falcon 9 stage masses are not officially published at all. Each entry carries a confidence flag and a spread where sources disagree. Nothing here is test data, no value has been verified against a primary document, and this file must not be used as a design allowable or a validation of flight mass. It supports one claim only: whether a modelled structural coefficient is in the right decade as flown hardware.",
+ "how_to_improve": "Replace each entry with a figure traceable to a manufacturer payload user's guide or a NASA/ESA technical report, and record the document number in `source_note`.",
+ "stages": [
+  {
+   "vehicle": "Saturn V",
+   "stage": "S-IC",
+   "propellant": "LOX/RP-1",
+   "dry_kg": 130000,
+   "propellant_kg": 2149500,
+   "confidence": "medium",
+   "source_note": "Widely published; dry mass quoted between 130,000 and 137,000 kg."
+  },
+  {
+   "vehicle": "Saturn V",
+   "stage": "S-II",
+   "propellant": "LOX/LH2",
+   "dry_kg": 36000,
+   "propellant_kg": 456100,
+   "confidence": "low",
+   "source_note": "Dry mass quoted as both 36,000 and 40,100 kg depending on whether interstage is included."
+  },
+  {
+   "vehicle": "Saturn V",
+   "stage": "S-IVB",
+   "propellant": "LOX/LH2",
+   "dry_kg": 10400,
+   "propellant_kg": 106600,
+   "confidence": "medium",
+   "source_note": "Third stage as flown on Apollo lunar missions."
+  },
+  {
+   "vehicle": "Atlas V",
+   "stage": "Common Core Booster",
+   "propellant": "LOX/RP-1",
+   "dry_kg": 21351,
+   "propellant_kg": 284450,
+   "confidence": "medium",
+   "source_note": "From published Atlas V vehicle descriptions."
+  },
+  {
+   "vehicle": "Atlas V",
+   "stage": "Centaur III (single engine)",
+   "propellant": "LOX/LH2",
+   "dry_kg": 2247,
+   "propellant_kg": 20830,
+   "confidence": "medium",
+   "source_note": "Balloon-tank upper stage; unusually light for its class."
+  },
+  {
+   "vehicle": "Delta IV",
+   "stage": "Common Booster Core",
+   "propellant": "LOX/LH2",
+   "dry_kg": 26760,
+   "propellant_kg": 199640,
+   "confidence": "medium",
+   "source_note": "Hydrogen booster; low propellant density drives a heavy structure."
+  },
+  {
+   "vehicle": "Ariane 5",
+   "stage": "EPC (H173)",
+   "propellant": "LOX/LH2",
+   "dry_kg": 14700,
+   "propellant_kg": 170000,
+   "confidence": "medium",
+   "source_note": "Core stage; figures vary with EPC variant."
+  },
+  {
+   "vehicle": "Falcon 9 v1.2",
+   "stage": "Stage 1",
+   "propellant": "LOX/RP-1",
+   "dry_kg": 22200,
+   "propellant_kg": 411000,
+   "confidence": "low",
+   "source_note": "SpaceX does not publish stage masses; these are widely repeated estimates and include recovery hardware."
+  },
+  {
+   "vehicle": "Falcon 9 v1.2",
+   "stage": "Stage 2",
+   "propellant": "LOX/RP-1",
+   "dry_kg": 4000,
+   "propellant_kg": 107500,
+   "confidence": "low",
+   "source_note": "Estimate; not officially published."
+  },
+  {
+   "vehicle": "Electron",
+   "stage": "Stage 1",
+   "propellant": "LOX/RP-1",
+   "dry_kg": 950,
+   "propellant_kg": 9250,
+   "confidence": "low",
+   "source_note": "Small carbon-composite vehicle; included because this project sizes small vehicles and the small-stage regime is where structural coefficient is worst."
+  }
+ ]
+}

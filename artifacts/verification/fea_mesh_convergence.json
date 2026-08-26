@@ -1,0 +1,237 @@
+{
+ "case": "thick-walled cylinder under internal pressure, quarter symmetric",
+ "geometry": {
+  "a_m": 0.05,
+  "b_m": 0.075,
+  "length_m": 0.02
+ },
+ "load_pa": 10000000.0,
+ "material": {
+  "E_pa": 73100000000.0,
+  "nu": 0.33
+ },
+ "boundary_conditions": "quarter symmetry (ux=0 on x=0, uy=0 on y=0), plane strain (uz=0 on both end faces)",
+ "exact_peak_vm_mpa": 31.295341506364807,
+ "results": {
+  "C3D4": [
+   {
+    "nodes": 245,
+    "elements": 661,
+    "h_mm": 4.20329121148732,
+    "peak_vm_mpa": 33.24280511493408,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 6.222854632128552,
+    "l2_error_mpa": 0.7590486747543015,
+    "bore_radial_mpa": -6.990207136990632,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 30.097928630093683,
+    "cl_mm": 8.0
+   },
+   {
+    "nodes": 461,
+    "elements": 1461,
+    "h_mm": 3.226808762345625,
+    "peak_vm_mpa": 32.54558867435047,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 3.9949944873788494,
+    "l2_error_mpa": 0.4476980413710518,
+    "bore_radial_mpa": -7.441056968655614,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 25.589430313443856,
+    "cl_mm": 6.0
+   },
+   {
+    "nodes": 888,
+    "elements": 3181,
+    "h_mm": 2.489633446921059,
+    "peak_vm_mpa": 31.93838376307594,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 2.05475392105995,
+    "l2_error_mpa": 0.3431416128536796,
+    "bore_radial_mpa": -8.0003815576865,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 19.996184423135,
+    "cl_mm": 4.5
+   },
+   {
+    "nodes": 1662,
+    "elements": 6621,
+    "h_mm": 1.949913907971951,
+    "peak_vm_mpa": 31.93678888241176,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 2.0496576971895286,
+    "l2_error_mpa": 0.24489735255691095,
+    "bore_radial_mpa": -8.377582226387524,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 16.22417773612475,
+    "cl_mm": 3.4
+   },
+   {
+    "nodes": 3578,
+    "elements": 15740,
+    "h_mm": 1.4610162854569255,
+    "peak_vm_mpa": 31.738933645946368,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 1.4174382455335848,
+    "l2_error_mpa": 0.17366015203677412,
+    "bore_radial_mpa": -8.748920707509185,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 12.510792924908138,
+    "cl_mm": 2.5
+   },
+   {
+    "nodes": 7257,
+    "elements": 34493,
+    "h_mm": 1.1248112294403076,
+    "peak_vm_mpa": 31.78018236285394,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 1.5492429005464816,
+    "l2_error_mpa": 0.1279327690281188,
+    "bore_radial_mpa": -9.024531341822518,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 9.754686581774818,
+    "cl_mm": 1.9
+   }
+  ],
+  "C3D4_gci": {
+   "order_p": 5.525,
+   "richardson_extrapolated_mpa": 31.7929,
+   "gci_fine_pct": 0.05,
+   "refinement_ratio_21": 1.299
+  },
+  "C3D10": [
+   {
+    "nodes": 1377,
+    "elements": 661,
+    "h_mm": 4.20329121148732,
+    "peak_vm_mpa": 31.40074486940511,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.33680208608321194,
+    "l2_error_mpa": 0.09967371485805578,
+    "bore_radial_mpa": -9.8643587466504,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 1.3564125334960035,
+    "cl_mm": 8.0
+   },
+   {
+    "nodes": 2768,
+    "elements": 1461,
+    "h_mm": 3.226808762345625,
+    "peak_vm_mpa": 31.34577935088998,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.16116726035699377,
+    "l2_error_mpa": 0.059236108802586604,
+    "bore_radial_mpa": -9.896005840481566,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 1.0399415951843374,
+    "cl_mm": 6.0
+   },
+   {
+    "nodes": 5631,
+    "elements": 3181,
+    "h_mm": 2.489633446921059,
+    "peak_vm_mpa": 31.334053759965194,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.12369973209115417,
+    "l2_error_mpa": 0.037028600470086034,
+    "bore_radial_mpa": -9.938524623453217,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 0.6147537654678338,
+    "cl_mm": 4.5
+   },
+   {
+    "nodes": 11035,
+    "elements": 6621,
+    "h_mm": 1.949913907971951,
+    "peak_vm_mpa": 31.3299924229555,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.11072228300701992,
+    "l2_error_mpa": 0.02341083528237489,
+    "bore_radial_mpa": -9.956980833441584,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 0.4301916655841656,
+    "cl_mm": 3.4
+   },
+   {
+    "nodes": 24870,
+    "elements": 15740,
+    "h_mm": 1.4610162854569255,
+    "peak_vm_mpa": 31.308051053147405,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.04061162515198324,
+    "l2_error_mpa": 0.013400267186948051,
+    "bore_radial_mpa": -9.97519486789643,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 0.24805132103569805,
+    "cl_mm": 2.5
+   },
+   {
+    "nodes": 52310,
+    "elements": 34493,
+    "h_mm": 1.1248112294403076,
+    "peak_vm_mpa": 31.30526314282532,
+    "exact_peak_vm_mpa": 31.295341506364807,
+    "peak_error_pct": 0.031703237552129046,
+    "l2_error_mpa": 0.007996436945549744,
+    "bore_radial_mpa": -9.984775060690243,
+    "bore_radial_target_mpa": -10.0,
+    "bore_radial_error_pct": 0.15224939309757202,
+    "cl_mm": 1.9
+   }
+  ],
+  "C3D10_gci": {
+   "order_p": 7.035,
+   "richardson_extrapolated_mpa": 31.3047,
+   "gci_fine_pct": 0.002,
+   "refinement_ratio_21": 1.299
+  }
+ },
+ "analysis": {
+  "C3D4": {
+   "gci_peak": {
+    "convergence": "oscillatory",
+    "convergence_ratio_R": -0.2085,
+    "note": "not in the asymptotic range; Richardson extrapolation does not apply. Uncertainty is bounded by the oscillation amplitude instead.",
+    "oscillation_band_pct": 0.623
+   },
+   "orders": [
+    {
+     "metric": "l2_error_mpa",
+     "order_p": 1.311,
+     "r_squared": 0.9908,
+     "levels": 6
+    },
+    {
+     "metric": "bore_radial_error_pct",
+     "order_p": 0.867,
+     "r_squared": 0.9969,
+     "levels": 6
+    }
+   ]
+  },
+  "C3D10": {
+   "gci_peak": {
+    "convergence": "monotone",
+    "convergence_ratio_R": 0.1271,
+    "order_p": 7.035,
+    "richardson_extrapolated_mpa": 31.3047,
+    "gci_fine_pct": 0.002,
+    "refinement_ratio_21": 1.299
+   },
+   "orders": [
+    {
+     "metric": "l2_error_mpa",
+     "order_p": 1.903,
+     "r_squared": 0.9998,
+     "levels": 6
+    },
+    {
+     "metric": "bore_radial_error_pct",
+     "order_p": 1.694,
+     "r_squared": 0.9936,
+     "levels": 6
+    }
+   ]
+  }
+ }
+}

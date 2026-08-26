@@ -374,8 +374,11 @@ def _load_sample_arrays(path: Path, *, num_points: int, num_fields: int) -> tupl
     points = sample.points.astype(np.float32)
     fields = _sanitize_fields(sample.fields.astype(np.float32), num_fields)
     points, fields = _resample_points_fields(points, fields, num_points=num_points, seed_text=str(path))
-    max_stress = float(fields[:, min(2, fields.shape[1] - 1)].max()) if fields.size else None
-    return points, fields, max_stress
+    # Raw geometry carries no solver result, so there is no max_stress to
+    # return. This used to hand back max() of a field column, which the caller
+    # then stored under "max_stress" as though it were measured -- see the note
+    # at the proxy assignment in __getitem__.
+    return points, fields, None
 
 
 def _as_float(value: Any) -> float | None:
@@ -1044,6 +1047,99 @@ class GraphBackedCADDataset(Dataset):
             f"{self._FALLBACK_TRIES} records failed to load around index "
             f"{index}; the corpus is not usable")
 
+    def _records_sharing_path(self, path) -> list[int]:
+        """Indices of every record backed by the same geometry file."""
+        cache = getattr(self, "_path_index_cache", None)
+        if cache is None:
+            cache = {}
+            for j, rec in enumerate(self.records):
+                if rec.path is not None:
+                    cache.setdefault(str(rec.path), []).append(j)
+            self._path_index_cache = cache
+        return cache.get(str(path), [])
+
+    def _raw_physics_for(self, index: int) -> dict[str, float]:
+        record = self.records[int(index)]
+        try:
+            assoc = self._walk_associations(record.node_id)
+        except Exception:  # noqa: BLE001
+            return {}
+        out = {}
+        for key, value in (assoc.get("physics") or {}).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out[str(key)] = float(value)
+        return out
+
+    def physics_for(self, index: int) -> dict[str, float]:
+        """Solver-computed quantities associated with a record, by name.
+
+        Read-only and deliberately outside the sample dict: probes need
+        arbitrary targets (Cd, thrust_kN, isp_vac_s) while training reads a
+        fixed set of keys, and widening the sample dict to carry every physics
+        quantity would put label-shaped values in front of the training path
+        for no reason.
+
+        These are labels, not inputs. Whether any of them is a fair target
+        depends on what the encoder is fed for the same record: Cd against a
+        CFD shard is recoverable by integrating the pressure field the model
+        already has, while Cd against raw geometry is the actual prediction
+        problem. The caller has to make that distinction -- see
+        `field_provenance`.
+        """
+        record = self.records[int(index)]
+        if record.path is None:
+            return self._raw_physics_for(index)
+
+        cache = getattr(self, "_consensus_cache", None)
+        if cache is None:
+            cache = self._consensus_cache = {}
+        key = str(record.path)
+        if key in cache:
+            return dict(cache[key])
+
+        siblings = self._records_sharing_path(record.path) or [int(index)]
+        seen: dict[str, set] = {}
+        for j in siblings:
+            for name, value in self._raw_physics_for(j).items():
+                seen.setdefault(name, set()).add(round(value, 6))
+        # A quantity two records disagree about is not a measurement of this
+        # mesh. One STL here is referenced by three Sample nodes under two Part
+        # ids -- realpart:or8k:... and part:rocket:... -- from separate
+        # ingestion passes that each attached their own physics, so the same
+        # nozzle claims expansion ratio 60.4 and 15.0. Serving whichever the
+        # 3-hop walk reached first made the label a function of traversal order.
+        # Dropping the disputed keys loses labels; keeping them loses the
+        # meaning of the ones that are right.
+        consensus = {n: next(iter(v)) for n, v in seen.items() if len(v) == 1}
+        cache[key] = consensus
+        return dict(consensus)
+
+    def disputed_physics_for(self, index: int) -> set:
+        """Quantity names that records sharing this mesh disagree about."""
+        record = self.records[int(index)]
+        if record.path is None:
+            return set()
+        siblings = self._records_sharing_path(record.path) or [int(index)]
+        seen: dict[str, set] = {}
+        for j in siblings:
+            for name, value in self._raw_physics_for(j).items():
+                seen.setdefault(name, set()).add(round(value, 6))
+        return {n for n, v in seen.items() if len(v) > 1}
+
+    def field_provenance(self, index: int) -> str:
+        """Where this record's `fields` array came from.
+
+        "solver" means the fields are a simulation result (a physics shard), so
+        a label derived from that same solution is not a prediction target.
+        "geometry" means the fields were built from the mesh, so solver labels
+        attached to the record are genuinely independent of the input.
+        """
+        record = self.records[int(index)]
+        if record.path is None:
+            return "unknown"
+        return ("solver" if record.path.suffix.lower() in (".npz", ".pt")
+                else "geometry")
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         record, points, fields, max_stress = self._load_with_fallback(index)
         legacy = self._metadata_vector(record)
@@ -1061,6 +1157,14 @@ class GraphBackedCADDataset(Dataset):
         elif max_stress is not None:
             sample["max_stress"] = torch.tensor(float(max_stress), dtype=torch.float32)
         else:
+            # NOT a measurement. Deriving the label from a column of the
+            # fields the encoder is handed makes it a deterministic function
+            # of the input, and a probe scored on it measures whether the
+            # model can echo its own input rather than whether it knows any
+            # physics. Reported as +0.08 R^2 "carries physics random weights
+            # do not"; on solver-computed labels alone the real figure is
+            # +0.023. It keeps a separate name so nothing mistakes it for one.
             stress_col = min(2, fields.shape[-1] - 1)
-            sample["max_stress"] = torch.tensor(float(fields[:, stress_col].max()), dtype=torch.float32)
+            sample["max_stress_proxy"] = torch.tensor(
+                float(fields[:, stress_col].max()), dtype=torch.float32)
         return sample

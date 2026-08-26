@@ -1,0 +1,34 @@
+{
+ "source": "data/drag_corpus/drag_corpus.json",
+ "method": "axisymmetric rhoCentralFoam, forebody pressure drag",
+ "cfd_validation": "cones -1.8% mean vs exact Taylor-Maccoll (16 cases)",
+ "shape_ratio_vs_ogive": {
+  "cone": {
+   "cfd_mean": 0.9132,
+   "cfd_min": 0.812,
+   "cfd_max": 1.0881,
+   "n": 16,
+   "analytic_by_fineness": "refused: unknown nose shape 'cone'"
+  },
+  "vonkarman": {
+   "cfd_mean": 0.8005,
+   "cfd_min": 0.7773,
+   "cfd_max": 0.8231,
+   "n": 16,
+   "analytic_by_fineness": {
+    "1.5": 0.8692,
+    "2.0": 0.8912,
+    "3.0": 0.9223,
+    "4.0": 0.944
+   }
+  }
+ },
+ "finding": "RESOLVED: the analytic shape factor and the CFD ratio are consistent, not contradictory. wave_drag.shape_factor compares CLOSED bodies that share an identical von Karman tail; the tail contributes 0.93-2.31x the nose drag and, being common to both shapes, pulls the ratio toward 1.0. Adding that tail to the CFD forebody numbers reproduces the analytic factor to 0.014 mean absolute error, improving to 0.005 at fineness 4 where slender-body theory is most valid.",
+ "engineering_consequence": "A launch vehicle has no tail closure -- it ends in a blunt base with an engine. So the forebody ratio 0.801 is the physically relevant number when choosing a nose, and applying the closed-body factor 0.87-0.94 understates the von Karman advantage by 9-14 points for that decision. The analytic module is not wrong; using a closed-body ratio for an open-based vehicle is.",
+ "retraction": "An earlier note in this file claimed the analytic model had two defects (under-crediting von Karman, and an inverted fineness trend). Both were artefacts of comparing different bodies. Withdrawn.",
+ "forebody_ratio_for_nose_selection": {
+  "vonkarman_over_ogive": 0.801,
+  "spread": "0.777-0.823 over fineness 1.5-4, Mach 1.5-3",
+  "n": 16
+ }
+}
