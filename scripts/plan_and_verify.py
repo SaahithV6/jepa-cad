@@ -1388,13 +1388,48 @@ def main() -> int:
                                      "provides enough damping to open the band.\n")
                     except ValueError as _bexc:
                         L.append(f"\n**Baffles cannot close this.** {_bexc}\n")
+                # Which side of crossover each mode sits on decides how it must
+                # be handled, and the two treatments are not interchangeable.
+                # Reporting "no usable band" for both read as a dead end when a
+                # mode below crossover is a demanding but entirely standard
+                # control design problem.
+                from cadflow.control_authority import mode_disposition
+
+                _disp = mode_disposition(
+                    crossover_hz=_win["lower_bound_hz"],
+                    modes={"slosh": _maxq_slosh,
+                           "first bending": _modes.first_bending_hz})
+                L.append("\n| mode | frequency | vs crossover | stabilisation |")
+                L.append("|---|---|---|---|")
+                for _mn, _mv in _disp["modes"].items():
+                    L.append(f"| {_mn} | {_mv['hz']:.2f} Hz | "
+                             f"{_mv['ratio_to_crossover']:.2f}x | "
+                             f"**{_mv['stabilisation']}** |")
+                L.append(f"\n{_disp['verdict']}\n")
+                # A requirement this packet cannot check, not a failure.
+                #
+                # Phase stabilising a mode below crossover is standard practice
+                # -- Saturn V did it -- so reporting it as FAIL cries wolf. But
+                # nothing here designs a control system, so reporting PASS would
+                # claim a check that never ran. The honest third answer is that
+                # a requirement exists and is unverified, and the overall
+                # verdict has to distinguish that from a failure.
+                _needs_phase = _disp["requires_phase_stabilisation"]
                 _assembly_findings.append({
-                    "check": "control bandwidth window",
-                    "passed": bool(_win["window_exists"]),
-                    "detail": (f"needs >= {_win['lower_bound_hz']:.2f} Hz, "
-                               f"capped at {_win['upper_bound_hz']:.2f} Hz by "
-                               f"{_win['limited_by']}"),
-                    "severity": "fail" if not _win["window_exists"] else "pass"})
+                    "check": "flexible mode stabilisation",
+                    "passed": not _needs_phase,
+                    "detail": (
+                        "all modes gain-stabilisable with a conventional rolloff"
+                        if not _needs_phase else
+                        f"{', '.join(_needs_phase)} below crossover; phase "
+                        f"stabilisation required and not verified here"),
+                    "severity": "pass" if not _needs_phase else "unverified"})
+                # The bandwidth window is not a separate finding. It and the
+                # mode disposition above are the same physical fact -- slosh
+                # near the control frequency -- and listing both double-counted
+                # it while keeping the framing that reads as a dead end. The
+                # table stays as context; the verdict comes from the
+                # disposition, which says what actually has to be done.
             except ValueError as _exc:
                 L.append(f"\n(pitch frequency not defined: {_exc})")
             if control_trade is not None and control_trade.get("steps"):
@@ -1627,17 +1662,36 @@ def main() -> int:
     # packet that contradicts itself in the reader's favour is worse than one
     # that simply reports the failure.
     _components_ok = all(r["passed"] for r in results)
+    # A boolean cannot carry three outcomes, and forcing it to try is how this
+    # packet reported "Overall: True" for a vehicle with an unverified control
+    # requirement outstanding. Reclassifying a check from FAIL to REQUIRED made
+    # the summary cleaner and less true. Nothing is verified while a
+    # requirement remains unchecked, so `all_passed` is False unless the packet
+    # actually verified everything, and the three-way status says which of the
+    # three situations it is.
     _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
-    allp = _components_ok and not _assembly_fails
+    _assembly_unverified = [f for f in _assembly_findings
+                            if f["severity"] == "unverified"]
+    allp = _components_ok and not _assembly_fails and not _assembly_unverified
+    _status = ("FAILED" if (not _components_ok or _assembly_fails)
+               else "INCOMPLETE" if _assembly_unverified
+               else "VERIFIED")
 
     if _assembly_findings:
         L.append("\n## Assembly verification\n")
         L.append("| check | result | detail |")
         L.append("|---|---|---|")
         for _f in _assembly_findings:
-            L.append(f"| {_f['check']} | "
-                     f"**{'PASS' if _f['passed'] else 'FAIL'}** | "
-                     f"{_f['detail']} |")
+            _mark = {"pass": "PASS", "fail": "FAIL",
+                     "unverified": "REQUIRED"}.get(_f["severity"], "FAIL")
+            L.append(f"| {_f['check']} | **{_mark}** | {_f['detail']} |")
+        if _assembly_unverified:
+            L.append(f"\n{len(_assembly_unverified)} check(s) marked REQUIRED "
+                     f"are neither passed nor failed: they name work this "
+                     f"packet cannot do. Phase stabilising a mode below "
+                     f"crossover is routine practice, but nothing here designs "
+                     f"a control system, so claiming it passes would report a "
+                     f"check that never ran.\n")
         if _assembly_fails:
             L.append(f"\n{len(_assembly_fails)} assembly-level check(s) failed "
                      f"while every component passed its own coupon test. The "
@@ -1650,8 +1704,12 @@ def main() -> int:
              f"({allowable.strength_basis}) with a yield factor of safety of "
              f"{allowable.factor_of_safety} and a {allowable.knockdown} knockdown. "
              f"All {len(results)} components passed: "
-             f"**{_components_ok}**. Assembly checks passed: "
-             f"**{not _assembly_fails}**. Overall: **{allp}**\n")
+             f"**{_components_ok}**. Assembly checks failed: "
+             f"**{len(_assembly_fails)}**. Requirements unverified: "
+             f"**{len(_assembly_unverified)}**.\n\nOverall: **{_status}**"
+             + (" -- nothing failed, but the packet cannot call a design "
+                "verified while a requirement it did not check remains "
+                "outstanding.\n" if _status == "INCOMPLETE" else "\n"))
     L.append("\nThis allowable is not certifiable and the packet should not be "
              "read as though it were. The catalogue carries typical strengths "
              "rather than A- or B-basis values, so the knockdown above stands in "
@@ -1684,6 +1742,8 @@ def main() -> int:
         "components_passed": _components_ok,
         "assembly_findings": _assembly_findings,
         "assembly_passed": not _assembly_fails,
+        "assembly_unverified": [f["check"] for f in _assembly_unverified],
+        "status": _status,
         # What actually sized this vehicle, not what the module defaults to.
         #
         # This read `solved_coeff if args.solve_structure else STRUCT_COEFF`

@@ -268,3 +268,59 @@ def test_a_wide_separation_passes_robustly():
     w = bandwidth_window(first_bending_hz=60.0, lowest_slosh_hz=40.0,
                          rigid_body_hz=0.4)
     assert w["window_exists"] and w["robust_to_heuristics"]
+
+
+def test_modes_below_crossover_cannot_be_notched():
+    """The distinction the bandwidth check was missing.
+
+    A mode above crossover is gain stabilised -- notch it and the loop never
+    excites it. A mode *below* crossover sits where the loop needs gain to fly
+    the vehicle, so notching it removes the control authority along with the
+    mode. It has to be phase stabilised instead: modelled in the controller and
+    closed around with the right phase.
+
+    Reporting both as "no usable bandwidth window" was arithmetically right and
+    engineeringly misleading. Real launch vehicles fly with slosh near the
+    control frequencies routinely; Saturn V phase stabilised its slosh modes.
+    """
+    from cadflow.control_authority import mode_disposition
+
+    d = mode_disposition(crossover_hz=3.85,
+                         modes={"slosh": 2.48, "first bending": 49.5})
+    assert d["modes"]["slosh"]["stabilisation"] == "phase"
+    assert d["modes"]["first bending"]["stabilisation"] == "gain"
+    assert d["requires_phase_stabilisation"] == ["slosh"]
+    assert "cannot be notched" in d["modes"]["slosh"]["note"]
+
+
+def test_a_mode_just_above_crossover_is_flagged_as_tight():
+    """Notching within a factor of three still costs phase margin.
+
+    Above crossover is not automatically comfortable. A notch close to the
+    frequency the loop is working at eats the margin that keeps it stable, so
+    the two cases are reported differently.
+    """
+    from cadflow.control_authority import mode_disposition
+
+    d = mode_disposition(crossover_hz=2.0, modes={"slosh": 3.0})
+    assert d["modes"]["slosh"]["stabilisation"] == "gain, tight"
+    assert "phase margin" in d["modes"]["slosh"]["note"]
+
+
+def test_a_vehicle_with_everything_above_crossover_needs_no_special_treatment():
+    """The check has to be able to report the easy case as easy."""
+    from cadflow.control_authority import mode_disposition
+
+    d = mode_disposition(crossover_hz=1.0,
+                         modes={"slosh": 12.0, "first bending": 60.0})
+    assert not d["requires_phase_stabilisation"]
+    assert "conventional autopilot" in d["verdict"]
+
+
+def test_the_verdict_reads_correctly_for_one_mode():
+    """"slosh sits", not "slosh sit" -- the packet is read by people."""
+    from cadflow.control_authority import mode_disposition
+
+    d = mode_disposition(crossover_hz=3.85, modes={"slosh": 2.48})
+    assert "slosh sits below crossover" in d["verdict"]
+    assert " sit below" not in d["verdict"]

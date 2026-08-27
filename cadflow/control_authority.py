@@ -201,6 +201,76 @@ def trade_margin_for_authority(size_fins, *, q_pa: float,
                      f"thrust, or a shape that does not demand so much fin.")}
 
 
+def mode_disposition(*, crossover_hz: float, modes: dict) -> dict:
+    """How each flexible mode has to be handled, given where it sits.
+
+    A launch vehicle autopilot does not need every flexible mode to be far
+    away. It needs to know which side of the crossover each one is on, because
+    the two sides get opposite treatments and they are not interchangeable.
+
+    A mode well above crossover is gain stabilised: attenuate it with a notch
+    or a rolloff and the loop never excites it. That is cheap and routine, and
+    it is what happens to the first bending mode here, which sits an order of
+    magnitude up.
+
+    A mode *below* crossover cannot be treated that way, because crossover is
+    where the loop needs gain to fly the vehicle -- notching there removes the
+    control authority along with the mode. Such a mode has to be phase
+    stabilised: the controller models it and closes the loop around it with
+    the right phase. That is demanding but entirely standard; Saturn V phase
+    stabilised its slosh modes.
+
+    This replaces a "usable bandwidth window" test that reported no band and
+    read as a dead end. It was arithmetically right and engineeringly
+    misleading: real vehicles fly with slosh near the control frequencies all
+    the time. What they do not do is pretend a mode below crossover can be
+    notched away.
+    """
+    cross = float(crossover_hz)
+    if cross <= 0:
+        raise ValueError("crossover frequency must be positive")
+
+    out, needs_phase = {}, []
+    for name, f in modes.items():
+        f = float(f)
+        if f <= 0:
+            continue
+        ratio = f / cross
+        if ratio >= 3.0:
+            how, note = "gain", (
+                f"{ratio:.1f}x above crossover; a notch or rolloff keeps the "
+                f"loop off it")
+        elif ratio > 1.0:
+            how, note = "gain, tight", (
+                f"only {ratio:.1f}x above crossover, so a notch there eats "
+                f"phase margin near the frequency the loop is working at")
+        else:
+            how, note = "phase", (
+                f"below crossover at {ratio:.2f}x, where the loop needs gain "
+                f"to fly the vehicle -- it cannot be notched out and the "
+                f"controller has to model it")
+            needs_phase.append(name)
+        out[name] = {"hz": round(f, 3), "ratio_to_crossover": round(ratio, 3),
+                     "stabilisation": how, "note": note}
+
+    return {
+        "crossover_hz": round(cross, 3),
+        "modes": out,
+        "requires_phase_stabilisation": needs_phase,
+        "verdict": (
+            f"{', '.join(needs_phase)} "
+            f"{'sits' if len(needs_phase) == 1 else 'sit'} below crossover and "
+            f"must be phase stabilised: the control design has to model "
+            f"{'it' if len(needs_phase) == 1 else 'them'} rather than filter "
+            f"{'it' if len(needs_phase) == 1 else 'them'} out. Standard "
+            f"practice, and not something this packet can verify, since it does "
+            f"not design a control system."
+            if needs_phase else
+            "Every flexible mode is above crossover and can be gain "
+            "stabilised, so a conventional autopilot with rolloff suffices."),
+    }
+
+
 def rigid_body_pitch_hz(*, q_pa: float, reference_area_m2: float,
                         cn_alpha: float, cp_station_m: float,
                         cg_station_m: float, pitch_inertia_kg_m2: float

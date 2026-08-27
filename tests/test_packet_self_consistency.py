@@ -61,8 +61,14 @@ def test_the_overall_verdict_accounts_for_the_assembly(packet):
     could not be steered.
     """
     assert "components_passed" in packet and "assembly_passed" in packet
-    assert packet["all_passed"] == (packet["components_passed"]
-                                    and packet["assembly_passed"])
+    # all_passed means *verified*, which needs three things: the components
+    # passed, no assembly check failed, and no requirement was left unchecked.
+    # It used to be the conjunction of the first two, and that let a packet
+    # with an outstanding control requirement report a clean pass.
+    assert packet["all_passed"] == (
+        packet["components_passed"]
+        and packet["assembly_passed"]
+        and not packet.get("assembly_unverified"))
 
 
 def test_assembly_findings_reach_the_json_not_only_the_prose(packet):
@@ -101,3 +107,46 @@ def test_the_structural_coefficient_is_placed_against_flown_hardware(packet):
     if used > verdict.flown_max:
         assert not verdict.inside
         assert "flown range" in verdict.note
+
+
+def test_an_unverified_requirement_prevents_a_verified_verdict(packet):
+    """Nothing is verified while a requirement went unchecked.
+
+    This regression was introduced by an improvement. Reclassifying phase
+    stabilisation from FAIL to REQUIRED was correct -- it is routine practice,
+    not a defect -- but it emptied the failure list and the packet promptly
+    reported "Overall: True" for a design with an outstanding control
+    requirement. A cleaner summary that is less true is the exact failure this
+    file exists to catch.
+
+    A boolean cannot carry three outcomes. `all_passed` now means verified, and
+    `status` says which of the three situations applies.
+    """
+    if packet.get("assembly_unverified"):
+        assert not packet["all_passed"], (
+            "packet claims all_passed with unverified requirements outstanding")
+        assert packet.get("status") == "INCOMPLETE"
+
+
+def test_status_agrees_with_the_findings(packet):
+    """The three-way status has to be derivable from the findings themselves.
+
+    A status field that can drift from the list it summarises is the same
+    problem as struct_coeff_used reading a module default.
+    """
+    findings = packet.get("assembly_findings", [])
+    fails = [f for f in findings if f.get("severity") == "fail"]
+    unver = [f for f in findings if f.get("severity") == "unverified"]
+    status = packet.get("status")
+    if not packet["components_passed"] or fails:
+        assert status == "FAILED"
+    elif unver:
+        assert status == "INCOMPLETE"
+    else:
+        assert status == "VERIFIED"
+
+
+def test_every_finding_carries_a_known_severity(packet):
+    """An unrecognised severity would render as FAIL and hide its own meaning."""
+    for f in packet.get("assembly_findings", []):
+        assert f.get("severity") in {"pass", "fail", "unverified"}, f
