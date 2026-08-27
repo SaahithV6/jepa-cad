@@ -1048,6 +1048,27 @@ def main() -> int:
                               modulus_pa=skin_e_pa)
             _t_m = _wall.thickness_m
             _wall_driver = _wall.driver
+
+            # size_wall knows about axial buckling and nothing about bending.
+            # The assembly load case supplies both, and on a large vehicle the
+            # bending term is what pushes the shell over: the 1,000 kg mission
+            # came out at an interaction of 1.21 -- the skin folds -- while every
+            # component still passed its own axial stress check. So the wall is
+            # re-sized here against the combined interaction and the thicker of
+            # the two is kept.
+            from cadflow.shell_buckling import wall_for_buckling_m
+
+            _t_buckle = wall_for_buckling_m(
+                axial_n=_axial_n, moment_nm=_res.peak_moment_nm,
+                radius_m=flight_r, youngs_pa=skin_e_pa, target_margin=1.4)
+            _buckle_repair = None
+            if _t_buckle is not None and _t_buckle > _t_m + 1e-9:
+                _buckle_repair = (_t_m, _t_buckle)
+                _t_m = _t_buckle
+                _wall_driver = "buckling under combined axial and bending"
+            elif _t_buckle is None:
+                _buckle_repair = (_t_m, None)
+
             _st = skin_stress_mpa(_res.peak_moment_nm, _axial_n, flight_r, _t_m)
 
             L.append("\n## Flight loads on the assembly\n")
@@ -1074,6 +1095,38 @@ def main() -> int:
             L.append(f"| load set closes | shear {_res.closure_shear_n:.2e} N, "
                      f"moment {_res.closure_moment_nm:.2e} N m -> "
                      f"**{_res.balanced}** |")
+            if _buckle_repair is not None:
+                _was, _now = _buckle_repair
+                if _now is None:
+                    L.append(f"\n**The skin cannot be sized against buckling.** "
+                             f"No wall within the thickness cap survives the "
+                             f"combined axial and bending load at "
+                             f"{1000*flight_r:.0f} mm radius. This vehicle needs "
+                             f"stringers, rings or a smaller diameter -- a "
+                             f"monocoque shell will not do it.\n")
+                else:
+                    # A repair has to cost something or it is not one. The
+                    # drawn geometry and the mass budget are built from the
+                    # component walls, not from this one, so thickening here
+                    # changes no mass anywhere -- "skin, as drawn" came back
+                    # byte-identical across the repair. The charge is computed
+                    # and stated so the saving is not silently free.
+                    _rho_skin = 2700.0 if "al-" in str(allowable.material_id) else 8190.0
+                    _dm = (_rho_skin * 2.0 * math.pi * flight_r
+                           * fv["length_m"] * (_now - _was))
+                    L.append(f"\n**The wall was thickened for buckling**, "
+                             f"{1000*_was:.2f} to {1000*_now:.2f} mm. Sizing it "
+                             f"for axial load alone left the shell unstable once "
+                             f"the assembly bending moment was applied; nothing "
+                             f"in the component checks would have shown that, "
+                             f"since each part passes its own stress test.\n")
+                    L.append(f"\nThat costs about **{_dm:.1f} kg** over the "
+                             f"barrel at {1000*flight_r:.0f} mm radius. The "
+                             f"geometry below is still drawn at the component "
+                             f"wall and the mass budget still charges that, so "
+                             f"this figure is owed rather than paid -- subtract "
+                             f"it from the slack before believing the budget "
+                             f"closes.\n")
             if _st["combined_mpa"] > allowable_mpa:
                 L.append(f"\nThe assembly is over its allowable in bending even "
                          f"though every component passed its own axial check. "
