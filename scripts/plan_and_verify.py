@@ -1369,6 +1369,42 @@ def main() -> int:
             L.append(f"\n(assembly flight loads unavailable: "
                      f"{type(_exc).__name__}: {_exc})\n")
 
+        # Stage separation. The trajectory stages already -- it drops spent
+        # structure and lights the next engine -- but never asked whether the two
+        # bodies can do that in order without occupying the same space.
+        if len(p.stack) > 1:
+            from cadflow.staging import check_separation, coast_for_clearance_s
+
+            _D = 2.0 * flight_r
+            L.append("\n## Stage separation\n")
+            L.append("| separation | spent | upper | closing rate | coast to clear |")
+            L.append("|---|---|---|---|---|")
+            _sep_ok, _need = True, 0.0
+            for _i in range(len(p.stack) - 1):
+                _spent = float(p.stack[_i].struct_mass_kg)
+                _upper = sum(float(st.prop_mass_kg) + float(st.struct_mass_kg)
+                             for st in p.stack[_i + 1:]) + args.payload_kg
+                _need = coast_for_clearance_s(spent_mass_kg=_spent,
+                                              upper_mass_kg=_upper,
+                                              body_diameter_m=_D)
+                _sr = check_separation(stage_index=_i + 1, spent_mass_kg=_spent,
+                                       upper_mass_kg=_upper, body_diameter_m=_D,
+                                       coast_s=max(1.0, _need))
+                _sep_ok = _sep_ok and _sr.clears
+                L.append(f"| {_i+1}/{_i+2} | {_spent:.1f} kg | {_upper:.1f} kg | "
+                         f"{_sr.relative_velocity_m_s:.2f} m/s | **{_need:.2f} s** |")
+            L.append(f"\nPlume clearance is taken as 1.5 body diameters "
+                     f"({1.5*_D:.2f} m), because a vacuum plume spreads well beyond "
+                     f"the nozzle that produced it. Tip-off and plume impingement on "
+                     f"the spent stage are not modelled; this answers only whether the "
+                     f"gap opens fast enough.\n")
+            _assembly_findings.append({
+                "check": "stage separation clearance",
+                "passed": bool(_sep_ok),
+                "detail": (f"{len(p.stack)-1} separation(s), longest coast to plume "
+                           f"clearance {_need:.2f} s"),
+                "severity": "pass" if _sep_ok else "fail"})
+
         L.append("\n## Stability\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
