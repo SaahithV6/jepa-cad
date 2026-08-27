@@ -695,6 +695,42 @@ def main() -> int:
                   if p.stack and _stage1_wet > 0 else None)
         if _sigma is not None:
             _v = _envelope_check(_sigma, stage_wet_kg=_stage1_wet)
+            # Why the structure is heavy, which decides whether anything can be
+            # done about it. A coefficient above flown practice reads as a
+            # warning; whether it is one depends entirely on what set the wall
+            # thicknesses. Strength-driven walls can be thinned by a better
+            # material or a lower load. Gauge-driven walls cannot be thinned at
+            # all -- they are already as thin as the shop can make them -- and a
+            # design loop that keeps trying is wasting its iterations.
+            _gauge = [r for r in results
+                      if "gauge" in str(r.get("wall_driver", "")).lower()]
+            _strength = [r for r in results
+                         if r.get("wall_driver") and r not in _gauge]
+            if _gauge or _strength:
+                _gm = sum(float(r.get("mass_properties", {}).get("mass_kg", 0.0))
+                          for r in _gauge)
+                _sm = sum(float(r.get("mass_properties", {}).get("mass_kg", 0.0))
+                          for r in _strength)
+                _tot = _gm + _sm
+                # Built as one string. Appending the clauses separately put
+                # each on its own markdown line, so the sentence rendered as
+                # fragments beginning with a comma.
+                _share = (f", carrying {100*_gm/_tot:.0f}% of the analysed "
+                          f"structural mass" if _tot > 0 else "")
+                L.append(f"\n**What sets the wall thicknesses.** "
+                         f"{len(_gauge)} of {len(results)} components are at "
+                         f"minimum gauge rather than sized by strength"
+                         f"{_share}"
+                         f". Those walls cannot be thinned -- they are already "
+                         f"as thin as the process allows -- so a structural "
+                         f"coefficient above flown practice is partly a "
+                         f"consequence of building a small vehicle rather than "
+                         f"a design fault. The levers that remain are fewer "
+                         f"stages, a larger vehicle, or a material with a lower "
+                         f"minimum gauge; thinning walls is not one of them.\n")
+                if _gauge:
+                    L.append("\nAt minimum gauge: "
+                             + ", ".join(str(r["name"]) for r in _gauge) + ".\n")
             L.append(f"\n**Structure against flown hardware.** Stage 1 "
                      f"structural coefficient is {_sigma:.4f}. Ten flown stages "
                      f"from Saturn V's S-IC to Electron's first stage span "
@@ -1225,6 +1261,11 @@ def main() -> int:
                 L.append(f"| ratio | **{_coincide:.2f}** |")
                 L.append(f"| first bending | {_modes.first_bending_hz:.1f} Hz |")
                 L.append(f"| usable control band | {_win['note']} |")
+                L.append(f"| lowest flexible mode / rigid-body mode | "
+                         f"**{_win['flexible_over_rigid_ratio']:.2f}** |")
+                L.append(f"| verdict robust to the separation rules | "
+                         f"**{_win['robust_to_heuristics']}** |")
+                L.append(f"\n{_win['robustness_note']}\n")
                 if 0.8 <= _coincide <= 1.25:
                     L.append(f"\n**The stage 1 slosh mode coincides with the "
                              f"vehicle's own pitch mode**, at the condition where "
@@ -1500,8 +1541,22 @@ def main() -> int:
         "components_passed": _components_ok,
         "assembly_findings": _assembly_findings,
         "assembly_passed": not _assembly_fails,
-        "struct_coeff_used": (solved_coeff if args.solve_structure
-                              else STRUCT_COEFF),
+        # What actually sized this vehicle, not what the module defaults to.
+        #
+        # This read `solved_coeff if args.solve_structure else STRUCT_COEFF`
+        # and reported 0.14 for a vehicle whose every stage was built at
+        # 0.2613, because the repair loop had raised it and this line never
+        # heard. 0.14 sits just above the flown range; 0.2613 is 2.2 times the
+        # heaviest stage ever flown, so the packet was under-reporting how
+        # unusual its own structure is -- to a reader and to anything consuming
+        # the JSON. Recovered from the stack itself, which cannot disagree with
+        # the vehicle that was analysed.
+        "struct_coeff_used": (
+            sum(s.struct_mass_kg for s in p.stack)
+            / max(1e-9, sum(s.struct_mass_kg + s.prop_mass_kg for s in p.stack))
+            if p.stack else (solved_coeff if args.solve_structure
+                             else STRUCT_COEFF)),
+        "struct_coeff_default": STRUCT_COEFF,
         "struct_coeff_solved": solved_coeff,
         # Vehicle-level results were markdown-only, so nothing downstream --
         # including the model -- could consume them. Kept as two separate keys

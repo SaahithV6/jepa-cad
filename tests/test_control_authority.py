@@ -227,3 +227,44 @@ def test_a_vehicle_that_already_steers_is_left_alone():
     assert out["converged"]
     assert out["margin_cal"] == pytest.approx(1.5)
     assert len(out["steps"]) == 1
+
+
+def test_a_verdict_is_labelled_by_whether_it_survives_the_heuristics():
+    """"Fails under our rule" and "fails under every rule" are different claims.
+
+    Both bounds of the bandwidth window come from rules of thumb. A conclusion
+    that flips when a defensible factor changes is a prompt for coupled
+    analysis; one that holds across the whole range is a property of the
+    vehicle. Reporting them identically would let a soft finding read as a hard
+    one, which is the same class of error as a yield margin standing in for a
+    buckling margin.
+    """
+    hard = bandwidth_window(first_bending_hz=49.5, lowest_slosh_hz=2.48,
+                            rigid_body_hz=1.54)
+    soft = bandwidth_window(first_bending_hz=49.5, lowest_slosh_hz=2.48,
+                            rigid_body_hz=0.62)
+    assert not hard["window_exists"] and hard["robust_to_heuristics"]
+    assert not soft["window_exists"] and not soft["robust_to_heuristics"]
+    assert "property of the vehicle" in hard["robustness_note"]
+    assert "coupled analysis" in soft["robustness_note"]
+
+
+def test_the_real_obstacle_is_how_close_the_modes_are():
+    """1.61, and that is the number that decides it.
+
+    No separation factor opens a window when the lowest flexible mode sits at
+    1.6 times the rigid-body mode: any bandwidth that dominates one is near the
+    other. Recording the ratio makes the physics visible instead of leaving the
+    reader to infer it from two rejected bounds.
+    """
+    w = bandwidth_window(first_bending_hz=49.5, lowest_slosh_hz=2.48,
+                         rigid_body_hz=1.54)
+    assert w["flexible_over_rigid_ratio"] == pytest.approx(1.61, abs=0.02)
+    assert w["limited_by"] == "slosh"
+
+
+def test_a_wide_separation_passes_robustly():
+    """The label must attach to good news as well as bad."""
+    w = bandwidth_window(first_bending_hz=60.0, lowest_slosh_hz=40.0,
+                         rigid_body_hz=0.4)
+    assert w["window_exists"] and w["robust_to_heuristics"]

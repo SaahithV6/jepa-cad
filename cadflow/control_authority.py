@@ -244,6 +244,24 @@ def bandwidth_window(*, first_bending_hz: float, lowest_slosh_hz: float,
     upper = min(float(first_bending_hz) / BENDING_SEPARATION_FACTOR,
                 float(lowest_slosh_hz) / BENDING_SEPARATION_FACTOR)
     lower = RIGID_BODY_MARGIN * float(rigid_body_hz)
+
+    # Both bounds come from rules of thumb, so a verdict that rests on them is
+    # worth less than one that survives them. This re-runs the comparison across
+    # the range of factors an engineer might defend -- rigid-body margins from
+    # 1.5 to 3, flexible separations from 1.5 (well baffled) to 5 (undamped) --
+    # and records whether the answer ever changes.
+    #
+    # For the vehicle that prompted this it never does, and the reason is
+    # sharper than any of the factors: the slosh mode sits at only 1.6 times the
+    # rigid-body mode, so no bandwidth dominates one without exciting the other.
+    # That is a fact about the vehicle. "Fails under our chosen rule" and "fails
+    # under every rule" are different findings and should not read alike.
+    _flex = min(float(first_bending_hz), float(lowest_slosh_hz))
+    _verdicts = [
+        (_flex / sep) > (rigid * float(rigid_body_hz))
+        for rigid in (1.5, 2.0, 3.0) for sep in (1.5, 2.5, 5.0)]
+    robust = all(v == _verdicts[0] for v in _verdicts)
+    mode_ratio = _flex / max(float(rigid_body_hz), 1e-9)
     limiter = ("slosh" if float(lowest_slosh_hz) < float(first_bending_hz)
                else "first bending mode")
     exists = upper > lower
@@ -252,6 +270,21 @@ def bandwidth_window(*, first_bending_hz: float, lowest_slosh_hz: float,
         "upper_bound_hz": round(upper, 4),
         "limited_by": limiter,
         "window_exists": exists,
+        "robust_to_heuristics": robust,
+        "flexible_over_rigid_ratio": round(mode_ratio, 3),
+        "robustness_note": (
+            f"The verdict holds across every rigid-body margin from 1.5 to 3 "
+            f"and every flexible separation from 1.5 to 5, so it is a property "
+            f"of the vehicle rather than of the factors chosen. The lowest "
+            f"flexible mode sits at {mode_ratio:.2f} times the rigid-body mode; "
+            f"below about 3 there is no bandwidth that dominates one without "
+            f"exciting the other."
+            if robust else
+            f"This verdict depends on the separation factors used. The lowest "
+            f"flexible mode is {mode_ratio:.2f} times the rigid-body mode, "
+            f"close enough that a defensible change of rule reverses the "
+            f"answer, so it should be settled by a coupled analysis rather "
+            f"than by a frequency comparison."),
         "note": (
             f"Control bandwidth must sit above {lower:.2f} Hz to fly the "
             f"vehicle and below {upper:.2f} Hz to leave the {limiter} alone."

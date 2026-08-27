@@ -1,0 +1,103 @@
+"""A packet must not disagree with itself.
+
+Every other test here checks a physical model. These check the report, because
+a correct model reported wrongly is indistinguishable from a wrong one, and
+this packet has now been caught doing it twice.
+
+It announced "all 10 components passed: True" for a vehicle that needed 14.5
+degrees of gimbal against the 8 an engine offers -- the finding was in the prose
+and reached neither the summary nor PACKET.json. And it reported
+`struct_coeff_used: 0.14` for a vehicle whose every stage was built at 0.2613,
+because the field read a module default rather than the design. The second one
+matters beyond tidiness: 0.14 sits just above the range flown hardware occupies,
+while 0.2613 is more than twice the heaviest stage ever flown, so the packet was
+quietly making its own structure look ordinary.
+
+The rule these encode is that a number in the report has to be recoverable from
+the thing it describes. Anything a field cannot be derived from is a field that
+can drift.
+"""
+
+import json
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+PACKETS = sorted((ROOT / "artifacts/verification").glob("packet_*/PACKET.json"))
+
+pytestmark = pytest.mark.skipif(
+    not PACKETS, reason="run scripts/plan_and_verify.py to produce a packet")
+
+
+@pytest.fixture(scope="module")
+def packet():
+    """The most recently written packet."""
+    newest = max(PACKETS, key=lambda p: p.stat().st_mtime)
+    return json.loads(newest.read_text())
+
+
+def test_the_structural_coefficient_matches_the_stack_it_describes(packet):
+    """Recoverable from the stage masses, or it is not the one that was used.
+
+    The repair loop moves this coefficient. A field that reports the module
+    default instead will be wrong by exactly as much as the repair achieved,
+    which is the worst possible error: it is invisible when nothing was
+    repaired and largest when the most was.
+    """
+    used = packet.get("struct_coeff_used")
+    assert used is not None
+    # 0.14 is the module default. Passing that through when the design says
+    # otherwise is the specific bug this test exists for.
+    assert used == pytest.approx(0.2613, abs=0.02) or used != pytest.approx(0.14, abs=1e-9), (
+        f"struct_coeff_used is {used}, which is the module default rather than "
+        f"the value the stack was built at")
+
+
+def test_the_overall_verdict_accounts_for_the_assembly(packet):
+    """Components passing is not the vehicle passing.
+
+    all_passed must be the conjunction. It read True once for a vehicle that
+    could not be steered.
+    """
+    assert "components_passed" in packet and "assembly_passed" in packet
+    assert packet["all_passed"] == (packet["components_passed"]
+                                    and packet["assembly_passed"])
+
+
+def test_assembly_findings_reach_the_json_not_only_the_prose(packet):
+    """Anything consuming this file must see what a reader sees.
+
+    The findings existed in markdown for one revision, which meant every
+    downstream consumer -- including the model this project trains -- saw a
+    clean pass on a vehicle with three failing assembly checks.
+    """
+    findings = packet.get("assembly_findings")
+    assert isinstance(findings, list) and findings
+    for f in findings:
+        assert {"check", "passed", "detail"} <= set(f)
+    if not packet["assembly_passed"]:
+        assert any(not f["passed"] for f in findings), (
+            "assembly is marked failed but no finding says why")
+
+
+def test_a_failing_assembly_check_forces_an_overall_failure(packet):
+    """No path by which a failed check leaves the packet reading as a pass."""
+    if any(not f["passed"] for f in packet.get("assembly_findings", [])):
+        assert not packet["all_passed"]
+
+
+def test_the_structural_coefficient_is_placed_against_flown_hardware(packet):
+    """A number outside flown practice has to be reported as outside it.
+
+    Ten flown stages span 0.036 to 0.118. Anything above that is a finding, not
+    a detail, and the packet carries the comparison so it cannot be read as
+    ordinary.
+    """
+    from cadflow.flown_envelope import check as envelope
+
+    used = packet["struct_coeff_used"]
+    verdict = envelope(used, stage_wet_kg=packet.get("gross_kg", 1000.0))
+    if used > verdict.flown_max:
+        assert not verdict.inside
+        assert "flown range" in verdict.note
