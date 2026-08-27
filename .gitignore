@@ -58,3 +58,10 @@ _vm_environment/
 # BodySpec that produced them. The results are drag_corpus.json and
 # shape_factor_calibration.json, which are tracked.
 data/drag_corpus/_cases/
+
+# Packet solver working directories. Each plan_and_verify run leaves ~600 MB of
+# meshes, CalculiX decks and FRD output under components/; all of it is
+# regenerable from the packet itself. The PACKET.md and PACKET.json those runs
+# produce are the results and are kept.
+artifacts/verification/packet_*/components/
+artifacts/verification/packet_*/vehicle/

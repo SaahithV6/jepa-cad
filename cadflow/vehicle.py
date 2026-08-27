@@ -136,6 +136,7 @@ def flight_vehicle_properties(
         raise ValueError("propellant_remaining must have one entry per stage")
 
     parts: list[Placed] = []
+    extents: list[tuple[str, float, float, float]] = []
     station = 0.0
     # aft to forward: stage 1 first
     for i, st in enumerate(stages):
@@ -150,6 +151,7 @@ def flight_vehicle_properties(
             cx_m=0.0, cy_m=0.0, cz_m=0.0,
             Ixx_kg_m2=ixx, Iyy_kg_m2=ixx, Izz_kg_m2=izz,
             station_z_m=station + length / 2.0))
+        extents.append((f"stage {i+1}", station, station + length, wet))
         station += length
 
     pay_len = payload_length_m if payload_length_m is not None else 2.0 * r
@@ -159,12 +161,20 @@ def flight_vehicle_properties(
         cx_m=0.0, cy_m=0.0, cz_m=0.0,
         Ixx_kg_m2=ixx, Iyy_kg_m2=ixx, Izz_kg_m2=izz,
         station_z_m=station + pay_len / 2.0))
+    extents.append(("payload", station, station + pay_len, float(payload_kg)))
     station += pay_len
 
     out = combine(parts)
     out["length_m"] = station
     out["radius_m"] = r
     out["sections"] = [(p.name, p.mass_kg, p.station_z_m) for p in parts]
+    # Where each section starts and ends, not just where its centre sits. A
+    # bending analysis needs the mass *distribution*: two vehicles with the same
+    # centre of gravity carry completely different moments depending on whether
+    # the mass is spread along the body or concentrated at the ends. `sections`
+    # cannot express that and is kept as it was, since other callers read it.
+    out["section_extents"] = [
+        (name, z0, z1, mass) for name, z0, z1, mass in extents]
     return out
 
 

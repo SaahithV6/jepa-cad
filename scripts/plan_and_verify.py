@@ -440,6 +440,37 @@ def main() -> int:
                                 nose_tip_station_m=fv["length_m"],
                                 cg_z_m=worst_cg,
                                 fin_root_le_station_m=root_le)
+    # Fins sized for static margin alone are only half a design. A statically
+    # stable vehicle spends gimbal deflection fighting its own fins, so margin
+    # and control authority are one lever pulled in opposite directions, and
+    # optimising the stability end discovers the other end only if something
+    # checks. The first packet to compute both wanted 14.5 degrees of gimbal
+    # against the 8 a production engine offers -- stable, and unsteerable.
+    control_trade = None
+    try:
+        from cadflow.control_authority import trade_margin_for_authority
+
+        _thr1 = p.gross_kg * 9.80665 * 4.5
+        _Sref = math.pi * flight_r ** 2
+        control_trade = trade_margin_for_authority(
+            lambda tm: size_fins_for_margin(
+                prof, flight_r, nose_tip_station_m=fv["length_m"],
+                cg_z_m=worst_cg, fin_root_le_station_m=root_le,
+                target_margin=tm),
+            q_pa=p.trajectory["max_q_pa"], reference_area_m2=_Sref,
+            alpha_rad=DESIGN_ALPHA_RAD, cg_station_m=fv["cg_z_m"],
+            thrust_n=_thr1, body_diameter_m=2.0 * flight_r)
+        if control_trade["converged"] and control_trade["fins"] is not None:
+            if control_trade["margin_cal"] < 1.5 - 1e-9:
+                print(f"control trade: static margin 1.50 -> "
+                      f"{control_trade['margin_cal']:.2f} cal so the engine can "
+                      f"steer at max-Q", flush=True)
+            fins = control_trade["fins"]
+        else:
+            print(f"control trade: {control_trade['note'][:90]}", flush=True)
+    except Exception as _exc:  # noqa: BLE001
+        print(f"control trade unavailable ({_exc})", flush=True)
+
     margins = [(lbl, static_margin(cg, fins["cp_z_m"], 2.0 * flight_r), m)
                for lbl, cg, m in cgs]
     stability = dict(fins, sized_for=worst_label,
@@ -903,6 +934,14 @@ def main() -> int:
         flight_vehicle = {k: v for k, v in fv.items() if k != "sections"}
         flight_vehicle["sections"] = [
             {"name": n, "mass_kg": m, "station_z_m": z} for n, m, z in fv["sections"]]
+        # Assembly-level verdicts, collected as they are computed so the
+        # summary at the end can account for them. Without this the packet
+        # reported "all 10 components passed: True" for a vehicle that could
+        # not be steered and whose propellant sloshed in time with its own
+        # pitch mode -- the findings existed in the prose and nowhere a reader
+        # or a downstream consumer of PACKET.json would be forced to see them.
+        _assembly_findings: list[dict] = []
+
         L.append("\n## Flight vehicle\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
@@ -913,6 +952,361 @@ def main() -> int:
                  f"({100*fv['cg_z_m']/fv['length_m']:.0f}% of length) |")
         L.append(f"| pitch/yaw inertia Ixx | {fv['Ixx_kg_m2']:.1f} kg m^2 |")
         L.append(f"| roll inertia Izz | {fv['Izz_kg_m2']:.1f} kg m^2 |")
+
+        # Bending along the assembled stack. Every structural number above this
+        # point came from a component solved on its own, gripped at one end and
+        # pushed on the other. A launch vehicle does not fail that way: at max-Q
+        # it flies at incidence, the nose and fins push sideways, and because it
+        # is free the load is reacted by the whole vehicle's inertia rather than
+        # by a support. The largest bending moment lands in the middle of the
+        # body, which is where no component analysis is looking.
+        try:
+            from cadflow.flight_loads import PointLoad, skin_stress_mpa
+            from cadflow.flight_loads import solve as solve_loads
+
+            _q = p.trajectory["max_q_pa"]
+            _fr = math.pi * flight_r ** 2
+            _a = DESIGN_ALPHA_RAD
+            _loads = [
+                PointLoad("nose", float(fins["cp_nose_z_m"]),
+                          _q * float(fins["cna_nose"]) * _fr * _a),
+                PointLoad("fins", float(fins["cp_fins_z_m"]),
+                          _q * float(fins["cna_fins"]) * _fr * _a),
+            ]
+            _res = solve_loads(fv, _loads)
+            _peak = _res.peak_moment_station_m
+            # Axial compression the same station carries: everything forward of
+            # it, times the axial acceleration. Thrust reacted through the skin.
+            _above = sum(mass for _n, z0, z1, mass in fv["section_extents"]
+                         if z0 >= _peak) + sum(
+                mass * max(0.0, (z1 - _peak) / (z1 - z0))
+                for _n, z0, z1, mass in fv["section_extents"]
+                if z0 < _peak < z1)
+            _axial_n = _above * 9.80665 * 4.5
+            # The thinnest wall the component loop actually sized, since that is
+            # the section least able to carry the bending the assembly applies.
+            # Taking the thickest would report the most comfortable station
+            # rather than the governing one.
+            _walls = [float(r["wall_mm"]) for r in results
+                      if r.get("wall_mm") and "tank" in str(r.get("name", ""))]
+            if not _walls:
+                _walls = [float(r["wall_mm"]) for r in results if r.get("wall_mm")]
+            if not _walls:
+                raise ValueError(
+                    "no component reported a wall thickness, so there is no "
+                    "skin to apply the assembly bending moment to")
+            _t_m = min(_walls) / 1000.0
+            _st = skin_stress_mpa(_res.peak_moment_nm, _axial_n, flight_r, _t_m)
+
+            L.append("\n## Flight loads on the assembly\n")
+            L.append("| quantity | value |")
+            L.append("|---|---|")
+            L.append(f"| load case | max-Q {_q/1000:.1f} kPa at "
+                     f"{math.degrees(_a):.0f} deg incidence |")
+            L.append(f"| aerodynamic side load | nose "
+                     f"{_loads[0].force_n/1000:.1f} kN + fins "
+                     f"{_loads[1].force_n/1000:.1f} kN |")
+            L.append(f"| peak bending moment | {_res.peak_moment_nm/1000:.1f} kN m "
+                     f"at {_peak:.2f} m from aft "
+                     f"({100*_peak/fv['length_m']:.0f}% of length) |")
+            L.append(f"| skin stress at that station | axial "
+                     f"{_st['axial_mpa']:.1f} + bending {_st['bending_mpa']:.1f} "
+                     f"= **{_st['combined_mpa']:.1f} MPa** on a "
+                     f"{1000*_t_m:.2f} mm wall |")
+            L.append(f"| margin against {allowable_mpa:.0f} MPa allowable | "
+                     f"{allowable_mpa/max(_st['combined_mpa'], 1e-9):.2f} |")
+            L.append(f"| load set closes | shear {_res.closure_shear_n:.2e} N, "
+                     f"moment {_res.closure_moment_nm:.2e} N m -> "
+                     f"**{_res.balanced}** |")
+            if _st["combined_mpa"] > allowable_mpa:
+                L.append(f"\nThe assembly is over its allowable in bending even "
+                         f"though every component passed its own axial check. "
+                         f"Bending contributes {100*_st['bending_share']:.0f}% of "
+                         f"the skin stress and no per-part analysis in this "
+                         f"packet applies it.")
+            for _n in _res.notes:
+                L.append(f"\n- {_n}")
+            L.append("\nThe load set is checked for closure rather than assumed "
+                     "to balance: a free vehicle must return shear and moment to "
+                     "zero at its aft end, and a distribution that does not still "
+                     "draws a smooth and entirely plausible moment curve.\n")
+
+            # Buckling, which is the failure mode a thin skin actually has.
+            # Every other structural number in this packet is a stress against a
+            # yield allowable. A monocoque cylinder in compression does not
+            # yield -- it goes unstable and folds, at a stress that can be an
+            # order of magnitude lower -- so a comfortable yield margin says
+            # very little about whether the vehicle survives.
+            from cadflow.shell_buckling import check as buckling_check
+
+            _bk = buckling_check(axial_mpa=_st["axial_mpa"],
+                                 bending_mpa=_st["bending_mpa"],
+                                 radius_m=flight_r, wall_m=_t_m,
+                                 youngs_pa=skin_e_pa)
+            _yield_margin = allowable_mpa / max(_st["combined_mpa"], 1e-9)
+            L.append("\n## Skin buckling\n")
+            L.append("| quantity | value |")
+            L.append("|---|---|")
+            L.append(f"| radius over thickness | {_bk.r_over_t:.0f} |")
+            L.append(f"| classical critical stress | {_bk.classical_mpa:.1f} MPa "
+                     f"(a perfect cylinder; no real shell reaches it) |")
+            L.append(f"| knockdown, compression / bending | "
+                     f"{_bk.gamma_compression:.3f} / {_bk.gamma_bending:.3f} "
+                     f"(NASA SP-8007) |")
+            L.append(f"| allowable, compression / bending | "
+                     f"{_bk.allowable_compression_mpa:.1f} / "
+                     f"{_bk.allowable_bending_mpa:.1f} MPa |")
+            L.append(f"| interaction R_c + R_b | {_bk.interaction:.2f} "
+                     f"(must not exceed 1) |")
+            L.append(f"| buckling margin | **{_bk.margin:.2f}**, governed by "
+                     f"{_bk.governs} |")
+            L.append(f"| yield margin for comparison | {_yield_margin:.1f} |")
+            if not _bk.passes:
+                L.append(f"\n**The skin buckles.** Interaction is "
+                         f"{_bk.interaction:.2f} against a limit of 1. The yield "
+                         f"margin of {_yield_margin:.1f} above is real and "
+                         f"irrelevant: this wall folds before it yields.")
+            elif _bk.margin < 0.5 * _yield_margin:
+                L.append(f"\nBuckling governs. The yield margin of "
+                         f"{_yield_margin:.1f} overstates the real one by a "
+                         f"factor of {_yield_margin/_bk.margin:.1f}, and every "
+                         f"component margin in the table above is a yield "
+                         f"margin computed the same way.")
+            _assembly_findings.append({
+                "check": "skin buckling",
+                "passed": bool(_bk.passes),
+                "detail": (f"interaction {_bk.interaction:.2f}, margin "
+                           f"{_bk.margin:.2f} governed by {_bk.governs}"),
+                "severity": "fail" if not _bk.passes else "pass"})
+            for _n in _bk.notes:
+                L.append(f"\n- {_n}")
+            L.append("")
+
+            # First elastic bending mode of the stack, flying free. The
+            # component table reports a frequency per part from a modal run on
+            # that part clamped at one end, which is a fact about a bracket:
+            # nothing clamps a rocket in flight. What an autopilot has to stay
+            # away from is this number.
+            from cadflow.assembly_modes import vehicle_bending_modes
+
+            _modes = vehicle_bending_modes(fv, youngs_pa=skin_e_pa, wall_m=_t_m)
+            L.append("\n## Bending modes of the assembly\n")
+            L.append("| quantity | value |")
+            L.append("|---|---|")
+            L.append(f"| first elastic bending mode | "
+                     f"**{_modes.first_bending_hz:.1f} Hz** free-free |")
+            L.append(f"| next modes | " + ", ".join(
+                f"{f:.1f} Hz" for f in _modes.frequencies_hz[1:4]) + " |")
+            L.append(f"| rigid-body modes found | {_modes.rigid_body_modes} "
+                     f"(a free planar beam has exactly 2) -> "
+                     f"**{_modes.well_posed}** |")
+            L.append(f"| section | {1000*_t_m:.2f} mm wall at "
+                     f"{1000*flight_r:.0f} mm radius, E "
+                     f"{skin_e_pa/1e9:.0f} GPa |")
+            for _n in _modes.notes:
+                L.append(f"\n- {_n}")
+            L.append(f"\nControl bandwidth has to sit well below "
+                     f"{_modes.first_bending_hz:.1f} Hz -- the usual allowance is "
+                     f"a factor of five to ten -- or the autopilot drives the "
+                     f"structure instead of steering it. This packet does not "
+                     f"size a control system, so that comparison is left open "
+                     f"rather than claimed as satisfied.\n")
+
+            # Slosh. Liquid in a partly full tank has lateral modes of its own,
+            # they are almost undamped, and one that lands on a structural
+            # frequency or on control bandwidth couples. Frequency follows
+            # axial acceleration rather than gravity, so these are flight
+            # numbers and roughly twice what a ground calculation would give.
+            from cadflow.slosh import G0 as _G0
+            from cadflow.slosh import separation_from, tank_mode
+            from cadflow.vehicle import PROPELLANT_BULK_DENSITY
+
+            _accel = 4.5 * _G0
+            L.append("\n## Propellant slosh\n")
+            L.append("| tank | fill | slosh mode | participating mass | "
+                     "vs first bending |")
+            L.append("|---|---|---|---|---|")
+            _worst = None
+            for _i, _stg in enumerate(p.stack):
+                for _fill in (0.9, 0.5, 0.2):
+                    try:
+                        _m = tank_mode(f"stage {_i+1}", radius_m=flight_r,
+                                       propellant_kg=float(_stg.prop_mass_kg),
+                                       bulk_density=PROPELLANT_BULK_DENSITY,
+                                       fill_ratio=_fill, axial_accel_m_s2=_accel)
+                    except ValueError:
+                        continue
+                    _sep = separation_from(_m, _modes.first_bending_hz)
+                    if _worst is None or _sep["ratio"] > _worst[0]["ratio"]:
+                        _worst = (_sep, _m)
+                    L.append(f"| stage {_i+1} | {100*_fill:.0f}% | "
+                             f"{_m.frequency_hz:.2f} Hz | "
+                             f"{_m.slosh_mass_kg:.0f} kg "
+                             f"({100*_m.slosh_mass_fraction:.0f}% of liquid) | "
+                             f"ratio {_sep['ratio']:.3f} |")
+            if _worst is not None:
+                _sep, _m = _worst
+                L.append(f"\nClosest approach to the first bending mode is a "
+                         f"ratio of {_sep['ratio']:.3f} -- {_sep['verdict']}.")
+                if _sep["coupled"]:
+                    L.append("\n**A slosh mode coincides with the first bending "
+                             "mode.** Slosh damping without baffles is a fraction "
+                             "of one percent, so the two will exchange energy and "
+                             "neither this packet's modal analysis nor its "
+                             "component checks describe what happens next.")
+                else:
+                    L.append(f"\nStructural coupling is not a concern at these "
+                             f"frequencies. Control coupling may still be: the "
+                             f"slosh modes here sit at a few hertz, which is "
+                             f"where launch vehicle control bandwidth normally "
+                             f"lives, and this packet does not size a control "
+                             f"system. Baffles are not modelled.")
+            L.append("")
+
+            # Control authority and bandwidth. This is where the sections above
+            # meet: the engine has to out-moment the fins, and the autopilot has
+            # to be quick enough to fly the vehicle while staying clear of the
+            # bending and slosh modes just computed. Neither constraint is
+            # visible from any one analysis on its own.
+            from cadflow.control_authority import (
+                bandwidth_window, check as tvc_check, rigid_body_pitch_hz)
+
+            _thrust1 = p.gross_kg * 9.80665 * 4.5
+            _S = math.pi * flight_r ** 2
+            _auth = tvc_check(
+                q_pa=_q, reference_area_m2=_S,
+                cn_alpha=float(fins["cna_total"]), alpha_rad=_a,
+                cp_station_m=float(fins["cp_z_m"]),
+                cg_station_m=float(fv["cg_z_m"]), thrust_n=_thrust1)
+            L.append("\n## Control authority\n")
+            L.append("| quantity | value |")
+            L.append("|---|---|")
+            L.append(f"| condition | max-Q {_q/1000:.1f} kPa at "
+                     f"{math.degrees(_a):.0f} deg incidence |")
+            L.append(f"| aerodynamic moment about the CG | "
+                     f"{_auth.aero_moment_nm/1000:.1f} kN m |")
+            L.append(f"| thrust x gimbal arm | {_thrust1/1000:.1f} kN x "
+                     f"{_auth.tvc_arm_m:.2f} m |")
+            L.append(f"| gimbal deflection required | "
+                     f"**{_auth.required_gimbal_deg:.1f} deg** |")
+            L.append(f"| assumed available | "
+                     f"{_auth.available_gimbal_deg:.1f} deg (typical production "
+                     f"engine, not a hardware specification) |")
+            L.append(f"| authority | **{_auth.has_authority}** "
+                     f"(utilisation {_auth.utilisation:.2f}) |")
+            for _n in _auth.notes:
+                L.append(f"\n- {_n}")
+
+            # Frequencies are only comparable at a condition where both exist.
+            # Stage 1 slosh is the one that coexists with max-Q; the 0.66 Hz
+            # mode further down the table belongs to a nearly empty upper stage
+            # in vacuum, where there is no aerodynamic moment to control.
+            try:
+                _rb = rigid_body_pitch_hz(
+                    q_pa=_q, reference_area_m2=_S,
+                    cn_alpha=float(fins["cna_total"]),
+                    cp_station_m=float(fins["cp_z_m"]),
+                    cg_station_m=float(fv["cg_z_m"]),
+                    pitch_inertia_kg_m2=float(fv["Ixx_kg_m2"]))
+                _maxq_slosh = tank_mode(
+                    "stage 1", radius_m=flight_r,
+                    propellant_kg=float(p.stack[0].prop_mass_kg),
+                    bulk_density=PROPELLANT_BULK_DENSITY, fill_ratio=0.5,
+                    axial_accel_m_s2=_accel).frequency_hz
+                _win = bandwidth_window(
+                    first_bending_hz=_modes.first_bending_hz,
+                    lowest_slosh_hz=_maxq_slosh, rigid_body_hz=_rb)
+                _coincide = _maxq_slosh / _rb
+                L.append("\n| frequency | value |")
+                L.append("|---|---|")
+                L.append(f"| rigid-body pitch (weathercock) at max-Q | "
+                         f"{_rb:.2f} Hz |")
+                L.append(f"| stage 1 slosh at max-Q | {_maxq_slosh:.2f} Hz |")
+                L.append(f"| ratio | **{_coincide:.2f}** |")
+                L.append(f"| first bending | {_modes.first_bending_hz:.1f} Hz |")
+                L.append(f"| usable control band | {_win['note']} |")
+                if 0.8 <= _coincide <= 1.25:
+                    L.append(f"\n**The stage 1 slosh mode coincides with the "
+                             f"vehicle's own pitch mode**, at the condition where "
+                             f"the aerodynamic moment is largest. The propellant "
+                             f"sloshes at essentially the rate the vehicle "
+                             f"weathercocks. Slosh damping without baffles is a "
+                             f"fraction of one percent, and this is the coupling "
+                             f"that has historically been fatal. Nothing in the "
+                             f"component analyses above can see it: it appears "
+                             f"only when the slosh model, the mass properties "
+                             f"and the aerodynamics are evaluated together at "
+                             f"one flight condition.")
+                _assembly_findings.append({
+                    "check": "slosh / pitch-mode separation",
+                    "passed": not (0.8 <= _coincide <= 1.25),
+                    "detail": (f"slosh {_maxq_slosh:.2f} Hz against pitch "
+                               f"{_rb:.2f} Hz, ratio {_coincide:.2f}"),
+                    "severity": ("fail" if 0.8 <= _coincide <= 1.25
+                                 else "pass")})
+                # A shut window is not automatically a dead end. The 5:1
+                # separation is the rule for an undamped mode, and baffles
+                # change that. What baffles cannot change is a mode that sits
+                # inside the band rather than above it.
+                if not _win["window_exists"]:
+                    from cadflow.slosh_baffles import size_baffles
+
+                    try:
+                        _baf = size_baffles(
+                            tank_radius_m=flight_r,
+                            fill_depth_m=max(0.2, 0.5 * fv["length_m"] /
+                                             max(1, len(p.stack))),
+                            slosh_hz=_maxq_slosh,
+                            required_bandwidth_hz=_win["lower_bound_hz"])
+                        if _baf is not None:
+                            L.append(
+                                f"\n**Baffles close this.** {_baf.n_baffles} "
+                                f"ring baffle(s) {1000*_baf.width_m:.0f} mm wide "
+                                f"raise slosh damping to {_baf.damping_ratio:.3f}, "
+                                f"which relaxes the separation requirement to "
+                                f"{_baf.achieved_separation:.1f} and opens the "
+                                f"band. Mass {_baf.mass_kg:.1f} kg.\n")
+                            for _n in _baf.notes:
+                                L.append(f"- {_n}\n")
+                        else:
+                            L.append("\nNo ring baffle within a sensible width "
+                                     "provides enough damping to open the band.\n")
+                    except ValueError as _bexc:
+                        L.append(f"\n**Baffles cannot close this.** {_bexc}\n")
+                _assembly_findings.append({
+                    "check": "control bandwidth window",
+                    "passed": bool(_win["window_exists"]),
+                    "detail": (f"needs >= {_win['lower_bound_hz']:.2f} Hz, "
+                               f"capped at {_win['upper_bound_hz']:.2f} Hz by "
+                               f"{_win['limited_by']}"),
+                    "severity": "fail" if not _win["window_exists"] else "pass"})
+            except ValueError as _exc:
+                L.append(f"\n(pitch frequency not defined: {_exc})")
+            if control_trade is not None and control_trade.get("steps"):
+                L.append("\n**Static margin was traded for control authority.** "
+                         "Fins sized purely for stability left the engine short "
+                         "of gimbal; the loop searched downward until it could "
+                         "steer.\n")
+                L.append("| target margin | fin span | CNa | gimbal needed | ok |")
+                L.append("|---|---|---|---|---|")
+                for _s in control_trade["steps"]:
+                    L.append(f"| {_s['margin_cal']:.2f} cal | "
+                             f"{1000*_s['span_m']:.0f} mm | "
+                             f"{_s['cna_total']:.2f} /rad | "
+                             f"{_s['required_gimbal_deg']:.2f} deg | "
+                             f"{'yes' if _s['has_authority'] else 'no'} |")
+                L.append(f"\n{control_trade['note']}\n")
+            _assembly_findings.append({
+                "check": "thrust vector control authority",
+                "passed": bool(_auth.has_authority),
+                "detail": (f"{_auth.required_gimbal_deg:.1f} deg required "
+                           f"against {_auth.available_gimbal_deg:.1f} available"),
+                "severity": "fail" if not _auth.has_authority else "pass"})
+            L.append("")
+        except Exception as _exc:  # noqa: BLE001
+            L.append(f"\n(assembly flight loads unavailable: "
+                     f"{type(_exc).__name__}: {_exc})\n")
+
         L.append("\n## Stability\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
@@ -1039,12 +1433,41 @@ def main() -> int:
              "or coupled-loads assessment starts from. Mass and Izz are "
              "computed on that same solid, exact for the geometry, in kg and "
              "kg m^2 about the centroid.")
-    allp = all(r["passed"] for r in results)
+    # The verdict has to include the assembly, not just the parts.
+    #
+    # This line used to read `all(r["passed"] for r in results)` and reported
+    # True for a vehicle that needed 14.5 degrees of gimbal against 8
+    # available, and whose stage 1 propellant sloshed within 11% of its own
+    # pitch frequency at max-Q. Both findings were sitting in the prose a few
+    # hundred lines above, and neither reached the summary or PACKET.json. A
+    # packet that contradicts itself in the reader's favour is worse than one
+    # that simply reports the failure.
+    _components_ok = all(r["passed"] for r in results)
+    _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
+    allp = _components_ok and not _assembly_fails
+
+    if _assembly_findings:
+        L.append("\n## Assembly verification\n")
+        L.append("| check | result | detail |")
+        L.append("|---|---|---|")
+        for _f in _assembly_findings:
+            L.append(f"| {_f['check']} | "
+                     f"**{'PASS' if _f['passed'] else 'FAIL'}** | "
+                     f"{_f['detail']} |")
+        if _assembly_fails:
+            L.append(f"\n{len(_assembly_fails)} assembly-level check(s) failed "
+                     f"while every component passed its own coupon test. The "
+                     f"components are not wrong -- each one survives the load it "
+                     f"was given. What fails is the vehicle they add up to, and "
+                     f"no per-part analysis can see it.\n")
+
     L.append(f"\nAllowable {allowable_mpa:.0f} MPa, derived from "
              f"{allowable.material_id} at {allowable.source_strength_mpa:.0f} MPa "
              f"({allowable.strength_basis}) with a yield factor of safety of "
              f"{allowable.factor_of_safety} and a {allowable.knockdown} knockdown. "
-             f"All {len(results)} components passed: **{allp}**\n")
+             f"All {len(results)} components passed: "
+             f"**{_components_ok}**. Assembly checks passed: "
+             f"**{not _assembly_fails}**. Overall: **{allp}**\n")
     L.append("\nThis allowable is not certifiable and the packet should not be "
              "read as though it were. The catalogue carries typical strengths "
              "rather than A- or B-basis values, so the knockdown above stands in "
@@ -1074,6 +1497,9 @@ def main() -> int:
         "gross_kg": p.gross_kg, "achieved_km": p.achieved_km,
         "error_pct": err, "rationale": p.rationale,
         "components": results, "all_passed": allp,
+        "components_passed": _components_ok,
+        "assembly_findings": _assembly_findings,
+        "assembly_passed": not _assembly_fails,
         "struct_coeff_used": (solved_coeff if args.solve_structure
                               else STRUCT_COEFF),
         "struct_coeff_solved": solved_coeff,
