@@ -1670,6 +1670,27 @@ def main() -> int:
     # actually verified everything, and the three-way status says which of the
     # three situations it is.
     _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
+    # The components that passed are coupons, not the flight parts.
+    #
+    # The prose says so plainly -- body radius is clamped so parts stay
+    # meshable, giving a factor of several in radius and 1.3 kg of coupon
+    # against hundreds of kg of real structure. The verdict did not. A consumer
+    # reading components_passed: True would take the flight components as
+    # verified, and the caveat correcting them is prose it cannot read. Stress
+    # does not scale with a coupon, so those runs establish that representative
+    # sections survive representative loads -- worth having, and not the same
+    # claim.
+    _ratio = (flight_r / (geo_r_mm / 1000.0)) if geo_r_mm else 1.0
+    if _ratio > 1.5:
+        _assembly_findings.append({
+            "check": "flight component stress",
+            "passed": False,
+            "detail": (f"analysed as coupons at {geo_r_mm:.0f} mm radius "
+                       f"against a flight radius of {1000*flight_r:.0f} mm, a "
+                       f"factor of {_ratio:.1f}; the flight parts themselves "
+                       f"are not analysed"),
+            "severity": "unverified"})
+
     _assembly_unverified = [f for f in _assembly_findings
                             if f["severity"] == "unverified"]
     allp = _components_ok and not _assembly_fails and not _assembly_unverified
@@ -1686,12 +1707,18 @@ def main() -> int:
                      "unverified": "REQUIRED"}.get(_f["severity"], "FAIL")
             L.append(f"| {_f['check']} | **{_mark}** | {_f['detail']} |")
         if _assembly_unverified:
+            # Enumerate them rather than explaining one. With a single
+            # unverified item a general sentence was fine; with two it
+            # described the first and silently ignored the second, which is a
+            # smaller version of the same failure this section exists to fix.
             L.append(f"\n{len(_assembly_unverified)} check(s) marked REQUIRED "
-                     f"are neither passed nor failed: they name work this "
-                     f"packet cannot do. Phase stabilising a mode below "
-                     f"crossover is routine practice, but nothing here designs "
-                     f"a control system, so claiming it passes would report a "
-                     f"check that never ran.\n")
+                     f"are neither passed nor failed: they name real work this "
+                     f"packet cannot do. Claiming they pass would report checks "
+                     f"that never ran; claiming they fail would suggest defects "
+                     f"where there are none.\n")
+            for _u in _assembly_unverified:
+                L.append(f"- **{_u['check']}** -- {_u['detail']}.")
+            L.append("")
         if _assembly_fails:
             L.append(f"\n{len(_assembly_fails)} assembly-level check(s) failed "
                      f"while every component passed its own coupon test. The "
@@ -1703,7 +1730,7 @@ def main() -> int:
              f"{allowable.material_id} at {allowable.source_strength_mpa:.0f} MPa "
              f"({allowable.strength_basis}) with a yield factor of safety of "
              f"{allowable.factor_of_safety} and a {allowable.knockdown} knockdown. "
-             f"All {len(results)} components passed: "
+             f"All {len(results)} coupons passed: "
              f"**{_components_ok}**. Assembly checks failed: "
              f"**{len(_assembly_fails)}**. Requirements unverified: "
              f"**{len(_assembly_unverified)}**.\n\nOverall: **{_status}**"
