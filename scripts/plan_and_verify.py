@@ -450,7 +450,13 @@ def main() -> int:
     try:
         from cadflow.control_authority import trade_margin_for_authority
 
-        _thr1 = p.gross_kg * 9.80665 * 4.5
+        # The thrust the design actually flies, not a nominal ratio. The
+        # repair loop lowers thrust-to-weight to hold peak acceleration down --
+        # for this mission it reaches 2.93, not 4.5 -- so assuming 4.5 here
+        # overstated thrust by 54% and made the engine look able to steer a
+        # vehicle it cannot.
+        _thr1 = float(p.trajectory.get("liftoff_thrust_n")
+                      or p.gross_kg * 9.80665 * 4.5)
         _Sref = math.pi * flight_r ** 2
         control_trade = trade_margin_for_authority(
             lambda tm: size_fins_for_margin(
@@ -1018,7 +1024,12 @@ def main() -> int:
                 mass * max(0.0, (z1 - _peak) / (z1 - z0))
                 for _n, z0, z1, mass in fv["section_extents"]
                 if z0 < _peak < z1)
-            _axial_n = _above * 9.80665 * 4.5
+            # Peak axial acceleration, not the liftoff ratio. Thrust is held
+            # while mass falls, so acceleration climbs through every burn and
+            # the structure sees its maximum near burnout rather than at
+            # liftoff. Using the liftoff number understates the load.
+            _peak_g = float(p.trajectory.get("max_axial_g") or 4.5)
+            _axial_n = _above * 9.80665 * _peak_g
             # Size the flight skin for the flight loads, at the flight radius.
             #
             # This previously took the thinnest wall the component loop had
@@ -1216,7 +1227,8 @@ def main() -> int:
             from cadflow.control_authority import (
                 bandwidth_window, check as tvc_check, rigid_body_pitch_hz)
 
-            _thrust1 = p.gross_kg * 9.80665 * 4.5
+            _thrust1 = float(p.trajectory.get("liftoff_thrust_n")
+                             or p.gross_kg * 9.80665 * 4.5)
             _S = math.pi * flight_r ** 2
             _auth = tvc_check(
                 q_pa=_q, reference_area_m2=_S,
