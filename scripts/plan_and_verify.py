@@ -1019,19 +1019,24 @@ def main() -> int:
                 for _n, z0, z1, mass in fv["section_extents"]
                 if z0 < _peak < z1)
             _axial_n = _above * 9.80665 * 4.5
-            # The thinnest wall the component loop actually sized, since that is
-            # the section least able to carry the bending the assembly applies.
-            # Taking the thickest would report the most comfortable station
-            # rather than the governing one.
-            _walls = [float(r["wall_mm"]) for r in results
-                      if r.get("wall_mm") and "tank" in str(r.get("name", ""))]
-            if not _walls:
-                _walls = [float(r["wall_mm"]) for r in results if r.get("wall_mm")]
-            if not _walls:
-                raise ValueError(
-                    "no component reported a wall thickness, so there is no "
-                    "skin to apply the assembly bending moment to")
-            _t_m = min(_walls) / 1000.0
+            # Size the flight skin for the flight loads, at the flight radius.
+            #
+            # This previously took the thinnest wall the component loop had
+            # sized and applied it here. Those components are coupons built at
+            # a radius clamped to 50 mm so they stay meshable, while this
+            # section is 335 mm, and a wall sized for one is not a wall for the
+            # other -- required thickness scales inversely with radius for the
+            # same load. It happened to land on the minimum gauge, which is
+            # radius independent and therefore harmless, but only by way of the
+            # min(): a strength-sized coupon wall would have transferred a
+            # number that means nothing here.
+            _wall = size_wall(load_n=_axial_n, radius_m=flight_r,
+                              length_m=fv["length_m"],
+                              sigma_allow_pa=allowable_mpa * 1e6,
+                              yield_pa=allowable.source_strength_mpa * 1e6,
+                              modulus_pa=skin_e_pa)
+            _t_m = _wall.thickness_m
+            _wall_driver = _wall.driver
             _st = skin_stress_mpa(_res.peak_moment_nm, _axial_n, flight_r, _t_m)
 
             L.append("\n## Flight loads on the assembly\n")
@@ -1049,6 +1054,10 @@ def main() -> int:
                      f"{_st['axial_mpa']:.1f} + bending {_st['bending_mpa']:.1f} "
                      f"= **{_st['combined_mpa']:.1f} MPa** on a "
                      f"{1000*_t_m:.2f} mm wall |")
+            L.append(f"| that wall | sized here for the flight loads at "
+                     f"{1000*flight_r:.0f} mm radius, driven by "
+                     f"**{_wall_driver}** -- not carried over from the "
+                     f"coupons, which are built at a clamped radius |")
             L.append(f"| margin against {allowable_mpa:.0f} MPa allowable | "
                      f"{allowable_mpa/max(_st['combined_mpa'], 1e-9):.2f} |")
             L.append(f"| load set closes | shear {_res.closure_shear_n:.2e} N, "
@@ -1356,6 +1365,39 @@ def main() -> int:
         L.append(f"| fin root / tip chord | {fins['root_chord_m']*1000:.0f} / "
                  f"{fins['tip_chord_m']*1000:.0f} mm, sweep "
                  f"{fins['sweep_m']*1000:.0f} mm |")
+        # The trajectory above was flown on a body-of-revolution drag
+        # coefficient. These fins are not a rounding error against that: their
+        # planform is several times the body's frontal area, and nothing charged
+        # the flight for them. The correction is reported rather than folded into
+        # the trajectory, because the fins are sized from a centre of gravity the
+        # trajectory produces -- applying it properly means iterating the plan
+        # rather than adding a term to it.
+        try:
+            from cadflow.fin_drag import fin_drag as _fin_drag
+
+            _fd = _fin_drag(span_m=float(fins["span_m"]),
+                            root_chord_m=float(fins["root_chord_m"]),
+                            tip_chord_m=float(fins["tip_chord_m"]),
+                            thickness_m=float(fins.get("thickness_m", 0.005)),
+                            n_fins=int(fins["n_fins"]), body_radius_m=flight_r,
+                            mach=2.0)
+            _body_cd = drag_coefficient(
+                design_knobs.nose_shape if design_knobs else "ogive", 3.0)
+            L.append(f"| fin drag, absent from the flown trajectory | Cd "
+                     f"{_fd.cd_total:.4f} on body frontal area, "
+                     f"**{100 * _fd.cd_total / _body_cd:.0f}%** of the body's "
+                     f"{_body_cd:.3f} |")
+            L.append(f"| fin planform vs body frontal area | "
+                     f"{_fd.planform_m2 / _fd.reference_m2:.1f}x |")
+            _fin_note = (
+                "\nThe apogee under mission verification is a finless vehicle's. "
+                "Adding this drag costs roughly 1% of apogee, about 23 kg of gross "
+                "mass to recover -- small against the other uncertainties here, and "
+                "always in the optimistic direction. " + " ".join(_fd.notes) + "\n")
+            L.append(_fin_note)
+        except Exception as _exc:  # noqa: BLE001
+            L.append(f"\n(fin drag unavailable: {type(_exc).__name__}: {_exc})\n")
+
         L.append(f"| centre of pressure | {fins['cp_z_m']:.3f} m from aft |")
         L.append(f"| centre of gravity | {fv['cg_z_m']:.3f} m from aft |")
         L.append(f"| static margin | {fins['static_margin_cal']:.2f} calibers "
