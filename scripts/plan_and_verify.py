@@ -843,6 +843,44 @@ def main() -> int:
                      f"from Saturn V's S-IC to Electron's first stage span "
                      f"{_v.flown_min:.3f} to {_v.flown_max:.3f}, median "
                      f"{_v.flown_median:.3f}. {_v.note}\n")
+
+            # Which part of the stage makes it heavy.
+            #
+            # The paragraph above has reported the coefficient as outside flown
+            # practice for many revisions without ever saying what is
+            # responsible, which makes it a complaint rather than a lead. The
+            # answer is not the wall: shell is about a quarter of stage
+            # structure and the engine is about half, at an assumed
+            # thrust-to-weight of 60 against flown engines running 80 to 180.
+            try:
+                from cadflow.structural_sizing import (
+                    coefficient_attribution as _attr)
+
+                _a = _attr(float(p.stack[0].prop_mass_kg), flight_r,
+                           float(p.trajectory.get("liftoff_thrust_n") or 0.0)
+                           or 1.0,
+                           density_kg_m3=_skin_rho,
+                           yield_pa=allowable.source_strength_mpa * 1e6,
+                           modulus_pa=skin_e_pa)
+                L.append("\n| stage 1 structure | mass | share |")
+                L.append("|---|---|---|")
+                for _k, _vv in _a["terms_kg"].items():
+                    L.append(f"| {_k} | {_vv:.1f} kg | "
+                             f"{100*_a['shares'][_k]:.0f}% |")
+                L.append(f"\n{_a['note']}. The wall driver is "
+                         f"**{_a['wall_driver']}**"
+                         + (", so stiffening it would add mass without adding "
+                            "capability -- stringers buy buckling resistance "
+                            "and a gauge-limited wall has none to buy"
+                            if _a["wall_driver"] == "minimum gauge" else
+                            ", so it is buckling-limited and stiffened "
+                            "construction would buy real mass here")
+                         + ". This matters because the obvious reading of a "
+                           "heavy coefficient is that the structure needs "
+                           "improving, and for this vehicle the structure is "
+                           "already as thin as the process allows.\n")
+            except Exception as _aexc:  # noqa: BLE001
+                L.append(f"\n(structural attribution unavailable: {_aexc})\n")
     except Exception as _exc:  # noqa: BLE001
         L.append(f"\n(flown-hardware comparison unavailable: {_exc})\n")
 
