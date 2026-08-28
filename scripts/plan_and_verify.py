@@ -1891,12 +1891,63 @@ def main() -> int:
                        f"are not analysed"),
             "severity": "unverified"})
 
+    # Does the packet agree with itself?
+    #
+    # Five defects this session were the same shape: one part of the program
+    # knew something and another reported otherwise, and every one was
+    # invisible to the tests because each individual model was right. This
+    # compares the numbers the packet already reports against each other.
+    #
+    # The logic lives in cadflow.packet_audit rather than here so it can be
+    # tested against a deliberately inconsistent packet. Its first run said
+    # "13 of 13 agree", which is worth nothing on its own: a check only ever
+    # run on correct data is not known to work, it is known to be quiet, and a
+    # broken check is quiet too. Under test it now has to catch a component
+    # weighed in the wrong alloy, a gross mass its own stack does not support,
+    # and a repair that reached some stages and not others.
+    from cadflow.packet_audit import audit as _audit, failures as _failures
+
+    _crosses = _audit(
+        gross_kg=p.gross_kg, stack=p.stack, payload_kg=args.payload_kg,
+        flight_vehicle_mass_kg=fv["mass_kg"], components=results,
+        skin_density_kg_m3=_skin_rho, skin_material=skin_material)
+    _consistency = [c.as_dict() for c in _crosses]
+    _bad = _failures(_crosses)
+    if _bad:
+        _assembly_findings.append({
+            "check": "packet self-consistency",
+            "passed": False,
+            "detail": (f"{len(_bad)} of {len(_crosses)} internal checks "
+                       f"disagree: " + "; ".join(c.check for c in _bad[:3])),
+            "severity": "fail"})
+
     _assembly_unverified = [f for f in _assembly_findings
                             if f["severity"] == "unverified"]
     allp = _components_ok and not _assembly_fails and not _assembly_unverified
     _status = ("FAILED" if (not _components_ok or _assembly_fails)
                else "INCOMPLETE" if _assembly_unverified
                else "VERIFIED")
+
+    if _consistency:
+        _bad_n = sum(1 for c in _consistency if not c["ok"])
+        L.append(f"\n## Packet self-consistency\n")
+        L.append(f"{len(_consistency) - _bad_n} of {len(_consistency)} internal "
+                 f"cross-checks agree. These compare numbers the packet already "
+                 f"reports against each other -- gross mass against the stack "
+                 f"it lists, the structural coefficient against the stage "
+                 f"masses, and every component's mass over its volume against "
+                 f"the density of the alloy the design selected. Five defects "
+                 f"in this packet were of exactly that shape and every one was "
+                 f"invisible to the tests, because each individual model was "
+                 f"right and only the connection between them was wrong.\n")
+        if _bad_n:
+            L.append("| check | reported | expected |")
+            L.append("|---|---|---|")
+            for _c in _consistency:
+                if not _c["ok"]:
+                    L.append(f"| {_c['check']} | {_c['got']:.4g} | "
+                             f"{_c['want']:.4g} |")
+            L.append("")
 
     if _assembly_findings:
         L.append("\n## Assembly verification\n")
@@ -1970,6 +2021,7 @@ def main() -> int:
         "assembly_findings": _assembly_findings,
         "assembly_passed": not _assembly_fails,
         "assembly_unverified": [f["check"] for f in _assembly_unverified],
+        "self_consistency": _consistency,
         "status": _status,
         # What actually sized this vehicle, not what the module defaults to.
         #
