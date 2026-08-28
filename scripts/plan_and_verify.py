@@ -50,7 +50,9 @@ E_AL = 70e9
 NU_AL = 0.33
 
 
-def component_first_mode_hz(case_dir: Path) -> float | None:
+def component_first_mode_hz(case_dir: Path, *, youngs_pa: float = E_AL,
+                            poisson: float = NU_AL,
+                            density: float = RHO_AL) -> float | None:
     """First elastic natural frequency of the part that was just analysed.
 
     Reuses the mesh the static run already produced, so this costs a fraction of
@@ -68,7 +70,7 @@ def component_first_mode_hz(case_dir: Path) -> float | None:
     try:
         generate_modal_case_inp(
             solver_dir, case_filename="modal.inp", fix_axis="z", modes=6,
-            youngs_modulus=E_AL, poisson=NU_AL, density=RHO_AL)
+            youngs_modulus=youngs_pa, poisson=poisson, density=density)
         run_calculix_case(solver_dir, job_name="modal", timeout=900)
         freqs = parse_eigenfrequencies(solver_dir / "modal.dat")
     except Exception:  # noqa: BLE001
@@ -366,6 +368,21 @@ def main() -> int:
     # material at 200, while the mass budget charged the full 8,190 kg/m3. The
     # design paid for the alloy and was forbidden from using it.
     skin_material = getattr(design_knobs, "skin_material", None) or "al-6061-t6"
+
+    # Density of the alloy the design chose, for the component mass properties.
+    #
+    # Those were computed with RHO_AL regardless of material. On an Inconel
+    # vehicle that understates every component mass by a factor of three, and
+    # the coupon stack total with it. The ratios that the gauge-versus-strength
+    # split reports survive it, since every part scales together, but no
+    # absolute mass in the packet did.
+    try:
+        from cadflow.space_materials import iter_materials as _iter_m
+
+        _skin_rho = next((float(m.density_kg_m3) for m in _iter_m()
+                          if m.material_id == skin_material), RHO_AL)
+    except Exception:  # noqa: BLE001
+        _skin_rho = RHO_AL
     try:
         from cadflow.allowables import design_allowable, elastic_properties
 
@@ -663,8 +680,13 @@ def main() -> int:
             else "analysis"
         buckling_margin = sigma_cr / max(sigma_app, 1.0)
         wall_mm_final = t_mm
+        # Aluminium properties gave only a 2.2% error on Inconel, because the
+        # higher stiffness nearly cancels the higher density in sqrt(E/rho).
+        # Small, and still no reason to leave the wrong material in a frequency
+        # the packet reports as this part's own.
         first_mode = None if (hulled or dist is None) else \
-            component_first_mode_hz(comp_dir)
+            component_first_mode_hz(comp_dir, youngs_pa=skin_e_pa,
+                                    poisson=skin_nu, density=_skin_rho)
 
         # Mass properties from the solid that was actually analysed. Ixx/Iyy/Izz
         # were three of only four conditioning slots absent from the entire
@@ -676,7 +698,7 @@ def main() -> int:
             from scripts.smoke_params_to_assembly import constraints_to_geometry
             _b = get_backend(prefer_real=True)
             _shape = build_from_spec(constraints_to_geometry(geom), backend=_b)
-            mass_props = _b.mass_properties(_shape, RHO_AL)
+            mass_props = _b.mass_properties(_shape, _skin_rho)
         except Exception:  # noqa: BLE001
             mass_props = None
         results.append({"name": name, "why": why, "load_n": load,
