@@ -21,6 +21,7 @@ import shutil
 import math
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -484,12 +485,34 @@ def main() -> int:
     burn_states = [("liftoff", [1.0] * len(p.stack))]
     burn_states.append(("stage 1 burnout", [0.0] + [1.0] * (len(p.stack) - 1))
                        if len(p.stack) > 1 else ("burnout", [0.0]))
+    # The whole state at each condition, not only its centre of gravity.
+    #
+    # Static margin, the gimbal angle max-Q demands and the rigid-body pitch
+    # frequency are three answers about one vehicle at one instant, and each was
+    # reading its inputs from a different place: fins sized at the worst CG, the
+    # control trade and the pitch mode at the full-vehicle CG and inertia. Those
+    # are the same numbers here only because this vehicle's largest tank is aft,
+    # so liftoff is the worst case. Keeping the state together makes the
+    # condition a thing the packet names once instead of a coincidence it
+    # re-derives four times.
+    # Named rather than positional. Adding the state to a 3-tuple broke two
+    # unpack sites that had no reason to care, and a tuple that cannot grow
+    # without breaking its readers is a tuple that discourages carrying the
+    # thing its readers need -- which is how the CG and the state came to be
+    # fetched from different places to begin with.
+    class _BurnState(NamedTuple):
+        label: str
+        cg_z_m: float
+        mass_kg: float
+        state: dict
+
     cgs = []
     for label, rem in burn_states:
         st = flight_vehicle_properties(p.stack, args.payload_kg, flight_r,
                                        propellant_remaining=rem)
-        cgs.append((label, st["cg_z_m"], st["mass_kg"]))
-    worst_label, worst_cg, _ = min(cgs, key=lambda c: c[1])
+        cgs.append(_BurnState(label, st["cg_z_m"], st["mass_kg"], st))
+    _worst = min(cgs, key=lambda c: c.cg_z_m)
+    worst_label, worst_cg, worst_state = _worst.label, _worst.cg_z_m, _worst.state
     fins = size_fins_for_margin(prof, flight_r,
                                 nose_tip_station_m=fv["length_m"],
                                 cg_z_m=worst_cg,
@@ -518,7 +541,18 @@ def main() -> int:
                 cg_z_m=worst_cg, fin_root_le_station_m=root_le,
                 target_margin=tm),
             q_pa=p.trajectory["max_q_pa"], reference_area_m2=_Sref,
-            alpha_rad=DESIGN_ALPHA_RAD, cg_station_m=fv["cg_z_m"],
+            # The same centre of gravity the fins were sized at.
+            #
+            # This read fv["cg_z_m"] -- the full-vehicle value -- while the
+            # lambda above sized fins at worst_cg. On this design the two are
+            # the same number to four decimals, because liftoff happens to be
+            # the worst case for a vehicle whose largest tank is aft. That is a
+            # property of the architecture, not of the code: a design with a
+            # forward tank would size fins at one condition and check the gimbal
+            # they demand at another, and nothing would say so. Six defects in
+            # this packet were exactly two expressions that agreed until they
+            # did not.
+            alpha_rad=DESIGN_ALPHA_RAD, cg_station_m=worst_cg,
             thrust_n=_thr1, body_diameter_m=2.0 * flight_r)
         if control_trade["converged"] and control_trade["fins"] is not None:
             if control_trade["margin_cal"] < 1.5 - 1e-9:
@@ -532,7 +566,7 @@ def main() -> int:
         print(f"control trade unavailable ({_exc})", flush=True)
 
     margins = [(lbl, static_margin(cg, fins["cp_z_m"], 2.0 * flight_r), m)
-               for lbl, cg, m in cgs]
+               for lbl, cg, m, _st in cgs]
     stability = dict(fins, sized_for=worst_label,
                      margins=[{"state": l, "margin_cal": mg, "mass_kg": m}
                               for l, mg, m in margins])
@@ -1281,6 +1315,126 @@ def main() -> int:
                 L.append(f"\n- {_n}")
             L.append("")
 
+            # Tank pressure, which this packet did not have.
+            #
+            # A pump will not draw from an unpressurised tank -- the propellant
+            # flashes at the inducer -- so every stage carries ullage above its
+            # propellant's vapour pressure. That costs helium and a bottle to
+            # keep it in, and neither was anywhere in the mass budget. It also
+            # puts hoop tension in the wall, which is the largest membrane
+            # stress this shell carries and had never been computed.
+            #
+            # And it bears on the section immediately above. A tank with end
+            # domes carries pr/2t of axial *tension*, working directly against
+            # the compression the wall was just thickened for. A shell in net
+            # tension has no compressive buckling mode; whether that repair was
+            # necessary depends on a pressure nothing was calculating.
+            try:
+                from cadflow.pressurization import (
+                    feed_system_verdict as _feed, stage_pressurisation as _press,
+                    wall_load_state as _wall_state)
+
+                _tank_h = fv["length_m"] / max(1, len(p.stack))
+                _press_rows = []
+                for _i, _s in enumerate(p.stack, 1):
+                    _press_rows.append(_press(
+                        stage=_i, propellant_mass_kg=float(_s.prop_mass_kg),
+                        radius_m=flight_r, wall_m=_t_m,
+                        acceleration_g=1.0, head_height_m=_tank_h))
+                _press_total = sum(r.total_kg for r in _press_rows)
+                _ws = _wall_state(
+                    pressure_pa=_press_rows[0].tanks[0].design_pa,
+                    radius_m=flight_r, wall_m=_t_m,
+                    axial_flight_pa=-_st["axial_mpa"] * 1e6,
+                    bending_pa=-_st["bending_mpa"] * 1e6)
+
+                L.append("\n## Tank pressurisation\n")
+                L.append("| stage | tank volume | ullage | helium | bottle | "
+                         "total |")
+                L.append("|---|---|---|---|---|---|")
+                for _r in _press_rows:
+                    L.append(f"| {_r.stage} | {_r.tank_volume_m3:.3f} m3 | "
+                             f"{_r.ullage_pa/1000:.0f} kPa | "
+                             f"{_r.helium_kg:.2f} kg | {_r.bottle_kg:.2f} kg | "
+                             f"**{_r.total_kg:.2f} kg** |")
+                L.append(f"\nThat is **{_press_total:.1f} kg** the mass budget "
+                         f"above does not carry, {100*_press_total/p.gross_kg:.2f}% "
+                         f"of gross and {100*_press_total/args.payload_kg:.0f}% of "
+                         f"the payload it is competing with. The structural "
+                         f"coefficient absorbs it only in the sense that a "
+                         f"lumped number absorbs anything.\n")
+
+                L.append("| membrane stress in the tank wall | value |")
+                L.append("|---|---|")
+                L.append(f"| hoop, p r / t | "
+                         f"**{_ws.hoop_pa/1e6:.1f} MPa** tension |")
+                L.append(f"| axial from the end domes, p r / 2t | "
+                         f"{_ws.axial_pressure_pa/1e6:.1f} MPa tension |")
+                L.append(f"| axial from flight loads | "
+                         f"{_st['axial_mpa']:.1f} MPa compression |")
+                L.append(f"| bending at the peak station | "
+                         f"{_st['bending_mpa']:.1f} MPa |")
+                L.append(f"| net axial | "
+                         f"**{_ws.net_axial_pa/1e6:+.1f} MPa** |")
+                L.append(f"| von Mises, biaxial membrane | "
+                         f"{_ws.von_mises_pa/1e6:.1f} MPa against "
+                         f"{allowable_mpa:.0f} allowable |")
+
+                _press_notes = []
+                if _ws.hoop_pa / 1e6 > _st["combined_mpa"]:
+                    _press_notes.append(
+                        f"hoop is {_ws.hoop_pa/1e6/max(_st['combined_mpa'],1e-9):.1f}x "
+                        f"the combined flight stress the wall was sized against: "
+                        f"internal pressure, not flight loads, is the dominant "
+                        f"membrane load on this tank")
+                if not _ws.in_compression:
+                    _press_notes.append(
+                        "the pressurised tank wall is in net axial tension, so "
+                        "it has no compressive buckling mode at this condition "
+                        "-- at this condition. That does not retire the "
+                        "buckling case, it scopes it: the relief lasts exactly "
+                        "as long as the pressure does. A tank is dry on the pad "
+                        "before pressurisation, dry in transport and handling, "
+                        "and dry once its stage is spent, and it must not fold "
+                        "in any of those. The interstages are dry throughout, "
+                        "carry the same axial load with no pressure to relieve "
+                        "them, and this packet does not analyse them separately")
+                else:
+                    _press_notes.append(
+                        "bending exceeds the pressure relief, so the wall is in "
+                        "net compression and the buckling case stands")
+                for _n in _press_notes + _press_rows[0].notes:
+                    L.append(f"\n- {_n}")
+
+                L.append(
+                    "\n- The pressure terms above assume a closed tank with end "
+                    "domes, which is what a stage tank is. The shell model in "
+                    "the barrel section deliberately uses the open-ended "
+                    "reference p r / t with no axial term, because the thing it "
+                    "meshes is an open barrel. Both are right about their own "
+                    "subject and they are not the same subject: the axial "
+                    "relief below belongs to the tank, not to the barrel that "
+                    "was solved.\n")
+
+                _fv = _feed(float(p.stack[0].chamber_pressure_pa),
+                            _press_rows[0].tank_volume_m3,
+                            density_kg_m3=_skin_rho,
+                            allowable_pa=allowable_mpa * 1e6)
+                L.append(f"\n- {_fv['note']}\n")
+
+                _press_ok = _ws.von_mises_pa / 1e6 <= allowable_mpa
+                _assembly_findings.append({
+                    "check": "tank pressurisation",
+                    "passed": bool(_press_ok),
+                    "detail": (f"{_press_total:.1f} kg of helium and bottles "
+                               f"not in the mass budget; hoop "
+                               f"{_ws.hoop_pa/1e6:.0f} MPa, von Mises "
+                               f"{_ws.von_mises_pa/1e6:.0f} MPa against "
+                               f"{allowable_mpa:.0f} allowable"),
+                    "severity": "unverified" if _press_ok else "fail"})
+            except Exception as _exc:  # noqa: BLE001
+                print(f"pressurisation unavailable: {_exc}", flush=True)
+
             # First elastic bending mode of the stack, flying free. The
             # component table reports a frequency per part from a modal run on
             # that part clamped at one end, which is a fact about a bracket:
@@ -1377,7 +1531,9 @@ def main() -> int:
                 q_pa=_q, reference_area_m2=_S,
                 cn_alpha=float(fins["cna_total"]), alpha_rad=_a,
                 cp_station_m=float(fins["cp_z_m"]),
-                cg_station_m=float(fv["cg_z_m"]), thrust_n=_thrust1)
+                # The condition the fins were sized at, so the gimbal angle
+                # reported belongs to the fins reported beside it.
+                cg_station_m=float(worst_cg), thrust_n=_thrust1)
             L.append("\n## Control authority\n")
             L.append("| quantity | value |")
             L.append("|---|---|")
@@ -1406,8 +1562,11 @@ def main() -> int:
                     q_pa=_q, reference_area_m2=_S,
                     cn_alpha=float(fins["cna_total"]),
                     cp_station_m=float(fins["cp_z_m"]),
-                    cg_station_m=float(fv["cg_z_m"]),
-                    pitch_inertia_kg_m2=float(fv["Ixx_kg_m2"]))
+                    # CG and inertia from one state. Taking the CG from the
+                    # worst condition and the inertia from the full vehicle
+                    # would be a frequency for a vehicle that does not exist.
+                    cg_station_m=float(worst_cg),
+                    pitch_inertia_kg_m2=float(worst_state["Ixx_kg_m2"]))
                 _maxq_slosh = tank_mode(
                     "stage 1", radius_m=flight_r,
                     propellant_kg=float(p.stack[0].prop_mass_kg),
@@ -1583,6 +1742,73 @@ def main() -> int:
                            f"clearance {_need:.2f} s"),
                 "severity": "pass" if _sep_ok else "fail"})
 
+        # Is each nozzle sized for the air its own stage lights in?
+        #
+        # A nozzle only flows full over a band of ambient pressures, and the
+        # planner picks a rising expansion ratio precisely because of that. It
+        # then sized every throat at sea level, where an upper stage's ratio is
+        # over-expanded: the model correctly reported separation and truncated
+        # to the effective ratio at the separation plane -- about 15 for all of
+        # eps 30, 60 and 80 -- so three deliberately different upper stages were
+        # sized as one engine. The trajectory was never wrong, because it flies
+        # the real ambient at every step. What was wrong is the thrust-to-weight
+        # each stage was asked for, which is the lever the design loop pulls to
+        # hold peak axial acceleration down.
+        try:
+            from cadflow.nozzle_ambient import (
+                check_stack as _nz_check, findings as _nz_findings,
+                recover_twr_sized as _nz_twr)
+
+            _ign_p = p.trajectory.get("ignition_ambient_pa") or []
+            _ign_h = p.trajectory.get("ignition_altitude_m") or []
+            if _ign_p:
+                # Recovered from the stack, not carried alongside it. Every
+                # disconnection defect in this packet was a number reported
+                # beside the thing it described rather than derived from it.
+                _nz = _nz_check(p.stack, ignition_ambient_pa=_ign_p,
+                                ignition_altitude_m=_ign_h,
+                                twr_by_stage=_nz_twr(p.stack, args.payload_kg))
+                L.append("\n## Nozzle against its own ambient\n")
+                L.append("| stage | expansion | sized at | ignites at | "
+                         "separation limit | attached |")
+                L.append("|---|---|---|---|---|---|")
+                for _c in _nz:
+                    _lim = ("vacuum, none" if not math.isfinite(_c.eps_max)
+                            else f"{_c.eps_max:.1f}")
+                    L.append(
+                        f"| {_c.stage} | {_c.expansion_ratio:.0f} | "
+                        f"{_c.sized_at_ambient_pa/1000:.2f} kPa | "
+                        f"{_c.ignition_altitude_m/1000:.1f} km, "
+                        f"{_c.ignition_ambient_pa/1000:.2f} kPa | {_lim} | "
+                        f"**{_c.attached}** |")
+                if any(c.twr_flown is not None for c in _nz):
+                    L.append("\n| stage | thrust-to-weight asked | flown | error |")
+                    L.append("|---|---|---|---|")
+                    for _c in _nz:
+                        if _c.twr_flown is None:
+                            continue
+                        L.append(f"| {_c.stage} | {_c.twr_sized:.2f} | "
+                                 f"{_c.twr_flown:.2f} | "
+                                 f"{_c.twr_error_pct:+.1f}% |")
+                _nz_bad = _nz_findings(_nz)
+                for _f in _nz_bad:
+                    L.append(f"\n- {_f}")
+                L.append("\nThe separation limit is the same "
+                         "`separation_limited_ratio` the trajectory integrator "
+                         "uses, not a second copy of the criterion: a check that "
+                         "re-derives the physics it checks will agree with "
+                         "itself and drift from the model.\n")
+                _assembly_findings.append({
+                    "check": "nozzle sized for its ignition ambient",
+                    "passed": not _nz_bad,
+                    "detail": ("; ".join(_nz_bad) if _nz_bad else
+                               f"{len(_nz)} nozzle(s) attached at ignition, "
+                               f"each throat sized at the pressure its stage "
+                               f"lights in"),
+                    "severity": "pass" if not _nz_bad else "fail"})
+        except Exception as exc:  # noqa: BLE001
+            print(f"nozzle ambient check unavailable: {exc}", flush=True)
+
         L.append("\n## Stability\n")
         L.append("| quantity | value |")
         L.append("|---|---|")
@@ -1634,7 +1860,8 @@ def main() -> int:
         L.append("")
         L.append("| burn state | vehicle mass | centre of gravity | static margin |")
         L.append("|---|---|---|---|")
-        for (lbl, mg, m), (_, cg, _) in zip(margins, cgs):
+        for (lbl, mg, m), _bs in zip(margins, cgs):
+            cg = _bs.cg_z_m
             L.append(f"| {lbl} | {m:.1f} kg | {cg:.3f} m | {mg:.2f} cal |")
         L.append("\nFins are sized by solving for the span that meets the "
                  "margin, not assumed and then checked. The nose centre of "
@@ -1911,6 +2138,25 @@ def main() -> int:
         gross_kg=p.gross_kg, stack=p.stack, payload_kg=args.payload_kg,
         flight_vehicle_mass_kg=fv["mass_kg"], components=results,
         skin_density_kg_m3=_skin_rho, skin_material=skin_material)
+    # Mission, architecture and stability: values the packet reports that are
+    # computable from other values it reports. None was wrong when these were
+    # added, which is the state the six drifted quantities were in until
+    # something moved one side and not the other.
+    try:
+        from cadflow.packet_audit import derived_quantities as _derived
+
+        _crosses = list(_crosses) + _derived(
+            stages=p.stages, split=p.split, achieved_km=p.achieved_km,
+            target_km=args.apogee_km, error_pct=err, stability=stability,
+            # The CG the reported static margin was measured from. Checking it
+            # against the full-vehicle CG would pass on this vehicle and raise a
+            # false failure on any design whose worst case is not liftoff -- and
+            # a check that cries wolf on a correct packet is one that gets
+            # switched off, which is how a check comes to protect nothing.
+            cg_z_m=worst_cg, radius_m=flight_r)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Geometry too: do the in-line parts tile the vehicle?
     try:
         from cadflow.packet_audit import stack_interference as _interf
@@ -1942,31 +2188,21 @@ def main() -> int:
     if _consistency:
         _bad_n = sum(1 for c in _consistency if not c["ok"])
         L.append(f"\n## Packet self-consistency\n")
-        # Describe the checks that ran, not the ones remembered.
+        # Describe the checks that ran, from the categories they declare.
         #
-        # This paragraph listed three kinds of cross-check while the audit was
-        # running four: the geometry checks were added and the sentence
-        # describing them was not. That is the same drift the audit exists to
-        # catch, occurring in the prose about the audit, which is a fair
-        # indication of how easily it happens.
-        _kinds = []
-        if any("mass equals" in c["check"] for c in _consistency):
-            _kinds.append("gross mass against the stack it lists")
-        if any("coefficient" in c["check"] for c in _consistency):
-            _kinds.append("one structural coefficient across every stage")
-        if any("weighed in" in c["check"] for c in _consistency):
-            _kinds.append("each component's mass over its volume against the "
-                          "density of the alloy the design selected")
-        if any("meets" in c["check"] for c in _consistency):
-            _kinds.append("every in-line part meeting its neighbour without "
-                          "overlap or gap")
+        # This sentence has gone stale three times: written from memory, then
+        # derived by matching on check names, which did not recognise the
+        # mission and stability checks added afterwards. Each Cross now carries
+        # its own kind, so a check that exists is a check that gets described.
+        from cadflow.packet_audit import describe as _describe
+
         L.append(f"{len(_consistency) - _bad_n} of {len(_consistency)} internal "
                  f"cross-checks agree, comparing numbers the packet already "
-                 f"reports against each other: " + "; ".join(_kinds) + ". "
-                 f"Six defects in this packet were of exactly that shape and "
-                 f"every one was invisible to the tests, because each "
-                 f"individual model was right and only the connection between "
-                 f"them was wrong.\n")
+                 f"reports against each other: {_describe(_crosses)}. Six "
+                 f"defects in this packet were of exactly that shape and every "
+                 f"one was invisible to the tests, because each individual "
+                 f"model was right and only the connection between them was "
+                 f"wrong.\n")
         if _bad_n:
             L.append("| check | reported | expected |")
             L.append("|---|---|---|")

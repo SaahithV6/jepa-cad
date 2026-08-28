@@ -30,21 +30,54 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Cross:
+    """One cross-check, carrying the category it belongs to.
+
+    ``kind`` exists so the report can say what it checked without matching on
+    check names. The description of this audit has gone stale three times: once
+    written from memory, once derived by hardcoded string patterns that did not
+    recognise checks added later. A category the check declares itself cannot
+    lag, because adding a check means naming its kind.
+    """
+
     check: str
     ok: bool
     got: float
     want: float
     detail: str = ""
+    kind: str = "other"
 
     def as_dict(self) -> dict:
         return {"check": self.check, "ok": self.ok, "got": self.got,
-                "want": self.want, "detail": self.detail}
+                "want": self.want, "detail": self.detail, "kind": self.kind}
+
+
+#: Human-readable descriptions, keyed by the kind a check declares.
+KIND_DESCRIPTIONS = {
+    "mass": "gross mass against the stack it lists",
+    "coefficient": "one structural coefficient across every stage",
+    "density": "each component's mass over its volume against the density of "
+               "the alloy the design selected",
+    "geometry": "every in-line part meeting its neighbour without overlap or gap",
+    "architecture": "the stage count against the split it was built from",
+    "mission": "the apogee error against the apogee it is computed from",
+    "stability": "the normal force slope, centre of pressure and static margin "
+                 "against the stations they are measured between",
+}
+
+
+def describe(crosses) -> str:
+    """List the kinds of check that actually ran, in a stable order."""
+    seen = []
+    for c in crosses:
+        if c.kind not in seen and c.kind in KIND_DESCRIPTIONS:
+            seen.append(c.kind)
+    return "; ".join(KIND_DESCRIPTIONS[k] for k in seen)
 
 
 def _agree(label: str, got: float, want: float, tol: float,
-           detail: str = "") -> Cross:
+           detail: str = "", kind: str = "other") -> Cross:
     ok = abs(float(got) - float(want)) <= tol * max(abs(float(want)), 1e-9)
-    return Cross(label, ok, float(got), float(want), detail)
+    return Cross(label, ok, float(got), float(want), detail, kind)
 
 
 def audit(*, gross_kg: float, stack, payload_kg: float,
@@ -62,9 +95,9 @@ def audit(*, gross_kg: float, stack, payload_kg: float,
     stage_total = sum(float(s.prop_mass_kg) + float(s.struct_mass_kg)
                       for s in stack) + float(payload_kg)
     out.append(_agree("gross mass equals the stack it lists",
-                      gross_kg, stage_total, 1e-6))
+                      gross_kg, stage_total, 1e-6, kind="mass"))
     out.append(_agree("flight vehicle mass equals gross",
-                      flight_vehicle_mass_kg, gross_kg, 1e-6))
+                      flight_vehicle_mass_kg, gross_kg, 1e-6, kind="mass"))
 
     struct = sum(float(s.struct_mass_kg) for s in stack)
     prop = sum(float(s.prop_mass_kg) for s in stack)
@@ -87,7 +120,7 @@ def audit(*, gross_kg: float, stack, payload_kg: float,
         out.append(_agree("every stage shares one structural coefficient",
                           max(coeffs), min(coeffs), 1e-3,
                           "a stage out of step means the repair reached some "
-                          "and not others"))
+                          "and not others", kind="coefficient"))
 
     for rec in components:
         mp = (rec.get("mass_properties") or {}) if isinstance(rec, dict) else {}
@@ -99,7 +132,59 @@ def audit(*, gross_kg: float, stack, payload_kg: float,
                 f"{name} weighed in {skin_material}", mass / vol,
                 float(skin_density_kg_m3), 1e-3,
                 f"{mass / vol:.0f} kg/m3 against {float(skin_density_kg_m3):.0f} "
-                f"for the alloy the design selected"))
+                f"for the alloy the design selected", kind="density"))
+    return out
+
+
+def derived_quantities(*, stages: int, split, achieved_km: float,
+                       target_km: float, error_pct: float, stability: dict,
+                       cg_z_m: float, radius_m: float) -> list[Cross]:
+    """Values the packet reports that are computable from other values it reports.
+
+    Every one of these is currently correct, which is the same state the six
+    drifted quantities were in until something changed one side and not the
+    other. A cross-check earns its place by being cheap and by covering a
+    dimension the audit otherwise cannot see -- here the mission numbers, the
+    architecture counts and the stability derivatives, none of which the mass
+    and geometry checks touch.
+    """
+    out: list[Cross] = []
+    out.append(_agree("stage count matches the split it was built from",
+                      float(stages), float(len(split)), 1e-9,
+                      kind="architecture"))
+
+    if target_km > 0:
+        recomputed = abs(float(achieved_km) - float(target_km)) / float(target_km) * 100.0
+        out.append(_agree("apogee error matches the apogee it is computed from",
+                          float(error_pct), recomputed, 1e-3,
+                          f"{achieved_km:.1f} km against {target_km:.0f} requested",
+                          kind="mission"))
+
+    nose = float(stability.get("cna_nose") or 0.0)
+    fins = float(stability.get("cna_fins") or 0.0)
+    total = float(stability.get("cna_total") or 0.0)
+    if total > 0:
+        out.append(_agree("normal force slope is the sum of its parts",
+                          nose + fins, total, 1e-6, kind="stability"))
+        cp_n = stability.get("cp_nose_z_m")
+        cp_f = stability.get("cp_fins_z_m")
+        cp = stability.get("cp_z_m")
+        if None not in (cp_n, cp_f, cp) and nose + fins > 0:
+            # Centre of pressure is the slope-weighted mean of the two
+            # contributors; a cp that drifts from that is a cp belonging to
+            # different fins than the ones reported beside it.
+            weighted = (nose * float(cp_n) + fins * float(cp_f)) / (nose + fins)
+            out.append(_agree("centre of pressure is the weighted mean of its "
+                              "contributors", weighted, float(cp), 1e-4, kind="stability"))
+
+    margin = stability.get("static_margin_cal")
+    cp = stability.get("cp_z_m")
+    if margin is not None and cp is not None and radius_m > 0:
+        recomputed = (float(cg_z_m) - float(cp)) / (2.0 * float(radius_m))
+        out.append(_agree("static margin matches the stations it is measured "
+                          "between", float(margin), recomputed, 1e-3,
+                          "the fin trade moves this; a stale margin means the "
+                          "trade reached the fins and not the report", kind="stability"))
     return out
 
 
@@ -128,7 +213,8 @@ def stack_interference(parts) -> list[Cross]:
         # "these parts meet" regardless of how far up the stack they sit.
         out.append(Cross(f"{n1} meets {n2} without overlap or gap",
                          abs(end - z2) <= 1e-3, end, z2,
-                         f"{n1} ends at {end:.3f} m, {n2} starts at {z2:.3f} m"))
+                         f"{n1} ends at {end:.3f} m, {n2} starts at {z2:.3f} m",
+                         kind="geometry"))
     return out
 
 

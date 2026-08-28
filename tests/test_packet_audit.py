@@ -164,3 +164,87 @@ def test_it_catches_a_gap_as_well_as_an_overlap():
 
     gapped = [("stage 1 tank", 0.0, 2.709), ("interstage 1/2", 3.200, 0.208)]
     assert failures(stack_interference(gapped))
+
+
+def _derived(**over):
+    """The packet's own reported values, which currently all agree."""
+    base = dict(
+        stages=4, split=[0.74, 0.192, 0.050, 0.018],
+        achieved_km=4118.3, target_km=4000.0, error_pct=2.96,
+        # Read from packet_v27, not invented. The first version of this
+        # fixture guessed cp_nose_z_m and cp_fins_z_m, and the weighted-mean
+        # check duly failed -- on the fixture, not on anything real. Loosening
+        # the tolerance to make it pass would have disabled the check; the
+        # fixture was what was wrong.
+        stability={"cna_nose": 2.0, "cna_fins": 5.561450569356806,
+                   "cna_total": 7.561450569356806,
+                   "cp_nose_z_m": 3.7540558911437723,
+                   "cp_fins_z_m": 0.3609823452793225,
+                   "cp_z_m": 1.2584486487991964,
+                   "static_margin_cal": 0.9},
+        cg_z_m=1.8614, radius_m=0.335)
+    base.update(over)
+    return base
+
+
+def test_the_derived_quantities_currently_agree():
+    """Baseline. None of these is broken today, which is the point of adding
+    them: the six that drifted were all correct until something changed one
+    side and not the other."""
+    from cadflow.packet_audit import derived_quantities
+
+    assert not failures(derived_quantities(**_derived()))
+
+
+def test_it_catches_a_stage_count_that_does_not_match_its_split():
+    """The planner reported five stages for a three-stage split once already.
+
+    That was fixed at the source; nothing checks it stays fixed.
+    """
+    from cadflow.packet_audit import derived_quantities
+
+    assert failures(derived_quantities(**_derived(stages=5)))
+
+
+def test_it_catches_an_apogee_error_computed_from_a_different_apogee():
+    """A headline percentage that its own number does not support."""
+    from cadflow.packet_audit import derived_quantities
+
+    bad = failures(derived_quantities(**_derived(error_pct=0.5)))
+    assert any("apogee error" in c.check for c in bad)
+
+
+def test_it_catches_a_normal_force_slope_that_is_not_the_sum_of_its_parts():
+    """cna_total drifting from nose plus fins means one was resized and the
+    other was not -- exactly what the control trade does to fins."""
+    from cadflow.packet_audit import derived_quantities
+
+    st = dict(_derived()["stability"])
+    st["cna_fins"] = 11.69          # the pre-trade value, left behind
+    bad = failures(derived_quantities(**_derived(stability=st)))
+    assert any("sum of its parts" in c.check for c in bad)
+
+
+def test_it_catches_a_static_margin_the_trade_left_stale():
+    """The fin trade moves the margin from 1.50 to 0.90.
+
+    A reported margin still reading 1.50 while the stations say 0.90 would mean
+    the trade reached the fins and not the report -- the same shape as
+    struct_coeff_used reading a module default after the repair loop moved it.
+    """
+    from cadflow.packet_audit import derived_quantities
+
+    st = dict(_derived()["stability"])
+    st["static_margin_cal"] = 1.50
+    bad = failures(derived_quantities(**_derived(stability=st)))
+    assert any("static margin" in c.check for c in bad)
+
+
+def test_it_catches_a_centre_of_pressure_belonging_to_different_fins():
+    """cp must be the slope-weighted mean of the nose and fin contributions."""
+    from cadflow.packet_audit import derived_quantities
+
+    st = dict(_derived()["stability"])
+    st["cp_z_m"] = 0.857            # the pre-trade cp, with post-trade slopes
+    bad = failures(derived_quantities(**_derived(stability=st)))
+    assert any("weighted mean" in c.check for c in bad)

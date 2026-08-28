@@ -36,6 +36,14 @@ class Stage:
     gamma: float
     chamber_temp: float
     mol_mass: float
+    #: Ambient pressure this stage's throat was sized against, Pa.
+    #:
+    #: Carried on the stage rather than reconstructed downstream so the nozzle
+    #: check compares against what the planner actually did. The check hardcoded
+    #: sea level for one revision, which was true then and stopped being true
+    #: the moment the planner was fixed -- and it went on reporting a 27% error
+    #: against a defect that had been repaired.
+    sized_at_ambient_pa: float = 101325.0
 
 
 try:  # aeroheating is an addition, not a gate on flying a trajectory
@@ -81,6 +89,17 @@ def integrate_stack(
     # for a load it never sees.
     max_axial = 0.0
     max_axial_by_stage = [0.0] * len(stages)
+    # The altitude and ambient pressure each stage is actually lit at.
+    #
+    # The integrator has always known these and thrown them away, which is how
+    # every stage came to have its throat sized against sea-level ambient: the
+    # planner had no other pressure available to size at. An upper stage that
+    # ignites at 40 km is a vacuum engine, and sizing it at 101 kPa makes it
+    # separated by assumption -- which truncates its expansion ratio to the same
+    # effective value as every other upper stage, erasing the ladder the planner
+    # chose on purpose.
+    ignition_altitude_m = [float("nan")] * len(stages)
+    ignition_ambient_pa = [float("nan")] * len(stages)
     liftoff_thrust = 0.0
     # Peak skin temperature on the way up. The structural analysis uses
     # room-temperature allowables, and the skin does not stay at room
@@ -133,6 +152,10 @@ def integrate_stack(
         max_axial = max(max_axial, axial_g)
         if burning and idx < len(max_axial_by_stage):
             max_axial_by_stage[idx] = max(max_axial_by_stage[idx], axial_g)
+            # First step this stage burns on is its ignition condition.
+            if ignition_altitude_m[idx] != ignition_altitude_m[idx]:  # NaN
+                ignition_altitude_m[idx] = h
+                ignition_ambient_pa[idx] = p_amb
 
         dv = thrust / m - g * math.sin(fpa) - drag / m
         dfpa = -(g / v_safe - v_safe / (R_EARTH + max(h, 0.0))) * math.cos(fpa)
@@ -208,6 +231,8 @@ def integrate_stack(
         "final_mass_kg": m,
         "max_axial_g": max_axial,
         "max_axial_g_by_stage": max_axial_by_stage,
+        "ignition_altitude_m": ignition_altitude_m,
+        "ignition_ambient_pa": ignition_ambient_pa,
         "liftoff_thrust_n": liftoff_thrust,
         "max_skin_temp_k": max_skin_temp,
         "max_skin_temp_altitude_m": skin_temp_alt,

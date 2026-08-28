@@ -1,0 +1,274 @@
+"""Tank pressure, and what it costs.
+
+This subsystem was absent entirely. The barrel was sized for axial load and
+bending and checked against buckling; the mass budget carried structure and
+propellant and nothing else. Both omissions point the same way and cancel
+nothing: the vehicle was missing the helium and its bottle, and its wall had
+never been asked to carry hoop.
+
+The mass relation is checked against its own derivation rather than against a
+table, because it has one. A thin sphere at t = pR/(2 sigma) weighs
+(3/2)(rho/sigma) p V regardless of radius, and a test that only compared against
+a remembered number could not tell a correct implementation from a plausible
+one.
+"""
+
+import math
+
+import pytest
+
+from cadflow.pressurization import (
+    BOTTLE_STORAGE_PA, COLLAPSE_FACTOR, PROPELLANTS, R_HELIUM, TANK_FOS,
+    feed_system_verdict, helium_mass_kg, hoop_stress_pa,
+    pressure_fed_tank_pressure_pa, pressure_vessel_mass_kg,
+    stage_pressurisation, tank_pressure)
+
+AL = dict(density_kg_m3=2700.0, allowable_pa=280e6)
+
+
+def test_vessel_mass_is_independent_of_radius():
+    """The whole content of the relation.
+
+    t = pR/(2 sigma) makes the wall thicker as the sphere grows, and the surface
+    grows too, but the volume grows faster in exactly the way that cancels. A
+    number that moved with radius would mean the derivation was not implemented.
+    """
+    a = pressure_vessel_mass_kg(300e5, 0.05, **AL)
+    b = pressure_vessel_mass_kg(300e5, 0.05, **AL)
+    assert a == b
+    # doubling volume doubles mass, at any pressure
+    assert pressure_vessel_mass_kg(300e5, 0.10, **AL) == pytest.approx(2 * a)
+
+
+def test_vessel_mass_matches_a_hand_built_sphere():
+    """Built the long way: pick a radius, get t, weigh the shell.
+
+    Checked against first principles rather than against the closed form the
+    module uses, so an algebra slip in the closed form cannot hide.
+    """
+    p, R, sigma, rho = 300e5, 0.20, 280e6, 2700.0
+    t = p * R / (2 * sigma)
+    m_long_way = rho * 4 * math.pi * R ** 2 * t
+    V = (4.0 / 3.0) * math.pi * R ** 3
+    assert pressure_vessel_mass_kg(p, V, density_kg_m3=rho,
+                                   allowable_pa=sigma) == pytest.approx(
+        m_long_way, rel=1e-12)
+
+
+def test_a_cylinder_costs_exactly_double_a_sphere():
+    """Twice the membrane stress for the same wall, so twice the mass.
+
+    This is why pressurant bottles are spherical wherever packaging allows, and
+    the factor being exactly 2 is a check on both branches at once.
+    """
+    v = 0.08
+    sph = pressure_vessel_mass_kg(300e5, v, spherical=True, **AL)
+    cyl = pressure_vessel_mass_kg(300e5, v, spherical=False, **AL)
+    assert cyl == pytest.approx(2.0 * sph, rel=1e-12)
+
+
+def test_a_cryogen_needs_real_ullage_and_kerosene_needs_almost_none():
+    """Vapour pressure is the difference, and it is a large one.
+
+    LOX is stored at its boiling point, so its vapour pressure is an atmosphere
+    and the pump needs suction head on top of that. RP-1 at room temperature has
+    essentially none. A model that treated both alike would put unnecessary
+    helium on one tank and cavitate the other.
+    """
+    lox = tank_pressure("lox")
+    rp1 = tank_pressure("rp1")
+    assert lox.vapour_pa > 100 * rp1.vapour_pa
+    assert lox.ullage_pa > rp1.ullage_pa
+
+
+def test_ullage_is_vapour_pressure_plus_suction_head():
+    """Recomputed from the propellant, not remembered."""
+    t = tank_pressure("lox", npsh_m=20.0)
+    rho = PROPELLANTS["lox"]["density"]
+    assert t.npsh_pa == pytest.approx(rho * 9.80665 * 20.0)
+    assert t.ullage_pa == pytest.approx(101325.0 + t.npsh_pa)
+    assert t.design_pa == pytest.approx(t.ullage_pa * TANK_FOS)
+
+
+def test_acceleration_supplies_head_the_helium_then_need_not():
+    """A burning stage pressurises its own inlet.
+
+    Four g with two metres of propellant above the outlet is tens of kPa for
+    free. A design that ignores it carries helium it does not need, which is
+    mass charged against the payload for nothing.
+    """
+    still = tank_pressure("lox", npsh_m=20.0)
+    under_thrust = tank_pressure("lox", npsh_m=20.0, acceleration_g=4.0,
+                                 head_height_m=2.0)
+    assert under_thrust.ullage_pa < still.ullage_pa
+    assert "acceleration supplies" in under_thrust.note
+
+
+def test_enough_acceleration_covers_the_whole_suction_head():
+    """And the ullage falls to vapour pressure, not below it.
+
+    Below vapour pressure the propellant boils in the tank. A model that let
+    acceleration drive ullage negative would be describing a tank of gas.
+    """
+    t = tank_pressure("lox", npsh_m=20.0, acceleration_g=6.0,
+                      head_height_m=5.0)
+    assert t.ullage_pa == pytest.approx(PROPELLANTS["lox"]["vapour_pa"])
+    assert "covers the" in t.note
+
+
+def test_helium_mass_is_the_gas_law_with_the_collapse_factor():
+    m = helium_mass_kg(300_000.0, 1.5, temperature_k=250.0)
+    assert m == pytest.approx(
+        300_000.0 * 1.5 / (R_HELIUM * 250.0) * COLLAPSE_FACTOR)
+
+
+def test_storage_pressure_barely_changes_bottle_mass():
+    """It sets the bottle's size, not its weight.
+
+    p*V is fixed by the helium the tank needs, and membrane mass goes as p*V, so
+    a higher-pressure bottle is smaller rather than lighter. Worth a test because
+    the intuition runs the other way, and a reader who expected 700 bar to save
+    mass would go looking for a bug that is not there.
+    """
+    def bottle_for(storage_pa):
+        he = 2.0
+        v = he * R_HELIUM * 293.0 / storage_pa
+        return pressure_vessel_mass_kg(storage_pa * TANK_FOS, v, **AL)
+
+    assert bottle_for(700e5) == pytest.approx(bottle_for(350e5), rel=1e-9)
+
+
+def test_the_tank_pressure_reaches_the_wall_as_hoop():
+    """p r / t, and it is tension where everything else on this wall is not."""
+    assert hoop_stress_pa(500_000.0, 0.335, 0.0008) == pytest.approx(
+        500_000.0 * 0.335 / 0.0008)
+
+
+def test_a_stage_is_pressurised_and_the_cost_is_a_real_fraction():
+    """The flight vehicle in this repo: 974 kg of propellant at 335 mm.
+
+    The point of the number is that it is neither negligible nor absurd. A
+    pressurisation system that came out at 0.01% would mean the model was not
+    doing anything; one at 20% would mean it was wrong.
+    """
+    r = stage_pressurisation(stage=1, propellant_mass_kg=973.89,
+                             radius_m=0.335, wall_m=0.0008,
+                             acceleration_g=1.0, head_height_m=2.0)
+    assert r.tank_volume_m3 == pytest.approx(0.955, abs=0.05)
+    frac = r.total_kg / 973.89
+    assert 0.002 < frac < 0.06, r.as_dict()
+    assert r.helium_kg > 0 and r.bottle_kg > r.helium_kg
+
+
+def test_the_pressurisation_says_what_it_assumed():
+    """The suction head is not derived and the report has to say so.
+
+    Every other number in this module comes out of an equation. This one comes
+    out of flown practice for a pump nobody here designs, and a reader cannot
+    weigh the result without knowing which is which.
+    """
+    r = stage_pressurisation(stage=1, propellant_mass_kg=973.89,
+                             radius_m=0.335, wall_m=0.0008)
+    assert any("ASSUMED" in n for n in r.notes)
+
+
+def test_the_tank_decides_the_feed_architecture():
+    """55 bar chamber makes pressure-fed tanks absurd, and says by how much.
+
+    Not a preference and not an assertion: the membrane relation weighs both
+    options for the same volume and the ratio settles it.
+    """
+    v = feed_system_verdict(55e5, 0.955, **AL)
+    assert v["verdict"] == "pump-fed"
+    assert v["pressure_fed_tank_pa"] == pytest.approx(55e5 * 1.3)
+    assert v["ratio"] > 10.0
+    assert "decided by the tank" in v["note"]
+
+
+def test_a_low_chamber_pressure_can_go_pressure_fed():
+    """The verdict must be able to come out the other way.
+
+    A check that always returns the same answer establishes nothing about the
+    thing it checks. Small pressure-fed stages are real hardware.
+    """
+    v = feed_system_verdict(4e5, 0.05, **AL)
+    assert v["ratio"] < 3.0
+
+
+def test_an_unknown_propellant_is_refused_not_guessed():
+    with pytest.raises(KeyError, match="unknown propellant"):
+        tank_pressure("unobtainium")
+
+
+def test_zero_pressure_costs_nothing_and_zero_wall_is_refused():
+    assert pressure_vessel_mass_kg(0.0, 1.0, **AL) == 0.0
+    assert helium_mass_kg(0.0, 1.0) == 0.0
+    with pytest.raises(ValueError):
+        hoop_stress_pa(1e5, 0.3, 0.0)
+
+
+def test_the_axial_term_is_exactly_half_the_hoop():
+    """pr/2t against pr/t, which is why cylinders split lengthways.
+
+    A slip here would be invisible in a margin check -- both numbers are the
+    right order -- and would change whether the wall reads as in tension.
+    """
+    from cadflow.pressurization import wall_load_state
+
+    w = wall_load_state(pressure_pa=454_000.0, radius_m=0.335, wall_m=0.0008)
+    assert w.axial_pressure_pa == pytest.approx(0.5 * w.hoop_pa, rel=1e-12)
+
+
+def test_a_pressurised_tank_is_not_in_compression_at_flight_load():
+    """The finding: this wall may have no buckling mode to be sized against.
+
+    The packet thickens the wall for buckling under combined axial and bending
+    load. At the flight stresses it reports -- 36 MPa axial -- and the ullage
+    this module derives, the pressure term alone puts the wall in net tension.
+    A shell in tension does not go unstable.
+
+    This does not say the repair was wrong. It says the question was never
+    asked, because nothing computed the pressure.
+    """
+    from cadflow.pressurization import wall_load_state
+
+    w = wall_load_state(pressure_pa=454_000.0, radius_m=0.335, wall_m=0.0008,
+                        axial_flight_pa=-35.6e6, bending_pa=0.0)
+    assert not w.in_compression
+    assert w.net_axial_pa > 0
+
+
+def test_enough_bending_still_puts_it_into_compression():
+    """The relief is not unconditional and the check must be able to say no.
+
+    A test that only ever confirmed tension would make this a claim rather than
+    a check. Bending at max-Q is one-sided and can exceed the pressure term.
+    """
+    from cadflow.pressurization import wall_load_state
+
+    w = wall_load_state(pressure_pa=454_000.0, radius_m=0.335, wall_m=0.0008,
+                        axial_flight_pa=-35.6e6, bending_pa=-200e6)
+    assert w.in_compression
+
+
+def test_an_unpressurised_shell_is_in_compression_under_any_axial_load():
+    """The interstage. It carries the same load with no pressure to relieve it.
+
+    Which is the other half of the finding: relief belongs to the tanks, and the
+    dry structure between them has none.
+    """
+    from cadflow.pressurization import wall_load_state
+
+    w = wall_load_state(pressure_pa=0.0, radius_m=0.335, wall_m=0.0008,
+                        axial_flight_pa=-35.6e6)
+    assert w.in_compression and w.hoop_pa == 0.0
+
+
+def test_von_mises_uses_both_membrane_stresses():
+    """Hoop tension with axial tension is not the same state as hoop alone."""
+    from cadflow.pressurization import wall_load_state
+
+    w = wall_load_state(pressure_pa=454_000.0, radius_m=0.335, wall_m=0.0008)
+    s1, s2 = w.hoop_pa, w.net_axial_pa
+    assert w.von_mises_pa == pytest.approx(math.sqrt(s1*s1 - s1*s2 + s2*s2))
+    assert w.von_mises_pa < w.hoop_pa   # biaxial tension is less severe

@@ -120,9 +120,18 @@ def required_delta_v(apogee_km: float) -> float:
 
 def build_stack_n(total_prop: float, fractions: list[float], payload: float,
                   pc: float, prop: str, of_ratio: float | None = None,
-                  twr_by_stage: list[float] | None = None
+                  twr_by_stage: list[float] | None = None,
+                  ignition_ambient_pa: list[float] | None = None
                   ) -> tuple[list[Stage], float, list[tuple]]:
-    """Build an N-stage stack given the propellant split."""
+    """Build an N-stage stack given the propellant split.
+
+    ``ignition_ambient_pa`` is the ambient pressure each stage is actually lit
+    at, from a previous flight of this stack. Without it every throat is sized
+    at sea level, which is right for stage 1 and wrong for everything above it:
+    an upper stage's expansion ratio is over-expanded at 101 kPa, so the nozzle
+    model truncates it at the separation plane and returns the thrust of a
+    nozzle the stage does not have. See ``cadflow.nozzle_ambient``.
+    """
     gamma, tc, mol = chamber_properties(prop, of_ratio)
     props = [total_prop * f for f in fractions]
     structs = [p * STRUCT_COEFF / (1 - STRUCT_COEFF) for p in props]
@@ -145,15 +154,27 @@ def build_stack_n(total_prop: float, fractions: list[float], payload: float,
     # act on something.
     twr_by_stage = list(twr_by_stage or [4.5, 3.0, 2.2, 2.0])
 
+    from cadflow.nozzle_ambient import sizing_ambient_pa
+
     stages = []
     for i, (p_i, s_i) in enumerate(zip(props, structs)):
         eps = eps_by_stage[min(i, len(eps_by_stage) - 1)]
         twr = twr_by_stage[min(i, len(twr_by_stage) - 1)]
+        # Size each throat against the air its own stage lights in. Falls back
+        # to sea level only for stage 1, which is where stage 1 lights; a
+        # missing pressure for an upper stage means no trajectory has been flown
+        # yet, and vacuum is the right first guess for a stage that ignites
+        # above the atmosphere.
+        if ignition_ambient_pa is not None and i < len(ignition_ambient_pa):
+            p_size = sizing_ambient_pa(ignition_ambient_pa[i])
+        else:
+            p_size = P0 if i == 0 else 0.0
         u = nozzle_performance(chamber_pressure=pc, chamber_temp=tc,
                                expansion_ratio=eps, throat_area=1.0,
-                               gamma=gamma, mol_mass=mol, ambient_pressure=P0)
+                               gamma=gamma, mol_mass=mol,
+                               ambient_pressure=p_size)
         at = (twr * supported[i] * G0) / max(u["thrust"], 1e-9)
-        stages.append(Stage(p_i, s_i, at, pc, eps, gamma, tc, mol))
+        stages.append(Stage(p_i, s_i, at, pc, eps, gamma, tc, mol, p_size))
     return stages, gross, list(zip(props, structs))
 
 
