@@ -1701,6 +1701,32 @@ def main() -> int:
             args.out / "shell_flight_barrel",
             radius_m=flight_r, length_m=fv["length_m"], thickness_m=_t_m,
             youngs_pa=skin_e_pa, axial_n=_axial_n)
+
+        # Per-stage barrels, each sized for the load it actually carries.
+        #
+        # Not the coupon walls: those were sized at the clamped radius, and
+        # required thickness scales inversely with radius, so carrying them
+        # across means nothing. Each section is sized here from the mass it
+        # supports times peak axial acceleration, at the flight radius, and
+        # then analysed at that thickness.
+        _per_stage = []
+        for _i, _st in enumerate(p.stack):
+            _above = sum(float(x.prop_mass_kg) + float(x.struct_mass_kg)
+                         for x in p.stack[_i + 1:]) + args.payload_kg
+            _load = _above * 9.80665 * _peak_g
+            if _load <= 0:
+                continue
+            _len = max(0.3, float(_st.prop_mass_kg) / PROPELLANT_BULK_DENSITY
+                       / (math.pi * flight_r ** 2))
+            _w = size_wall(load_n=_load, radius_m=flight_r, length_m=_len,
+                           sigma_allow_pa=allowable_mpa * 1e6,
+                           yield_pa=allowable.source_strength_mpa * 1e6,
+                           modulus_pa=skin_e_pa)
+            _r = analyse_barrel(
+                args.out / f"shell_stage{_i+1}", radius_m=flight_r,
+                length_m=_len, thickness_m=_w.thickness_m,
+                youngs_pa=skin_e_pa, axial_n=_load)
+            _per_stage.append((_i + 1, _len, _w, _load, _r))
     except Exception as _sx:  # noqa: BLE001
         print(f"flight-scale shell run unavailable: "
               f"{type(_sx).__name__}: {_sx}", flush=True)
@@ -1712,12 +1738,20 @@ def main() -> int:
         _assembly_findings.append({
             "check": "flight barrel stress",
             "passed": bool(_ok),
+            # The per-stage runs belong in the verdict too, not only in the
+            # table above. The whole-vehicle barrel happens to bound them --
+            # it carries the peak load over the full length -- but leaving
+            # that implied is how a reader ends up assuming a check covers
+            # more than it does.
             "detail": (f"{_shell.elements} shell elements at "
                        f"{1000*flight_r:.0f} mm radius: "
                        f"{_shell.mean_von_mises_mpa:.1f} MPa against a "
                        f"{allowable_mpa:.0f} MPa allowable"
                        + (f", {_shell.error_pct:+.1f}% from closed form"
-                          if _shell.error_pct is not None else "")),
+                          if _shell.error_pct is not None else "")
+                       + (f"; worst of {len(_per_stage)} per-stage barrels "
+                          f"{max(r.mean_von_mises_mpa for *_x, r in _per_stage):.1f} "
+                          f"MPa" if _per_stage else "")),
             "severity": "pass" if _ok else "fail"})
         L.append("\n## Flight barrel, at flight scale\n")
         L.append("| quantity | value |")
@@ -1739,6 +1773,23 @@ def main() -> int:
                  f"few hundred elements.\n")
         for _n in _shell.notes:
             L.append(f"- {_n}")
+        if _per_stage:
+            L.append("\n| stage | length | wall | driver | axial load | "
+                     "stress | vs closed form |")
+            L.append("|---|---|---|---|---|---|---|")
+            for _n, _len, _w, _load, _r in _per_stage:
+                L.append(f"| {_n} | {_len:.2f} m | {1000*_w.thickness_m:.2f} mm | "
+                         f"{_w.driver} | {_load/1000:.0f} kN | "
+                         f"{_r.mean_von_mises_mpa:.1f} MPa | "
+                         f"{_r.error_pct:+.2f}% |")
+            _worst = max(_per_stage, key=lambda x: x[4].mean_von_mises_mpa)
+            L.append(f"\nEach barrel is sized for the mass it supports at peak "
+                     f"axial acceleration, at the flight radius -- not carried "
+                     f"over from the coupons, whose walls were sized at "
+                     f"{geo_r_mm:.0f} mm and mean nothing here. Stage "
+                     f"{_worst[0]} is worst at "
+                     f"{_worst[4].mean_von_mises_mpa:.1f} MPa against a "
+                     f"{allowable_mpa:.0f} MPa allowable.\n")
         L.append("")
     elif _ratio > 1.5:
         _assembly_findings.append({

@@ -40,6 +40,12 @@ SHELL_TYPE = "S4"
 
 DEFAULT_CCX = Path.home() / ".local" / "bin" / "ccx"
 
+#: Strain above which a linear elastic result describes nothing. Metals yield
+#: well below this, and the small-displacement assumption is gone too, so a
+#: solve implying more than this has failed regardless of how clean its output
+#: file looks.
+MAX_LINEAR_STRAIN = 0.01
+
 
 @dataclass
 class ShellResult:
@@ -201,6 +207,26 @@ def analyse_barrel(case_dir: Path, *, radius_m: float, length_m: float,
     if not vm:
         return ShellResult(len(nodes), len(elements), 0.0, 0.0, None, None,
                            False, ("FRD carried no stress block",))
+
+    # Reject a result the linear model cannot support.
+    #
+    # Under full-suite load this solve once returned 2,697 MPa where it returns
+    # 82 in isolation -- a factor of thirty-three -- and the FRD parsed
+    # perfectly, so nothing downstream could tell. A linear elastic analysis is
+    # only meaningful at small strain, and stress over modulus is a strain the
+    # result implies whether or not anyone asked for it. Above a percent the
+    # material has yielded, the geometry has moved, and both assumptions behind
+    # this solve are gone. Checking it costs one division and is independent of
+    # the closed-form comparison, so it still catches a bad run in the combined
+    # load case where there is no analytic answer to compare against.
+    implied_strain = max(vm) * 1e6 / float(youngs_pa)
+    if implied_strain > MAX_LINEAR_STRAIN:
+        return ShellResult(
+            len(nodes), len(elements), max(vm), 0.0, None, None, False,
+            (f"peak stress {max(vm):.0f} MPa implies {100*implied_strain:.1f}% "
+             f"strain, past where a linear elastic shell solution means "
+             f"anything. The solve did not converge on a usable answer even "
+             f"though the FRD parsed.",))
 
     # Closed form for whichever load case was applied alone. Combined loading
     # has no one-line answer, so no analytic column is offered rather than an

@@ -113,3 +113,34 @@ def test_a_degenerate_mesh_is_refused():
         cylinder_shell_mesh(0.0, 1.0)
     with pytest.raises(ValueError, match="too coarse"):
         cylinder_shell_mesh(0.3, 1.0, n_theta=4)
+
+
+def test_a_result_past_linear_validity_is_refused(work):
+    """Stress over modulus is a strain, whether or not anyone asked for it.
+
+    Under full-suite load this solve once returned 2,697 MPa where it returns
+    82 in isolation -- a factor of thirty-three -- and the FRD parsed cleanly,
+    so nothing downstream could tell it was garbage. A linear elastic result
+    implying more than a percent of strain describes nothing: the material has
+    yielded and the small-displacement assumption is gone.
+
+    The guard is independent of the closed-form comparison, so it still works
+    for the combined load case where there is no analytic answer to check
+    against.
+    """
+    from cadflow.shell_fea import MAX_LINEAR_STRAIN
+
+    r = analyse_barrel(work / "overload", pressure_pa=20_000_000.0, **BARREL)
+    assert not r.converged
+    assert any("linear elastic" in n for n in r.notes)
+    assert r.max_von_mises_mpa * 1e6 / BARREL["youngs_pa"] > MAX_LINEAR_STRAIN
+
+
+def test_a_normal_run_is_far_inside_linear_validity(work):
+    """The guard must not fire on the cases this module exists to run."""
+    from cadflow.shell_fea import MAX_LINEAR_STRAIN
+
+    r = analyse_barrel(work / "normal", axial_n=80_000.0, **BARREL)
+    assert r.converged
+    strain = r.max_von_mises_mpa * 1e6 / BARREL["youngs_pa"]
+    assert strain < 0.1 * MAX_LINEAR_STRAIN, strain
