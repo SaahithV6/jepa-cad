@@ -922,20 +922,46 @@ def main() -> int:
                 thermal["max_skin_temp_altitude_km"] = skin_alt
                 L.append(f"| peak skin temperature | {skin:.0f} K at "
                          f"{skin_alt:.1f} km |")
-                if skin > ALUMINIUM_SERVICE_K:
+                # Measure against the material the vehicle is made of.
+                #
+                # This compared every design to aluminium's 450 K, and then
+                # advised "a different skin material" -- which the repair loop
+                # had already chosen. On this vehicle the skin is Inconel 718,
+                # good to about 980 K, so 863 K is inside its limit and the
+                # warning was both measuring the wrong alloy and recommending a
+                # step already taken.
+                _svc = None
+                try:
+                    from cadflow.space_materials import iter_materials
+
+                    _m = next((m for m in iter_materials()
+                               if m.material_id == allowable.material_id), None)
+                    _svc = float(_m.max_service_temp_k) if _m else None
+                except Exception:  # noqa: BLE001
+                    _svc = None
+                _limit = _svc if _svc else ALUMINIUM_SERVICE_K
+                _name = allowable.material_id if _svc else "aluminium"
+                _tail = ("This is a radiation-equilibrium steady state and the "
+                         "vehicle passes through quickly, so it is an upper "
+                         "bound rather than what the structure actually "
+                         "reaches.")
+                if skin > _limit:
                     L.append(f"\n> The skin reaches {skin:.0f} K, past the "
-                             f"{ALUMINIUM_SERVICE_K:.0f} K at which aluminium "
-                             f"keeps useful strength. Every allowable in the "
-                             f"component table below is a room-temperature "
-                             f"value, so those margins do not hold at this "
-                             f"condition: the vehicle needs a thermal "
-                             f"protection system, a different skin material, or "
-                             f"a trajectory that spends less time fast in thick "
-                             f"air. This is a radiation-equilibrium steady "
-                             f"state and the vehicle passes through quickly, so "
-                             f"it is an upper bound rather than what the "
-                             f"structure actually reaches -- but it is far "
-                             f"enough past the limit to matter.")
+                             f"{_limit:.0f} K service limit of {_name}, which "
+                             f"is what this design selected. The vehicle needs "
+                             f"thermal protection or a trajectory that spends "
+                             f"less time fast in thick air; no catalogued alloy "
+                             f"is left to upgrade to. {_tail}")
+                elif skin > ALUMINIUM_SERVICE_K:
+                    L.append(f"\n> The skin reaches {skin:.0f} K. That is "
+                             f"inside the {_limit:.0f} K service limit of "
+                             f"{_name} -- the repair loop selected that alloy "
+                             f"for this reason, having started from aluminium, "
+                             f"which stops being useful at "
+                             f"{ALUMINIUM_SERVICE_K:.0f} K. The margins below "
+                             f"still use a room-temperature allowable, so they "
+                             f"are optimistic by an amount the catalogue has no "
+                             f"data to quantify. {_tail}")
             if not cool["feasible"]:
                 L.append(f"\n> The fuel flow cannot carry this heat load. The "
                          f"engine needs film cooling, an ablative liner, or a "
