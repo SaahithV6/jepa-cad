@@ -114,3 +114,24 @@ def test_the_old_constant_is_gone_from_the_verification_path():
     import scripts.plan_and_verify as pv
 
     assert not hasattr(pv, "ALLOWABLE_MPA")
+
+
+def test_the_hot_caveat_is_useless_unless_the_temperature_is_passed():
+    """The caveat existed for a whole session and never once fired.
+
+    plan_and_verify computed its allowable before the trajectory existed, so it
+    defaulted to room temperature, and the warning below could not trigger --
+    while the thermal section two pages later said the skin reaches 863 K and
+    that "every allowable in the component table below is a room-temperature
+    value". Two parts of the packet each knew, and neither told the other.
+
+    This pins the mechanism rather than the call site: a default-temperature
+    allowable is silent, and a hot one is not.
+    """
+    cold = design_allowable("inconel-718")
+    hot = design_allowable("inconel-718", temperature_k=863.0)
+    assert len(hot.caveats) > len(cold.caveats)
+    assert any("863 K" in c for c in hot.caveats)
+    # and the number itself is unchanged, because no data supports knocking it
+    # down -- an invented reduction would look computed
+    assert hot.allowable_mpa == pytest.approx(cold.allowable_mpa, rel=1e-12)

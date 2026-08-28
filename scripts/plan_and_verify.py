@@ -369,6 +369,17 @@ def main() -> int:
     try:
         from cadflow.allowables import design_allowable, elastic_properties
 
+        # At the temperature the skin actually reaches, not at room
+        # temperature.
+        #
+        # The thermal section already says the skin hits 863 K and warns that
+        # "every allowable in the component table below is a room-temperature
+        # value". The allowables module already has a caveat that fires above
+        # room temperature. Neither was connected to the other: this call
+        # passed no temperature, so the default of 295 K meant the caveat could
+        # never fire and every margin in the packet was quoted as though the
+        # structure were cold. The information was present in two places and
+        # absent from the one that mattered.
         allowable = design_allowable(skin_material)
         skin_e_pa, skin_nu = elastic_properties(skin_material)
     except (KeyError, ValueError) as exc:
@@ -411,6 +422,32 @@ def main() -> int:
         print(f"# Design packet\n\n**Specification:** {spec}\n")
         print("No architecture up to 3 stages closes this mission.")
         return 1
+
+    # Re-derive the allowable at the temperature the skin actually reaches.
+    #
+    # The thermal section says the skin hits several hundred kelvin and warns
+    # that "every allowable in the component table below is a room-temperature
+    # value". The allowables module has a caveat that fires above room
+    # temperature. Neither was connected: the first call above runs before the
+    # trajectory exists, so it defaulted to 295 K, the caveat could never fire,
+    # and every margin in the packet was quoted as though the structure were
+    # cold. The information was present in two places and absent from the one
+    # that reports it.
+    #
+    # The number is not knocked down, because the catalogue carries no
+    # yield-versus-temperature data and an invented knockdown would look
+    # computed. It is flagged instead, and the flag travels with every margin.
+    _skin_k = float(p.trajectory.get("max_skin_temp_k") or 0.0)
+    if _skin_k > 0:
+        try:
+            allowable = design_allowable(skin_material, temperature_k=_skin_k)
+            allowable_mpa = allowable.allowable_mpa
+            if len(allowable.caveats) > 1:
+                print(f"allowable re-derived at {_skin_k:.0f} K skin "
+                      f"temperature: {len(allowable.caveats)} caveats",
+                      flush=True)
+        except (KeyError, ValueError):
+            pass
 
     # The CAD radius is clamped so parts stay meshable; the flight vehicle's
     # radius is what the trajectory actually used. Keeping both, and keeping
