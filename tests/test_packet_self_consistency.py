@@ -150,3 +150,42 @@ def test_every_finding_carries_a_known_severity(packet):
     """An unrecognised severity would render as FAIL and hide its own meaning."""
     for f in packet.get("assembly_findings", []):
         assert f.get("severity") in {"pass", "fail", "unverified"}, f
+
+
+def test_the_mass_closure_verdict_reaches_the_findings(packet):
+    """"The vehicle cannot contain itself" must not be prose only.
+
+    That is as strong a statement as this packet makes, and for several
+    revisions it reached the markdown and stopped: not assembly_findings, not
+    all_passed, not this file. Every downstream consumer -- including the model
+    this project trains -- would have read a clean pass on a vehicle too heavy
+    to exist.
+
+    It is the same defect this file already covers for the assembly findings,
+    recurring in the one section that decides whether the design is real, which
+    is why the rule has to be checked rather than remembered.
+    """
+    findings = packet.get("assembly_findings", [])
+    if not findings:
+        pytest.skip("packet has no assembly findings")
+    if not (packet.get("assembly") or {}).get("summary"):
+        pytest.skip("no assembly was built, so no closure was computed")
+    names = [f["check"] for f in findings]
+    assert any("mass budget" in n for n in names), (
+        f"no mass-closure finding among {names}; the closure verdict is "
+        f"reaching the report and not the record")
+
+
+def test_pressurisation_mass_is_charged_where_it_is_reported(packet):
+    """The helium is counted in the same arithmetic that judges the budget.
+
+    Reporting a shortfall in one section while the closure beside it omits the
+    same number is the disconnection shape this whole file exists for.
+    """
+    findings = {f["check"]: f for f in packet.get("assembly_findings", [])}
+    closure = next((f for k, f in findings.items() if "mass budget" in k), None)
+    wall = next((f for k, f in findings.items() if "tank wall" in k), None)
+    if closure is None or wall is None:
+        pytest.skip("packet predates the split pressurisation findings")
+    assert "pressurisation" in closure["detail"], (
+        "the closure does not show the pressurisation mass it was charged")

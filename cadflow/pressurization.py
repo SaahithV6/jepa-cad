@@ -134,19 +134,23 @@ class Pressurisation:
     ullage_pa: float
     helium_kg: float
     bottle_kg: float
+    #: Tank end closures. Not an extra: the axial relief wall_load_state
+    #: credits is pr/2t, which a tank only has because it has ends.
+    dome_kg: float = 0.0
     #: Hoop stress the ullage pressure puts in the tank wall, Pa
-    hoop_pa: float
+    hoop_pa: float = 0.0
     tanks: list[TankPressure] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
     @property
     def total_kg(self) -> float:
-        return self.helium_kg + self.bottle_kg
+        return self.helium_kg + self.bottle_kg + self.dome_kg
 
     def as_dict(self) -> dict:
         return {"stage": self.stage, "tank_volume_m3": self.tank_volume_m3,
                 "ullage_pa": self.ullage_pa, "helium_kg": self.helium_kg,
-                "bottle_kg": self.bottle_kg, "total_kg": self.total_kg,
+                "bottle_kg": self.bottle_kg, "dome_kg": self.dome_kg,
+                "total_kg": self.total_kg,
                 "hoop_pa": self.hoop_pa,
                 "tanks": [t.as_dict() for t in self.tanks],
                 "notes": list(self.notes)}
@@ -248,7 +252,9 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
                          bottle_allowable_pa: float = 620e6,
                          acceleration_g: float = 0.0,
                          head_height_m: float = 0.0,
-                         npsh_m: float = NPSH_REQUIRED_M) -> Pressurisation:
+                         npsh_m: float = NPSH_REQUIRED_M,
+                         wall_density_kg_m3: float = 8190.0,
+                         wall_allowable_pa: float = 700e6) -> Pressurisation:
     """Everything one stage's pressurisation costs.
 
     Bottle defaults are Ti-6Al-4V at a 620 MPa design allowable, which is a
@@ -290,12 +296,23 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
     worst = max(t_ox, t_fuel, key=lambda t: t.ullage_pa)
     hoop = hoop_stress_pa(worst.design_pa, radius_m, wall_m)
 
+    # The ends, without which there is no axial relief to credit. Two tanks per
+    # stage, two domes each -- oxidiser and fuel are separate vessels.
+    dome = dome_mass_kg(pressure_pa=worst.design_pa, radius_m=radius_m,
+                        density_kg_m3=wall_density_kg_m3,
+                        allowable_pa=wall_allowable_pa, domes=4)
+
     notes = [
         f"tanks sized by volume: {v_ox:.3f} m3 {ox['name']} + "
         f"{v_fuel:.3f} m3 {fuel['name']} at O/F {of_ratio:.2f}",
         f"helium is {he:.2f} kg in a {bottle:.2f} kg bottle, "
         f"{100*(he+bottle)/max(propellant_mass_kg, 1e-9):.2f}% of the "
         f"propellant it pressurises",
+        f"tank ends are {dome['mass_kg']:.2f} kg across {dome['domes']} domes at "
+        f"{1000*dome['thickness_used_m']:.2f} mm"
+        + (f", set by minimum gauge rather than by pressure -- the membrane "
+           f"requirement is only {1000*dome['thickness_membrane_m']:.3f} mm"
+           if dome["gauge_limited"] else ", membrane-limited"),
         f"net positive suction head of {npsh_m:.0f} m is ASSUMED from flown "
         f"practice, not derived -- this project designs no pump",
     ]
@@ -304,7 +321,8 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
 
     return Pressurisation(stage=stage, tank_volume_m3=volume,
                           ullage_pa=worst.ullage_pa, helium_kg=he,
-                          bottle_kg=bottle, hoop_pa=hoop,
+                          bottle_kg=bottle, dome_kg=dome["mass_kg"],
+                         hoop_pa=hoop,
                           tanks=[t_ox, t_fuel], notes=notes)
 
 
@@ -423,3 +441,106 @@ def wall_load_state(*, pressure_pa: float, radius_m: float, wall_m: float,
         axial_pressure_pa=pressure_pa * radius_m / (2.0 * wall_m),
         axial_flight_pa=float(axial_flight_pa),
         bending_pa=float(bending_pa))
+
+
+#: Minimum gauge a tank dome is actually built at, m.
+#:
+#: The membrane relation puts a dome at this vehicle's pressure and radius at
+#: 0.11 mm, which is not a thing anyone welds. Real domes are set by handling,
+#: weld lands, manhole reinforcement and forming, not by the pressure they hold,
+#: and a millimetre is the thin end of what flies. Stated as a floor rather than
+#: folded in silently, because the membrane number is the derivable one and this
+#: is not.
+DOME_MIN_GAUGE_M = 0.001
+
+
+def dome_mass_kg(*, pressure_pa: float, radius_m: float,
+                 density_kg_m3: float, allowable_pa: float,
+                 min_gauge_m: float = DOME_MIN_GAUGE_M,
+                 domes: int = 2) -> dict:
+    """Mass of the tank end closures, which this module had been assuming free.
+
+    ``wall_load_state`` credits the tank wall with pr/2t of axial tension, and
+    that credit is what puts the wall in net tension with no compressive
+    buckling mode. It is entirely real -- and it exists only because the tank
+    has ends. The packet's own mass closure lists "tank domes" among the things
+    the geometry does not draw, so the relief was being taken without the part
+    that provides it ever being weighed.
+
+    Taking a structural credit and not paying its mass is the overclaim
+    direction. Both halves belong in the same place.
+
+    A hemisphere is 2 pi R^2 of surface at t = pR/(2 sigma), so the membrane
+    mass is rho pi p R^3 / sigma -- the same relation as the pressurant bottle,
+    since a dome *is* half a pressure vessel.
+    """
+    t_membrane = pressure_pa * radius_m / (2.0 * allowable_pa)
+    t = max(t_membrane, float(min_gauge_m))
+    area = 2.0 * math.pi * radius_m ** 2
+    each = density_kg_m3 * area * t
+    return {
+        "thickness_membrane_m": t_membrane,
+        "thickness_used_m": t,
+        "gauge_limited": t > t_membrane + 1e-12,
+        "mass_each_kg": each,
+        "domes": int(domes),
+        "mass_kg": each * int(domes),
+    }
+
+
+def _break_even_gauge(pr, allowance_kg: float) -> float:
+    """The dome gauge at which a stage would just afford its own tankage.
+
+    The infeasibility verdict rests on DOME_MIN_GAUGE_M, which is an assumption
+    about welding and handling rather than a derived quantity. A finding that
+    depends on one constant has to say what that constant would have to be for
+    the finding to go away -- otherwise it is reporting the assumption rather
+    than the vehicle.
+
+    Dome mass is linear in thickness once gauge-limited, so this inverts
+    directly. Returns 0.0 when even a zero-thickness dome would not fit, which
+    means the helium and bottle alone exceed the allowance.
+    """
+    fixed = float(pr.helium_kg) + float(pr.bottle_kg)
+    spare = float(allowance_kg) - fixed
+    if spare <= 0 or pr.dome_kg <= 0:
+        return 0.0
+    return DOME_MIN_GAUGE_M * spare / float(pr.dome_kg)
+
+
+def stage_feasibility(stages, pressurisations) -> list[dict]:
+    """Can each stage afford the tankage it needs?
+
+    A structural coefficient is a fraction, so it scales a stage's structure
+    with its propellant. Minimum gauge does not scale with anything. Below some
+    size the two cross, and the stage's tank ends alone cost more than its whole
+    structural allowance -- which is why flown structural coefficients get
+    *worse* for small stages rather than staying flat, and why the flown range
+    this project compares against spans 0.036 to 0.118 instead of one number.
+
+    This is the check that catches an architecture the mass fractions permit and
+    physics does not. Nothing else in the packet can see it: every other
+    structural check asks whether a wall carries its load, and this one asks
+    whether the stage can pay for the wall at all.
+    """
+    out = []
+    for st, pr in zip(stages, pressurisations):
+        allowance = float(st.struct_mass_kg)
+        needed = float(pr.total_kg)
+        out.append({
+            "stage": pr.stage,
+            "struct_allowance_kg": allowance,
+            "pressurisation_kg": needed,
+            "dome_kg": pr.dome_kg,
+            "fraction_of_allowance": needed / max(allowance, 1e-9),
+            "feasible": needed < allowance,
+            "break_even_gauge_m": _break_even_gauge(pr, allowance),
+            "note": (
+                f"stage {pr.stage} needs {needed:.1f} kg of tankage against a "
+                f"{allowance:.1f} kg structural allowance"
+                + ("" if needed < allowance else
+                   f" -- its tank ends alone are {pr.dome_kg:.1f} kg, so this "
+                   f"stage cannot pay for its own pressure vessel before any "
+                   f"skin, plumbing or avionics")),
+        })
+    return out

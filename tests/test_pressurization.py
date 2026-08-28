@@ -304,3 +304,129 @@ def test_pressurisation_can_be_what_breaks_the_closure():
     asm = VehicleAssembly()
     assert mass_closure(asm, 10.0, pressurisation_kg=5.0)["closes"]
     assert not mass_closure(asm, 10.0, pressurisation_kg=15.0)["closes"]
+
+
+def _press_stack():
+    """The four-stage vehicle, tanks sized at each stage's own radius."""
+    from cadflow.pressurization import stage_pressurisation
+
+    radii = [0.338, 0.311, 0.286, 0.263]
+    props = [1006.6, 261.7, 68.0, 23.9]
+    return [stage_pressurisation(stage=i + 1, propellant_mass_kg=m,
+                                 radius_m=r, wall_m=0.0008,
+                                 acceleration_g=1.0, head_height_m=1.1)
+            for i, (m, r) in enumerate(zip(props, radii))]
+
+
+def test_the_domes_are_charged_because_their_relief_is_credited():
+    """The loop this module opened, closed.
+
+    wall_load_state credits pr/2t of axial tension, and that credit is what
+    puts the wall in net tension with no compressive buckling mode. It exists
+    only because the tank has ends -- and the packet's own mass closure lists
+    tank domes among the things the geometry does not draw. Taking the credit
+    without weighing the part is the overclaim direction.
+    """
+    r = _press_stack()[0]
+    assert r.dome_kg > 0
+    assert r.total_kg == pytest.approx(r.helium_kg + r.bottle_kg + r.dome_kg)
+
+
+def test_the_domes_are_set_by_gauge_not_by_pressure():
+    """Which is the whole reason they weigh what they do.
+
+    At this radius and ullage the membrane requirement is about a tenth of a
+    millimetre. Nobody welds that. The mass is set by what can be built, and a
+    model that reported the membrane number would understate the tank ends
+    ninefold.
+    """
+    from cadflow.pressurization import DOME_MIN_GAUGE_M, dome_mass_kg
+
+    d = dome_mass_kg(pressure_pa=454e3, radius_m=0.338,
+                     density_kg_m3=8190.0, allowable_pa=700e6)
+    assert d["gauge_limited"]
+    assert d["thickness_membrane_m"] < 0.2e-3
+    assert d["thickness_used_m"] == pytest.approx(DOME_MIN_GAUGE_M)
+
+
+def test_a_high_pressure_dome_is_membrane_limited_instead():
+    """The gauge floor must not swallow cases where pressure genuinely governs.
+
+    A floor that always wins is not a floor, it is a constant, and it would
+    make dome mass independent of the pressure it holds.
+    """
+    from cadflow.pressurization import dome_mass_kg
+
+    d = dome_mass_kg(pressure_pa=200e5, radius_m=0.338,
+                     density_kg_m3=8190.0, allowable_pa=700e6)
+    assert not d["gauge_limited"]
+    assert d["thickness_used_m"] == pytest.approx(d["thickness_membrane_m"])
+
+
+def test_the_smallest_stage_cannot_afford_its_own_tankage():
+    """An architecture the mass fractions permit and physics does not.
+
+    A structural coefficient is a fraction, so structure scales with
+    propellant. Minimum gauge scales with nothing. Below some size they cross,
+    and this vehicle's fourth stage needs 175% of its whole structural
+    allowance for tankage alone -- which is why flown structural coefficients
+    get worse for small stages rather than staying flat.
+    """
+    from cadflow.pressurization import stage_feasibility
+
+    class S:
+        def __init__(s, pm, sm):
+            s.prop_mass_kg, s.struct_mass_kg = pm, sm
+
+    stack = [S(1006.6, 349.5), S(261.7, 90.9), S(68.0, 23.6), S(23.9, 8.3)]
+    rows = stage_feasibility(stack, _press_stack())
+    assert [r["feasible"] for r in rows] == [True, True, True, False]
+    # and the trend is monotone, which is the physical claim
+    fracs = [r["fraction_of_allowance"] for r in rows]
+    assert fracs == sorted(fracs)
+
+
+def test_the_verdict_says_what_would_overturn_it():
+    """It rests on an assumed gauge, so it has to report the sensitivity.
+
+    A finding that depends on one constant and does not say what that constant
+    would have to be is reporting the assumption rather than the vehicle. Stage
+    4 needs 0.57 mm domes to fit; stage 3 clears the assumed 1.0 mm by only 36%.
+    """
+    from cadflow.pressurization import stage_feasibility
+
+    class S:
+        def __init__(s, pm, sm):
+            s.prop_mass_kg, s.struct_mass_kg = pm, sm
+
+    stack = [S(1006.6, 349.5), S(261.7, 90.9), S(68.0, 23.6), S(23.9, 8.3)]
+    rows = stage_feasibility(stack, _press_stack())
+    assert rows[3]["break_even_gauge_m"] == pytest.approx(0.57e-3, abs=0.05e-3)
+    assert rows[2]["break_even_gauge_m"] == pytest.approx(1.36e-3, abs=0.1e-3)
+    # a feasible stage's break-even is above the assumed gauge, by definition
+    from cadflow.pressurization import DOME_MIN_GAUGE_M
+    for r in rows:
+        if r["feasible"]:
+            assert r["break_even_gauge_m"] > DOME_MIN_GAUGE_M
+
+
+def test_a_stage_that_cannot_fit_even_a_zero_thickness_dome_reports_zero():
+    """The degenerate end, where helium and bottle alone exceed the allowance.
+
+    Inverting the linear relation would otherwise return a negative thickness,
+    which is not a gauge anybody can be asked to weld.
+    """
+    from cadflow.pressurization import stage_feasibility
+
+    class S:
+        def __init__(s, pm, sm):
+            s.prop_mass_kg, s.struct_mass_kg = pm, sm
+
+    # Below the helium and bottle themselves (0.24 kg for this stage), so no
+    # dome thickness at all makes it fit. 0.5 kg was the first attempt and is
+    # not degenerate -- it leaves 0.26 kg of room and yields a real, if absurd,
+    # 0.018 mm gauge. The fixture was what was wrong.
+    tiny = [S(23.9, 0.1)]
+    rows = stage_feasibility(tiny, [_press_stack()[3]])
+    assert rows[0]["break_even_gauge_m"] == 0.0
+    assert not rows[0]["feasible"]

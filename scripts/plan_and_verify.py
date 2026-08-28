@@ -1339,13 +1339,25 @@ def main() -> int:
                     feed_system_verdict as _feed, stage_pressurisation as _press,
                     wall_load_state as _wall_state)
 
+                from cadflow.assembly import TAPER_PER_STAGE as _tap
+
                 _tank_h = fv["length_m"] / max(1, len(p.stack))
+                # Each stage at its own radius, not the base radius four times.
+                #
+                # Dome mass goes as R^2 at fixed gauge, so using flight_r for a
+                # stage drawn at 0.78 of it overstates its tank ends by two
+                # thirds -- and the affordability verdict below turns on exactly
+                # that number. The taper is the one the CAD draws with.
+                _press_radii = [flight_r * (_tap ** _i)
+                                for _i in range(len(p.stack))]
                 _press_rows = []
                 for _i, _s in enumerate(p.stack, 1):
                     _press_rows.append(_press(
                         stage=_i, propellant_mass_kg=float(_s.prop_mass_kg),
-                        radius_m=flight_r, wall_m=_t_m,
-                        acceleration_g=1.0, head_height_m=_tank_h))
+                        radius_m=_press_radii[_i - 1], wall_m=_t_m,
+                        acceleration_g=1.0, head_height_m=_tank_h,
+                        wall_density_kg_m3=_skin_rho,
+                        wall_allowable_pa=allowable_mpa * 1e6))
                 _press_total = sum(r.total_kg for r in _press_rows)
                 _press_total_kg = _press_total
                 _ws = _wall_state(
@@ -1356,12 +1368,13 @@ def main() -> int:
 
                 L.append("\n## Tank pressurisation\n")
                 L.append("| stage | tank volume | ullage | helium | bottle | "
-                         "total |")
-                L.append("|---|---|---|---|---|---|")
+                         "domes | total |")
+                L.append("|---|---|---|---|---|---|---|")
                 for _r in _press_rows:
                     L.append(f"| {_r.stage} | {_r.tank_volume_m3:.3f} m3 | "
                              f"{_r.ullage_pa/1000:.0f} kPa | "
                              f"{_r.helium_kg:.2f} kg | {_r.bottle_kg:.2f} kg | "
+                             f"{_r.dome_kg:.2f} kg | "
                              f"**{_r.total_kg:.2f} kg** |")
                 L.append(f"\nThat is **{_press_total:.1f} kg** the mass budget "
                          f"above does not carry, {100*_press_total/p.gross_kg:.2f}% "
@@ -1428,16 +1441,78 @@ def main() -> int:
                             allowable_pa=allowable_mpa * 1e6)
                 L.append(f"\n- {_fv['note']}\n")
 
+                # Two questions, and only one of them is answerable here.
+                #
+                # Whether the wall carries the pressure is settled by the
+                # numbers above. Whether the vehicle can afford the helium is a
+                # mass-budget question, and the budget is not computed until the
+                # assembly section far below -- so this finding used to answer
+                # it anyway, by asserting the mass was missing. It is now
+                # charged to the closure and the closure reports its own
+                # verdict, which means neither finding has to guess at what the
+                # other concluded.
                 _press_ok = _ws.von_mises_pa / 1e6 <= allowable_mpa
                 _assembly_findings.append({
-                    "check": "tank pressurisation",
+                    "check": "tank wall under pressure",
                     "passed": bool(_press_ok),
-                    "detail": (f"{_press_total:.1f} kg of helium and bottles "
-                               f"not in the mass budget; hoop "
-                               f"{_ws.hoop_pa/1e6:.0f} MPa, von Mises "
+                    "detail": (f"hoop {_ws.hoop_pa/1e6:.0f} MPa, von Mises "
                                f"{_ws.von_mises_pa/1e6:.0f} MPa against "
-                               f"{allowable_mpa:.0f} allowable"),
-                    "severity": "unverified" if _press_ok else "fail"})
+                               f"{allowable_mpa:.0f} allowable; net axial "
+                               f"{_ws.net_axial_pa/1e6:+.0f} MPa so the wall is "
+                               f"{'in compression' if _ws.in_compression else 'in tension'}; "
+                               f"{_press_total:.1f} kg of helium and bottles "
+                               f"charged to the mass closure below"),
+                    "severity": "pass" if _press_ok else "fail"})
+
+                # Can each stage afford the tank it needs?
+                #
+                # A structural coefficient is a fraction, so structure scales
+                # with propellant. Minimum gauge scales with nothing. Below some
+                # size the two cross and a stage's tank ends alone cost more
+                # than its entire structural allowance. That is why flown
+                # structural coefficients get *worse* for small stages rather
+                # than staying flat, and it is invisible to every other check
+                # here: they all ask whether a wall carries its load, and this
+                # asks whether the stage can pay for the wall at all.
+                from cadflow.pressurization import (
+                    DOME_MIN_GAUGE_M as _gauge, stage_feasibility as _feas)
+
+                _fz = _feas(p.stack, _press_rows)
+                L.append("\n| stage | structural allowance | tankage needed | "
+                         "share | break-even dome gauge | affordable |")
+                L.append("|---|---|---|---|---|---|")
+                for _f in _fz:
+                    L.append(
+                        f"| {_f['stage']} | {_f['struct_allowance_kg']:.1f} kg | "
+                        f"{_f['pressurisation_kg']:.1f} kg | "
+                        f"**{100*_f['fraction_of_allowance']:.0f}%** | "
+                        f"{1000*_f['break_even_gauge_m']:.2f} mm | "
+                        f"**{_f['feasible']}** |")
+                _fz_bad = [f for f in _fz if not f["feasible"]]
+                for _f in _fz_bad:
+                    L.append(f"\n- {_f['note']}")
+                L.append(
+                    f"\nThe verdict rests on a {1000*_gauge:.2f} mm minimum "
+                    f"dome gauge, which is an assumption about welding and "
+                    f"handling rather than a derived quantity -- the membrane "
+                    f"requirement at this pressure is under a fifth of a "
+                    f"millimetre. The break-even column is what that gauge "
+                    f"would have to be for each stage to fit, so a reader can "
+                    f"weigh the finding against the assumption instead of "
+                    f"taking it on trust.\n")
+                _assembly_findings.append({
+                    "check": "each stage can afford its own tankage",
+                    "passed": not _fz_bad,
+                    "detail": ("; ".join(
+                        f"stage {f['stage']} needs "
+                        f"{100*f['fraction_of_allowance']:.0f}% of its "
+                        f"allowance, break-even gauge "
+                        f"{1000*f['break_even_gauge_m']:.2f} mm"
+                        for f in _fz_bad) if _fz_bad else
+                        f"worst stage uses "
+                        f"{100*max(f['fraction_of_allowance'] for f in _fz):.0f}% "
+                        f"of its structural allowance for tankage"),
+                    "severity": "pass" if not _fz_bad else "fail"})
             except Exception as _exc:  # noqa: BLE001
                 print(f"pressurisation unavailable: {_exc}", flush=True)
 
@@ -2063,6 +2138,28 @@ def main() -> int:
                          f"left for plumbing, avionics, tank domes and "
                          f"separation hardware -- none of which the geometry "
                          f"draws.")
+
+            # The closure verdict was prose only.
+            #
+            # "The vehicle cannot contain itself" is as strong a statement as
+            # this packet makes, and it reached the markdown and stopped there:
+            # not assembly_findings, not all_passed, not PACKET.json. Every
+            # downstream consumer -- including the model this project trains --
+            # would have read a clean pass on a vehicle too heavy to exist.
+            # That is the exact defect tests/test_packet_self_consistency.py
+            # was written for, sitting unnoticed in the section that decides
+            # whether the design is real.
+            _assembly_findings.append({
+                "check": "mass budget holds the vehicle",
+                "passed": bool(closure["closes"]),
+                "detail": (
+                    f"skin as drawn {closure['skin_kg']:.1f} kg + engine "
+                    f"{closure['engine_kg']:.1f} kg + pressurisation "
+                    f"{closure['pressurisation_kg']:.1f} kg = "
+                    f"{closure['accounted_kg']:.1f} kg against a "
+                    f"{closure['budget_kg']:.1f} kg budget, slack "
+                    f"{closure['slack_kg']:+.1f} kg"),
+                "severity": "pass" if closure["closes"] else "fail"})
         except Exception as exc:  # noqa: BLE001 - assembly is an addition
             print(f"assembly unavailable: {exc}", flush=True)
 
