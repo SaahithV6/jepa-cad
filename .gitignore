@@ -65,3 +65,7 @@ data/drag_corpus/_cases/
 # produce are the results and are kept.
 artifacts/verification/packet_*/components/
 artifacts/verification/packet_*/vehicle/
+
+# Shell-element working directory inside a packet. The barrel deck and its FRD
+# are regenerated in under a second; the result is in PACKET.md and PACKET.json.
+artifacts/verification/packet_*/shell_flight_barrel/

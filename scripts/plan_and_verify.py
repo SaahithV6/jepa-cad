@@ -1680,8 +1680,67 @@ def main() -> int:
     # does not scale with a coupon, so those runs establish that representative
     # sections survive representative loads -- worth having, and not the same
     # claim.
+    # Analyse the flight barrel itself, at flight scale.
+    #
+    # The coupons cannot do this: resolving a 0.8 mm wall with solid
+    # tetrahedra needs quarter-millimetre elements, and a 4.4 m tank at 335 mm
+    # radius then wants about two billion of them against a budget of forty
+    # thousand. That is why the radius was clamped. Shell elements carry
+    # thickness as a property instead of meshing through it, so the same
+    # barrel is a few hundred elements and solves in under a second.
+    # The wall, modulus and axial load all come from the flight-loads block
+    # above, which is wrapped in its own try. If that did not run these names
+    # do not exist, and NameError is caught alongside everything else rather
+    # than being special-cased -- the outcome is the same either way: no
+    # flight-scale run, so the coupon caveat stands.
+    _shell = None
+    try:
+        from cadflow.shell_fea import analyse_barrel
+
+        _shell = analyse_barrel(
+            args.out / "shell_flight_barrel",
+            radius_m=flight_r, length_m=fv["length_m"], thickness_m=_t_m,
+            youngs_pa=skin_e_pa, axial_n=_axial_n)
+    except Exception as _sx:  # noqa: BLE001
+        print(f"flight-scale shell run unavailable: "
+              f"{type(_sx).__name__}: {_sx}", flush=True)
+        _shell = None
+
     _ratio = (flight_r / (geo_r_mm / 1000.0)) if geo_r_mm else 1.0
-    if _ratio > 1.5:
+    if _shell is not None and _shell.converged:
+        _ok = _shell.mean_von_mises_mpa <= allowable_mpa
+        _assembly_findings.append({
+            "check": "flight barrel stress",
+            "passed": bool(_ok),
+            "detail": (f"{_shell.elements} shell elements at "
+                       f"{1000*flight_r:.0f} mm radius: "
+                       f"{_shell.mean_von_mises_mpa:.1f} MPa against a "
+                       f"{allowable_mpa:.0f} MPa allowable"
+                       + (f", {_shell.error_pct:+.1f}% from closed form"
+                          if _shell.error_pct is not None else "")),
+            "severity": "pass" if _ok else "fail"})
+        L.append("\n## Flight barrel, at flight scale\n")
+        L.append("| quantity | value |")
+        L.append("|---|---|")
+        L.append(f"| mesh | {_shell.elements} shell elements, "
+                 f"{_shell.nodes} nodes |")
+        L.append(f"| membrane stress | {_shell.mean_von_mises_mpa:.2f} MPa |")
+        if _shell.analytic_mpa is not None:
+            L.append(f"| closed form | {_shell.analytic_mpa:.2f} MPa "
+                     f"({_shell.error_pct:+.2f}%) |")
+        L.append(f"| peak, at the clamped end | "
+                 f"{_shell.max_von_mises_mpa:.2f} MPa |")
+        L.append(f"\nThis is the flight barrel, not a coupon. The component "
+                 f"table above analyses parts at {geo_r_mm:.0f} mm radius "
+                 f"because a {1000*_t_m:.2f} mm wall cannot be resolved "
+                 f"with solid elements at {1000*flight_r:.0f} mm -- it would "
+                 f"take on the order of a billion tetrahedra. Shell elements "
+                 f"carry the thickness as a property, so the same barrel is a "
+                 f"few hundred elements.\n")
+        for _n in _shell.notes:
+            L.append(f"- {_n}")
+        L.append("")
+    elif _ratio > 1.5:
         _assembly_findings.append({
             "check": "flight component stress",
             "passed": False,
