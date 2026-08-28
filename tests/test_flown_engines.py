@@ -86,3 +86,36 @@ def test_thrust_to_weight_does_not_scale_with_thrust():
 def test_a_zero_mass_engine_is_refused():
     with pytest.raises(ValueError):
         thrust_to_weight(1000.0, 0.0)
+
+
+def test_the_attribution_reads_the_range_from_the_table():
+    """One source for the flown range, not a sentence repeating it.
+
+    The attribution note carried "80 to 180" for a revision -- my own wrong
+    figure. It was corrected in this module and left standing there, which is
+    the defect this project keeps finding: a fact fixed in one place and a claim
+    about it surviving in another. A string that quotes numbers it does not read
+    will go stale the moment the numbers move.
+    """
+    from cadflow.structural_sizing import coefficient_attribution
+
+    a = coefficient_attribution(1006.6, 0.338, 55e3, density_kg_m3=8190.0,
+                                yield_pa=1030e6, modulus_pa=200e9)
+    lo, hi = sorted(flown_ratios())[0], sorted(flown_ratios())[-1]
+    assert f"{lo:.0f} to {hi:.0f}" in a["note"]
+    assert "80 to 180" not in a["note"]
+
+
+def test_moving_the_table_moves_the_attribution_sentence():
+    """The check that the wiring is real rather than a coincidence of numbers."""
+    import cadflow.flown_engines as fe
+    from cadflow.structural_sizing import coefficient_attribution
+
+    saved = list(fe.FLOWN_ENGINES)
+    try:
+        fe.FLOWN_ENGINES = [("Toy", "x", 1000.0, 1.0, "lox/rp1", "test")]
+        a = coefficient_attribution(1006.6, 0.338, 55e3, density_kg_m3=8190.0,
+                                    yield_pa=1030e6, modulus_pa=200e9)
+        assert "66 to 183" not in a["note"]
+    finally:
+        fe.FLOWN_ENGINES = saved

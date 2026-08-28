@@ -188,9 +188,10 @@ def coefficient_attribution(prop_mass_kg: float, radius_m: float,
     The answer is not the one the buckling work suggested. Shell -- tank,
     interstage and thrust structure together -- is a quarter to a third of stage
     structure at every size tried. The engine is half, and it is half because
-    ENGINE_THRUST_TO_WEIGHT is 60, which is conservative: flown engines run from
-    about 80 for the RD-180 to 180 for a modern kerolox booster engine. At 150
-    the coefficient for this stage lands inside the flown range on its own.
+    ENGINE_THRUST_TO_WEIGHT is 60, which sits just below the flown floor of 66
+    (the RS-25) against a median of 82. See ``cadflow.flown_engines`` for the
+    table; the range is read from it rather than repeated here, because the
+    figure quoted in this docstring was wrong once already.
 
     So the lever is the engine mass model, not the wall. Reported as a
     decomposition rather than a conclusion, because a reader who disagrees with
@@ -210,6 +211,27 @@ def coefficient_attribution(prop_mass_kg: float, radius_m: float,
     terms = {"shell": shell, "engine": engine,
              "plumbing, avionics and fixed": other}
     dominant = max(terms, key=terms.get)
+
+    # The engine range comes from the flown table, not from this docstring.
+    #
+    # This sentence carried "80 to 180" for one revision, which was my own
+    # wrong figure -- the real floor is the RS-25 at 66 and the median is 82.
+    # It was corrected in flown_engines and stayed wrong here, which is the
+    # same defect this project keeps finding: a fact fixed in one place and a
+    # claim about it left standing in another. Now there is one source.
+    try:
+        from cadflow.flown_engines import check as _engine_check
+
+        _ev = _engine_check(ENGINE_THRUST_TO_WEIGHT)
+        _engine_clause = (
+            f"which is below every engine in the flown table "
+            f"({_ev.flown_min:.0f} to {_ev.flown_max:.0f}, median "
+            f"{_ev.flown_median:.0f})" if not _ev.inside else
+            f"which sits inside the flown range {_ev.flown_min:.0f} to "
+            f"{_ev.flown_max:.0f}")
+    except Exception:  # noqa: BLE001
+        _engine_clause = "whose provenance is not available here"
+
     return {
         "total_kg": total,
         "coefficient": coeff,
@@ -222,7 +244,7 @@ def coefficient_attribution(prop_mass_kg: float, radius_m: float,
             (p.get("driver", "") for p in parts if p["name"] == "tank"), ""),
         "note": (
             f"{dominant} is {100*terms[dominant]/total:.0f}% of stage structure. "
-            f"The engine is sized at thrust over g0 times a thrust-to-weight of "
-            f"{ENGINE_THRUST_TO_WEIGHT:g}, which is conservative against flown "
-            f"engines at 80 to 180, and it is the single largest term"),
+            f"The engine is sized at thrust over g0 times a thrust-to-weight "
+            f"of {ENGINE_THRUST_TO_WEIGHT:g}, {_engine_clause}, and it is the "
+            f"single largest term"),
     }
