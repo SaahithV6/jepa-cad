@@ -125,7 +125,23 @@ def test_an_unverified_requirement_prevents_a_verified_verdict(packet):
     if packet.get("assembly_unverified"):
         assert not packet["all_passed"], (
             "packet claims all_passed with unverified requirements outstanding")
-        assert packet.get("status") == "INCOMPLETE"
+        # INCOMPLETE unless something actually failed, in which case FAILED
+        # outranks it.
+        #
+        # This asserted INCOMPLETE unconditionally, which was true of every
+        # packet that existed when it was written -- none had both an
+        # outstanding requirement and a failing check at once. The first packet
+        # to have both (a stage that cannot afford its tankage, alongside the
+        # standing slosh phase-stabilisation requirement) made this test
+        # contradict test_status_agrees_with_the_findings directly.
+        #
+        # The precedence is the interesting part and it belongs written down: a
+        # design with a real failure is not "incomplete", it is failed, and
+        # softening that to INCOMPLETE because some other item is also
+        # outstanding would be the packet reporting the lesser of its problems.
+        fails = [f for f in packet.get("assembly_findings", [])
+                 if f.get("severity") == "fail"]
+        assert packet.get("status") == ("FAILED" if fails else "INCOMPLETE")
 
 
 def test_status_agrees_with_the_findings(packet):

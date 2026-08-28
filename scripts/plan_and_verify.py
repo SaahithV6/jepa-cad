@@ -340,6 +340,14 @@ def main() -> int:
             _res = _autodesign(args.payload_kg, args.apogee_km, max_iters=12)
             design_knobs = _res["knobs"]
             design_history = _res["history"]
+            # What the loop concluded it could not fix.
+            #
+            # The repair loop now tries shorter architectures when a stage
+            # cannot afford its tankage, and reports a conflict when none
+            # closes. That conclusion reached the return value and nothing read
+            # it -- the same shape as the mass-closure verdict that lived in
+            # markdown for several revisions.
+            design_conflict = _res.get("conflict")
             _ev = _res["evaluation"]
             # Use the repaired PLAN, not just the repaired knobs. Wiring only
             # the knobs through produced a packet whose header announced
@@ -871,6 +879,7 @@ def main() -> int:
     # raising -- and so the closure arithmetic cannot silently read a stale
     # value from a previous design iteration.
     _press_total_kg = 0.0
+    design_conflict = None
     try:
         from cadflow.backends import get_backend
         from cadflow.sculpt import bell_contour, nozzle_solid
@@ -1491,6 +1500,18 @@ def main() -> int:
                 _fz_bad = [f for f in _fz if not f["feasible"]]
                 for _f in _fz_bad:
                     L.append(f"\n- {_f['note']}")
+                if _fz_bad and design_conflict:
+                    L.append(
+                        f"\n**The design loop could not repair this.** "
+                        f"{design_conflict}\n")
+                    L.append(
+                        "\nThat is a statement about the mission rather than "
+                        "about the loop. The apogee demands a stage count whose "
+                        "smallest stage cannot pay for its own pressure vessel, "
+                        "so the specification is over-constrained for this "
+                        "technology: it wants a thinner dome gauge than anyone "
+                        "welds, a denser propellant, a larger payload to amortise "
+                        "the fixed costs against, or a lower apogee.\n")
                 L.append(
                     f"\nThe verdict rests on a {1000*_gauge:.2f} mm minimum "
                     f"dome gauge, which is an assumption about welding and "
@@ -1508,7 +1529,9 @@ def main() -> int:
                         f"{100*f['fraction_of_allowance']:.0f}% of its "
                         f"allowance, break-even gauge "
                         f"{1000*f['break_even_gauge_m']:.2f} mm"
-                        for f in _fz_bad) if _fz_bad else
+                        for f in _fz_bad)
+                        + ("; no shorter architecture closes the mission"
+                           if design_conflict else "") if _fz_bad else
                         f"worst stage uses "
                         f"{100*max(f['fraction_of_allowance'] for f in _fz):.0f}% "
                         f"of its structural allowance for tankage"),

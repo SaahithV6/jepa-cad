@@ -89,6 +89,17 @@ class Knobs:
     #: shapes. CFD now prices all three on an open-base vehicle, so the choice
     #: can be made on measured drag rather than left at a default.
     nose_shape: str = "ogive"
+    #: Cap on stage count. None lets the planner choose freely.
+    #:
+    #: A design variable for the same reason struct_coeff is one. Architecture
+    #: selection in the planner is by gross mass alone, and gross mass cannot
+    #: see whether a stage can afford the tank it needs: structure scales with
+    #: propellant while minimum gauge scales with nothing, so below some size a
+    #: stage's tank ends cost more than its entire structural allowance. The
+    #: planner will pick that architecture every time, because every number it
+    #: reads says it is lighter. Without this knob the loop can only report the
+    #: failure, never fix it.
+    max_stages: int | None = None
 
 
 @dataclass(frozen=True)
@@ -234,7 +245,8 @@ def _plan_at_coeff(apogee_km: float, payload_kg: float, knobs: "Knobs"):
         return _pl.plan(apogee_km, payload_kg, propellant=knobs.propellant,
                         chamber_bar=knobs.chamber_bar,
                         nose_shape=knobs.nose_shape,
-                        twr_by_stage=list(knobs.twr_by_stage))
+                        twr_by_stage=list(knobs.twr_by_stage),
+                        max_stages=knobs.max_stages)
     saved_coeff, saved_mr = _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR
     try:
         _pl.STRUCT_COEFF = float(knobs.struct_coeff)
@@ -243,7 +255,8 @@ def _plan_at_coeff(apogee_km: float, payload_kg: float, knobs: "Knobs"):
         return _pl.plan(apogee_km, payload_kg, propellant=knobs.propellant,
                         chamber_bar=knobs.chamber_bar,
                         nose_shape=knobs.nose_shape,
-                        twr_by_stage=list(knobs.twr_by_stage))
+                        twr_by_stage=list(knobs.twr_by_stage),
+                        max_stages=knobs.max_stages)
     finally:
         _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR = saved_coeff, saved_mr
         _pl.clear_plan_cache()
@@ -503,6 +516,111 @@ def _right_size_material(payload_kg, apogee_km, knobs, ev, limits):
     return (trial, got) if got.feasible else None
 
 
+def _tankage_shares(ev, knobs):
+    """What fraction of each stage's structural allowance its tankage costs.
+
+    Returns None when the pressurisation model is unavailable, so this stays an
+    addition rather than a gate on designing anything.
+    """
+    try:
+        from cadflow.assembly import TAPER_PER_STAGE as _tap
+        from cadflow.pressurization import (
+            stage_feasibility, stage_pressurisation)
+    except Exception:  # noqa: BLE001
+        return None
+
+    stack = getattr(ev.plan, "stack", None)
+    if not stack:
+        return None
+    # _material is this module's own lookup, already used by the material
+    # right-sizing step. Reaching for a second one would be how the alloy the
+    # loop selected and the alloy the domes are weighed in come to disagree.
+    try:
+        mat = _material(knobs.skin_material)
+        rho = float(mat.density_kg_m3)
+        allow = float(mat.yield_mpa) * 1e6 if mat.yield_mpa else 280e6
+    except Exception:  # noqa: BLE001
+        rho, allow = 2700.0, 280e6
+
+    # The same flight radius and taper the packet draws with. Dome mass goes as
+    # R^2 at fixed gauge, so using one radius for every stage would overstate the
+    # upper stages and could invent an infeasibility that is not there.
+    base_r = max(0.10, (ev.gross_kg / 1000.0) ** (1 / 3) * 0.55) / 2.0
+    rows = []
+    for i, st in enumerate(stack):
+        rows.append(stage_pressurisation(
+            stage=i + 1, propellant_mass_kg=float(st.prop_mass_kg),
+            radius_m=base_r * (_tap ** i), wall_m=0.0008,
+            acceleration_g=1.0, head_height_m=1.0,
+            wall_density_kg_m3=rho, wall_allowable_pa=allow))
+    return stage_feasibility(stack, rows)
+
+
+def _afford_tankage(payload_kg, apogee_km, knobs, ev, limits):
+    """Drop a stage the vehicle cannot pay for the tank of.
+
+    The planner chooses its architecture by gross mass, and by that measure more
+    stages are almost always better. What gross mass cannot see is that a
+    structural coefficient is a fraction while minimum gauge is not, so the
+    smallest stage on a tall stack can end up owing more for its tank ends alone
+    than its whole structural allowance. For 25 kg to 4,000 km the fourth stage
+    wants 175% of its allowance before any skin, plumbing or avionics.
+
+    Caps the stack one stage shorter and keeps the result only if it both closes
+    the mission and is actually affordable. A lighter design that cannot be
+    built is not a lighter design -- the same rule _right_size_material follows.
+    """
+    shares = _tankage_shares(ev, knobs)
+    if not shares or all(f["feasible"] for f in shares):
+        return None
+    n = len(shares)
+    # Try each shorter architecture in turn. Dropping one stage may not be
+    # enough, and stopping at the first attempt would report "no fix exists"
+    # for a vehicle that a two-stage stack closes comfortably.
+    tried = []
+    for cap in range(n - 1, 0, -1):
+        trial = replace(knobs, max_stages=cap)
+        got = evaluate(payload_kg, apogee_km, trial, limits)
+        if got.plan is None:
+            tried.append(f"{cap} stage(s): no architecture closes the mission")
+            continue
+        if not got.feasible:
+            tried.append(f"{cap} stage(s): closes but violates "
+                         f"{len(got.violations)} constraint(s)")
+            continue
+        trial_shares = _tankage_shares(got, trial)
+        if trial_shares and all(f["feasible"] for f in trial_shares):
+            return {"fixed": True, "knobs": trial, "evaluation": got,
+                    "before": shares, "after": trial_shares}
+        worst = max(f["fraction_of_allowance"] for f in trial_shares) \
+            if trial_shares else float("nan")
+        tried.append(f"{cap} stage(s): closes, but its smallest stage still "
+                     f"needs {100*worst:.0f}% of its allowance for tankage")
+
+    # No shorter stack works. That is a conclusion, not a silence.
+    #
+    # Returning None here would leave the loop reporting a converged design
+    # whose smallest stage cannot be built, with no record that an alternative
+    # was even looked for. The two constraints genuinely oppose: the mission
+    # needs this many stages to reach its apogee, and this many stages cannot
+    # afford their tanks. Saying so is the useful output -- it tells a reader
+    # the mission is over-specified for the technology rather than that the
+    # loop gave up.
+    worst = max(f["fraction_of_allowance"] for f in shares)
+    return {
+        "fixed": False,
+        "conflict": (
+            f"the mission needs {n} stages to reach its apogee and a "
+            f"{n}-stage stack cannot afford its own tankage: stage "
+            f"{max(shares, key=lambda f: f['fraction_of_allowance'])['stage']} "
+            f"needs {100*worst:.0f}% of its structural allowance for tank ends "
+            f"alone. Shorter architectures were tried and none closed: "
+            + "; ".join(tried)),
+        "before": shares,
+        "alternatives": tried,
+    }
+
+
 def autodesign(payload_kg: float, apogee_km: float,
                knobs: Knobs | None = None, limits: dict | None = None,
                max_iters: int = 12) -> dict:
@@ -553,13 +671,56 @@ def autodesign(payload_kg: float, apogee_km: float,
                                 "gross_kg": ev.gross_kg,
                                 "saved_kg": round(before - ev.gross_kg, 1),
                                 "stages": ev.stages, "violations": []})
+            # An architecture the mass fractions permit and physics does not.
+            #
+            # Every step above trades mass against mass. This one asks a
+            # different question -- whether the smallest stage can pay for its
+            # own pressure vessel -- and it is the only one that can reject an
+            # architecture outright rather than resize it.
+            afforded = _afford_tankage(payload_kg, apogee_km, knobs, ev, limits)
+            tankage_conflict = None
+            if afforded is not None and afforded["fixed"]:
+                before_g, before_n = ev.gross_kg, ev.stages
+                knobs, ev = afforded["knobs"], afforded["evaluation"]
+                history.append({
+                    "iteration": i + 1,
+                    "note": "stage dropped: smallest stage could not afford "
+                            "its tankage",
+                    "stages": ev.stages,
+                    "stages_before": before_n,
+                    "gross_kg": ev.gross_kg,
+                    "cost_kg": round(ev.gross_kg - before_g, 1),
+                    "worst_share_before": round(
+                        max(f["fraction_of_allowance"]
+                            for f in afforded["before"]), 3),
+                    "worst_share_after": round(
+                        max(f["fraction_of_allowance"]
+                            for f in afforded["after"]), 3),
+                    "violations": []})
+            elif afforded is not None:
+                tankage_conflict = afforded["conflict"]
+                history.append({
+                    "iteration": i + 1,
+                    "note": "tankage unaffordable and no shorter stack closes",
+                    "stages": ev.stages,
+                    # gross_kg on every entry, unchanged here because nothing
+                    # was repaired. Callers read history[-1]["gross_kg"] to see
+                    # what the loop cost, and an entry missing the field is a
+                    # KeyError rather than a smaller number -- a record whose
+                    # shape its readers do not expect.
+                    "gross_kg": ev.gross_kg,
+                    "conflict": tankage_conflict,
+                    "alternatives": afforded["alternatives"],
+                    "violations": []})
+
             # `conflict` is present on every return path. It used to appear
             # only when the loop gave up, so a caller had to know which branch
             # ran before it could read the result -- and once the loop gained
             # enough knobs to escape a conflict, four callers that had always
             # taken the giving-up path started raising KeyError.
             return {"converged": True, "iterations": i + 1, "evaluation": ev,
-                    "knobs": knobs, "history": history, "conflict": None}
+                    "knobs": knobs, "history": history,
+                    "conflict": tankage_conflict}
 
         actionable = [v for v in ev.violations if "no knob" not in v.remedy]
         if not actionable:

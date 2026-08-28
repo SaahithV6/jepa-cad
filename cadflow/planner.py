@@ -316,13 +316,29 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
          chamber_bar: float = 55.0, nose_shape: str = NOSE_SHAPE,
          nose_fineness: float = NOSE_FINENESS,
          of_ratio: float | None = None,
-         twr_by_stage: list[float] | None = None) -> Plan | None:
-    """Choose an architecture for this mission and size it."""
+         twr_by_stage: list[float] | None = None,
+         max_stages: int | None = None) -> Plan | None:
+    """Choose an architecture for this mission and size it.
+
+    ``max_stages`` caps the architecture. It exists because selection here is
+    by gross mass alone -- ``if gross < best_plan.gross_kg`` -- and gross mass
+    cannot see whether a stage can afford the tank it needs. A structural
+    coefficient is a fraction, so structure scales with propellant, while
+    minimum gauge scales with nothing; below some size the two cross and a
+    stage's tank ends alone cost more than its whole structural allowance. This
+    optimiser will happily pick that architecture, because every number it reads
+    says the architecture is lighter. The cap is how a caller that *can* see the
+    tankage tells it otherwise.
+    """
     key = (round(float(target_km), 6), round(float(payload_kg), 6), propellant,
            round(float(chamber_bar), 6), nose_shape, round(float(nose_fineness), 6),
            None if of_ratio is None else round(float(of_ratio), 6),
            None if twr_by_stage is None else tuple(round(float(t), 6)
                                                    for t in twr_by_stage),
+           # In the cache key, or the second call with a different cap gets the
+           # first call's answer. plan() is memoised on every other argument
+           # that changes its result and this one changes it more than most.
+           None if max_stages is None else int(max_stages),
            round(STRUCT_COEFF, 9), round(MAX_STAGE_MR, 9))
     if key in _PLAN_CACHE:
         return _PLAN_CACHE[key]
@@ -351,6 +367,15 @@ def plan(target_km: float, payload_kg: float, *, propellant: str = "lox_rp1",
             f"that exceeds the {MAX_STAGE_MR:.2f} a stage can close, so at least "
             f"{n_needed} stages are required")
         candidates = [n_needed, n_needed + 1, n_needed + 2]
+    if max_stages is not None:
+        kept = [n for n in candidates if n <= int(max_stages)]
+        if not kept:
+            rationale.append(
+                f"every architecture this mission needs has more than the "
+                f"{int(max_stages)} stage(s) allowed")
+            _remember_plan(key, None)
+            return None
+        candidates = kept
 
     best_plan = None
     for n in candidates:
