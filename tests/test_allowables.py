@@ -135,3 +135,45 @@ def test_the_hot_caveat_is_useless_unless_the_temperature_is_passed():
     # and the number itself is unchanged, because no data supports knocking it
     # down -- an invented reduction would look computed
     assert hot.allowable_mpa == pytest.approx(cold.allowable_mpa, rel=1e-12)
+
+
+def test_every_catalogue_material_resolves_a_density():
+    """The packet weighs parts in whatever alloy the loop selected.
+
+    That lookup used to be a hardcoded 2,700 for aluminium, which understated
+    every component mass on an Inconel vehicle by 3.03x. The replacement I first
+    wrote guessed from whether the material id began with "al-", which is right
+    for the two alloys this loop currently picks and 85% wrong for titanium --
+    a material the catalogue contains, whose yield-over-density is the best in
+    it, and which best_material_for returns at 500 K.
+
+    Nothing had exercised the titanium path, so the guess would have survived
+    until a mission happened to land in that temperature band. This checks the
+    class rather than waiting for the case.
+    """
+    from cadflow.space_materials import iter_materials
+
+    for m in iter_materials():
+        if not m.yield_mpa:
+            continue
+        assert m.density_kg_m3 and m.density_kg_m3 > 0, m.material_id
+        # and the "al-" heuristic would be badly wrong for a real selection
+        if m.category == "titanium":
+            assert abs(8190.0 - m.density_kg_m3) / m.density_kg_m3 > 0.5, (
+                "titanium must be far enough from the superalloy default that "
+                "guessing is visibly wrong")
+
+
+def test_the_upgrade_path_can_reach_more_than_two_alloys():
+    """best_material_for spans the catalogue, not just aluminium and Inconel.
+
+    Every design this project has produced chose one of two alloys, which is
+    why the material-dependent paths went unexercised for so long. The selector
+    itself reaches further, so those paths are reachable and have to be right.
+    """
+    from cadflow.autodesign import best_material_for
+
+    picked = {best_material_for(float(t)).material_id
+              for t in (300, 500, 700, 900)
+              if best_material_for(float(t)) is not None}
+    assert len(picked) >= 3, picked

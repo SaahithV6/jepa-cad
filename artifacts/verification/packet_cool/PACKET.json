@@ -1,0 +1,446 @@
+{
+  "specification": "deliver 50 kg payload to 120 km apogee using lox/rp1 at 55 bar chamber pressure",
+  "stages": 1,
+  "split": [
+    1.0
+  ],
+  "gross_kg": 219.28853565037127,
+  "achieved_km": 119.06000378041901,
+  "error_pct": 0.7833301829841589,
+  "rationale": [
+    "mission needs about 2.05 km/s; at Isp 325 s a single stage would need mass ratio 1.90",
+    "that is within what a stage can close at structural coefficient 0.21491772638948176 (limit 2.88), so try a single stage first",
+    "1 stage(s) closes the mission at 219.3 kg gross; simpler architectures are preferred so this is selected"
+  ],
+  "components": [
+    {
+      "name": "nose cone",
+      "why": "drag plus normal force at max-Q, 1.5 ultimate",
+      "load_n": 200.0,
+      "first_mode_hz": 4345.714,
+      "mass_properties": {
+        "mass_kg": 0.015816549321116244,
+        "volume_m3": 5.857981230043053e-06,
+        "Ixx_kg_m2": 7.59523075255251e-06,
+        "Iyy_kg_m2": 7.595230752552397e-06,
+        "Izz_kg_m2": 6.576363784899801e-06,
+        "cx_m": -4.4403605012088057e-17,
+        "cy_m": -6.513537631824958e-18,
+        "cz_m": 0.016109930283156524
+      },
+      "geometry": {
+        "body_radius_mm": 20.787006816976174,
+        "body_height_mm": 24.944408180371408,
+        "nose_radius_mm": 20.787006816976174,
+        "nose_height_mm": 33.25921090716188,
+        "fin_span_mm": 0.0,
+        "fin_thickness_mm": 4.0,
+        "fin_chord_mm": 41.57401363395235,
+        "fillet_radius_mm": 2.5,
+        "wall_thickness_mm": 0.8,
+        "cl_max_mm": 1.1199999999999999,
+        "cl_min_mm": 0.26666666666666666
+      },
+      "error": null,
+      "mesh_was_hull": false,
+      "mesh_was_coarsened": false,
+      "stress_dist": {
+        "median": 1.8589155254632155,
+        "p95": 2.386428486802869,
+        "p99": 3.45254070801659,
+        "max": 6.31355101534493,
+        "n": 16001,
+        "frac_over_yield": 0.0
+      },
+      "shell_von_mises_mpa": 2.386428486802869,
+      "coupon_passed": true,
+      "coupon_margin": 78.64471993939256,
+      "wall_mm": 0.8,
+      "wall_mass_kg": 0.007037181989361649,
+      "wall_driver": "minimum gauge",
+      "wall_capped": false,
+      "buckling_margin": 632.0941195664561,
+      "passed": true
+    },
+    {
+      "name": "thrust structure",
+      "why": "engine thrust into the aft ring",
+      "load_n": 12580.342621093923,
+      "first_mode_hz": 8254.49,
+      "mass_properties": {
+        "mass_kg": 0.009845449282622501,
+        "volume_m3": 3.646462697267593e-06,
+        "Ixx_kg_m2": 3.008987181239857e-06,
+        "Iyy_kg_m2": 3.0089871812398063e-06,
+        "Izz_kg_m2": 4.087624209657261e-06,
+        "cx_m": -3.8036298060666364e-17,
+        "cy_m": -1.0013246593772502e-17,
+        "cz_m": 0.004677076533819594
+      },
+      "geometry": {
+        "body_radius_mm": 20.787006816976174,
+        "body_height_mm": 24.944408180371408,
+        "nose_radius_mm": 20.787006816976174,
+        "nose_height_mm": 10.393503408488087,
+        "fin_span_mm": 0.0,
+        "fin_thickness_mm": 6.5,
+        "fin_chord_mm": 41.57401363395235,
+        "fillet_radius_mm": 2.5,
+        "wall_thickness_mm": 0.8305934792752887,
+        "cl_max_mm": 1.162830870985404,
+        "cl_min_mm": 0.2768644930917629
+      },
+      "error": null,
+      "mesh_was_hull": false,
+      "mesh_was_coarsened": false,
+      "stress_dist": {
+        "median": 112.77698144123458,
+        "p95": 147.0030890415483,
+        "p99": 193.8753351382572,
+        "max": 414.68739824458135,
+        "n": 9467,
+        "frac_over_yield": 0.001267561001373191
+      },
+      "shell_von_mises_mpa": 147.0030890415483,
+      "coupon_passed": true,
+      "coupon_margin": 1.2767078652813546,
+      "wall_mm": 0.8305934792752887,
+      "wall_mass_kg": 0.007306296841046613,
+      "wall_driver": "strength",
+      "wall_capped": false,
+      "buckling_margin": 10.88808835751607,
+      "passed": true
+    },
+    {
+      "name": "fin set",
+      "why": "one fin's share of fin normal force at 5 deg, 1.5 ultimate",
+      "load_n": 200.0,
+      "first_mode_hz": 2222.927,
+      "mass_properties": {
+        "mass_kg": 0.025029704423391797,
+        "volume_m3": 9.270260897552517e-06,
+        "Ixx_kg_m2": 8.736951478546582e-06,
+        "Iyy_kg_m2": 1.4826332155077933e-05,
+        "Izz_kg_m2": 1.2542649989483682e-05,
+        "cx_m": 0.0121143685478368,
+        "cy_m": -0.0009823951582623375,
+        "cz_m": 0.010738295305064427
+      },
+      "geometry": {
+        "body_radius_mm": 20.787006816976174,
+        "body_height_mm": 41.57401363395235,
+        "nose_radius_mm": 20.787006816976174,
+        "nose_height_mm": 14.55090477188332,
+        "fin_span_mm": 23.541775306772724,
+        "fin_thickness_mm": 5.0,
+        "fin_chord_mm": 41.57401363395235,
+        "fillet_radius_mm": 2.5,
+        "wall_thickness_mm": 0.8,
+        "cl_max_mm": 1.1199999999999999,
+        "cl_min_mm": 0.26666666666666666
+      },
+      "error": null,
+      "mesh_was_hull": false,
+      "mesh_was_coarsened": false,
+      "stress_dist": {
+        "median": 4.301488600841731,
+        "p95": 13.465480769008137,
+        "p99": 26.800216326497498,
+        "max": 83.07984750985042,
+        "n": 18669,
+        "frac_over_yield": 0.0
+      },
+      "shell_von_mises_mpa": 13.465480769008137,
+      "coupon_passed": true,
+      "coupon_margin": 13.9378610552072,
+      "wall_mm": 0.8,
+      "wall_mass_kg": 0.011728636648936083,
+      "wall_driver": "minimum gauge",
+      "wall_capped": false,
+      "buckling_margin": 632.0941195664561,
+      "passed": true
+    },
+    {
+      "name": "stage 1 tank",
+      "why": "carries 132.9 kg propellant at 9.4 g",
+      "load_n": 20277.87587012432,
+      "first_mode_hz": 3955.336,
+      "mass_properties": {
+        "mass_kg": 0.04036632867469288,
+        "volume_m3": 1.4950492101738103e-05,
+        "Ixx_kg_m2": 3.443179268747651e-05,
+        "Iyy_kg_m2": 3.443179268747632e-05,
+        "Izz_kg_m2": 1.6355065225725227e-05,
+        "cx_m": 1.423510067539002e-17,
+        "cy_m": -6.317294523565303e-18,
+        "cz_m": 0.007795127556366079
+      },
+      "geometry": {
+        "body_radius_mm": 20.787006816976174,
+        "body_height_mm": 72.75452385941661,
+        "nose_radius_mm": 20.787006816976174,
+        "nose_height_mm": 16.62960545358094,
+        "fin_span_mm": 0.0,
+        "fin_thickness_mm": 5.5,
+        "fin_chord_mm": 41.57401363395235,
+        "fillet_radius_mm": 2.5,
+        "wall_thickness_mm": 1.3388086460410273,
+        "cl_max_mm": 1.8743321044574381,
+        "cl_min_mm": 0.44626954868034246
+      },
+      "error": null,
+      "mesh_was_hull": false,
+      "mesh_was_coarsened": false,
+      "stress_dist": {
+        "median": 119.61801655818671,
+        "p95": 138.50839694685854,
+        "p99": 181.88707434940505,
+        "max": 668.1607368505726,
+        "n": 9037,
+        "frac_over_yield": 0.0027664047803474603
+      },
+      "shell_von_mises_mpa": 138.50839694685854,
+      "coupon_passed": true,
+      "coupon_margin": 1.3550081015810695,
+      "wall_mm": 1.3388086460410273,
+      "wall_mass_kg": 0.034349000332214066,
+      "wall_driver": "strength",
+      "wall_capped": false,
+      "buckling_margin": 18.597621631875004,
+      "passed": true
+    }
+  ],
+  "all_passed": false,
+  "components_passed": true,
+  "assembly_findings": [
+    {
+      "check": "skin buckling",
+      "passed": true,
+      "detail": "interaction 0.22, margin 4.50 governed by compression",
+      "severity": "pass"
+    },
+    {
+      "check": "slosh / pitch-mode separation",
+      "passed": true,
+      "detail": "slosh 3.52 Hz against pitch 2.36 Hz, ratio 1.49",
+      "severity": "pass"
+    },
+    {
+      "check": "flexible mode stabilisation",
+      "passed": false,
+      "detail": "slosh below crossover; phase stabilisation required and not verified here",
+      "severity": "unverified"
+    },
+    {
+      "check": "thrust vector control authority",
+      "passed": true,
+      "detail": "7.9 deg required against 8.0 available",
+      "severity": "pass"
+    },
+    {
+      "check": "flight barrel stress",
+      "passed": true,
+      "detail": "768 shell elements at 166 mm radius: 14.4 MPa against a 188 MPa allowable, +0.6% from closed form; worst of 1 per-stage barrels 5.6 MPa",
+      "severity": "pass"
+    }
+  ],
+  "assembly_passed": true,
+  "assembly_unverified": [
+    "flexible mode stabilisation"
+  ],
+  "status": "INCOMPLETE",
+  "struct_coeff_used": 0.21491772638948176,
+  "struct_coeff_default": 0.14,
+  "struct_coeff_solved": 0.25080413835275084,
+  "coupon_stack": {
+    "mass_kg": 0.09105803170182342,
+    "cg_x_m": 0.003329954078310226,
+    "cg_y_m": -0.0002700372496387442,
+    "cg_z_m": 0.12587443288612532,
+    "Ixx_kg_m2": 0.000398247214680542,
+    "Iyy_kg_m2": 0.0004069826810788915,
+    "Izz_kg_m2": 4.224282135492209e-05,
+    "length_m": 0.23905057839522598,
+    "sections": 4
+  },
+  "flight_vehicle": {
+    "mass_kg": 219.28853565037127,
+    "cg_x_m": 0.0,
+    "cg_y_m": 0.0,
+    "cg_z_m": 0.9638349953662151,
+    "Ixx_kg_m2": 66.71902055391722,
+    "Iyy_kg_m2": 66.71902055391722,
+    "Izz_kg_m2": 3.015286646792413,
+    "length_m": 1.8398352652069339,
+    "radius_m": 0.16583314468515667,
+    "section_extents": [
+      [
+        "stage 1",
+        0.0,
+        1.5081689758366206,
+        169.28853565037127
+      ],
+      [
+        "payload",
+        1.5081689758366206,
+        1.8398352652069339,
+        50.0
+      ]
+    ],
+    "sections": [
+      {
+        "name": "stage 1",
+        "mass_kg": 169.28853565037127,
+        "station_z_m": 0.7540844879183103
+      },
+      {
+        "name": "payload",
+        "mass_kg": 50.0,
+        "station_z_m": 1.6740021205217772
+      }
+    ]
+  },
+  "stability": {
+    "span_m": 0.18780994613448604,
+    "root_chord_m": 0.33166628937031334,
+    "tip_chord_m": 0.16583314468515667,
+    "sweep_m": 0.198999773622188,
+    "n_fins": 4,
+    "static_margin_cal": 0.7999999999999993,
+    "target_margin_cal": 0.7999999999999997,
+    "met": true,
+    "cp_z_m": 0.6985019638699647,
+    "cna_total": 5.22461889453843,
+    "cna_nose": 2.0,
+    "cna_fins": 3.2246188945384304,
+    "cp_nose_z_m": 1.5365331508526603,
+    "cp_fins_z_m": 0.17873127816066886,
+    "sized_for": "liftoff",
+    "margins": [
+      {
+        "state": "liftoff",
+        "margin_cal": 0.7999999999999993,
+        "mass_kg": 219.28853565037127
+      },
+      {
+        "state": "burnout",
+        "margin_cal": 1.773006152916666,
+        "mass_kg": 86.38310718578252
+      }
+    ]
+  },
+  "thermal": {
+    "of_ratio": 2.45,
+    "throat_diameter_mm": 38.082175391691884,
+    "throat_heat_flux_MWm2": 38.26999200228902,
+    "wall_temp_max_K": 800.0,
+    "recovery_temp_K": 3563.476034126245,
+    "prandtl": 0.591064370466702,
+    "reynolds": 1173082.6864323416,
+    "q_total_kw": 758.1902321127519,
+    "rejected_fraction": 0.027194855410253703,
+    "coolant": {
+      "fuel": "rp1",
+      "delta_t_k": 348.18964280794563,
+      "outlet_temp_k": 648.1896428079456,
+      "limit_temp_k": 700.0,
+      "margin_k": 51.810357192054425,
+      "feasible": true,
+      "heat_load_w": 758190.2321127519
+    },
+    "max_skin_temp_K": 993.3748722640962,
+    "max_skin_temp_altitude_km": 24.379119789070398
+  },
+  "nozzle": {
+    "throat_radius_mm": 19.041087695845942,
+    "exit_radius_mm": 65.96026264115955,
+    "length_mm": 140.08379579609849,
+    "area_ratio": 12.0,
+    "percent_bell": 0.8,
+    "exit_angle_deg": 9.0,
+    "divergence_efficiency": 0.9938441702975689,
+    "wall_mm": 1.5,
+    "mass_kg": 0.5310239677748282
+  },
+  "assembly": {
+    "summary": [
+      {
+        "name": "nozzle",
+        "kind": "revolve",
+        "station_mm": 0.0,
+        "length_mm": 140.08379579609849,
+        "radius_mm": 65.96026264115955,
+        "mass_kg": 0.17922058912400476
+      },
+      {
+        "name": "stage 1 tank",
+        "kind": "shell",
+        "station_mm": 0.0,
+        "length_mm": 1508.1689758366206,
+        "radius_mm": 165.83314468515667,
+        "mass_kg": 12.613629084828558
+      },
+      {
+        "name": "nose cone",
+        "kind": "revolve",
+        "station_mm": 1508.1689758366206,
+        "length_mm": 663.3325787406267,
+        "radius_mm": 165.83314468515667,
+        "mass_kg": 4.315050544361947
+      },
+      {
+        "name": "fin 1",
+        "kind": "extrude",
+        "station_mm": 82.91657234257833,
+        "length_mm": 331.66628937031334,
+        "radius_mm": 353.6430908196427,
+        "mass_kg": 0.4737983363513183
+      },
+      {
+        "name": "fin 2",
+        "kind": "extrude",
+        "station_mm": 82.91657234257833,
+        "length_mm": 331.66628937031334,
+        "radius_mm": 353.6430908196427,
+        "mass_kg": 0.47379833635131835
+      },
+      {
+        "name": "fin 3",
+        "kind": "extrude",
+        "station_mm": 82.91657234257833,
+        "length_mm": 331.66628937031334,
+        "radius_mm": 353.6430908196427,
+        "mass_kg": 0.4737983363513183
+      },
+      {
+        "name": "fin 4",
+        "kind": "extrude",
+        "station_mm": 82.91657234257833,
+        "length_mm": 331.66628937031334,
+        "radius_mm": 353.6430908196427,
+        "mass_kg": 0.47379833635131835
+      }
+    ],
+    "total_length_m": 2.171501554577247,
+    "max_radius_m": 0.3536430908196427,
+    "skin_mass_kg": 19.003093563719784,
+    "closure": {
+      "skin_kg": 19.003093563719784,
+      "engine_kg": 16.446640173777844,
+      "accounted_kg": 35.449733737497624,
+      "budget_kg": 36.38310718578252,
+      "slack_kg": 0.9333734482848968,
+      "closes": true,
+      "parts": 7
+    },
+    "exported": [
+      "fin_1",
+      "fin_2",
+      "fin_3",
+      "fin_4",
+      "nose_cone",
+      "nozzle",
+      "stage_1_tank"
+    ]
+  }
+}

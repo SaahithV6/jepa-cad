@@ -1196,8 +1196,13 @@ def main() -> int:
                     # changes no mass anywhere -- "skin, as drawn" came back
                     # byte-identical across the repair. The charge is computed
                     # and stated so the saving is not silently free.
-                    _rho_skin = 2700.0 if "al-" in str(allowable.material_id) else 8190.0
-                    _dm = (_rho_skin * 2.0 * math.pi * flight_r
+                    # _skin_rho comes from the catalogue for the alloy the
+                    # design chose. This line used to guess it from whether the
+                    # material id started with "al-", which happens to give the
+                    # right answer for the two alloys this loop currently picks
+                    # and would quietly be wrong for titanium, for steel, or for
+                    # any aluminium alloy named differently.
+                    _dm = (_skin_rho * 2.0 * math.pi * flight_r
                            * fv["length_m"] * (_now - _was))
                     L.append(f"\n**The wall was thickened for buckling**, "
                              f"{1000*_was:.2f} to {1000*_now:.2f} mm. Sizing it "
