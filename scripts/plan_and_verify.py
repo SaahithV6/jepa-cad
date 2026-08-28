@@ -866,6 +866,11 @@ def main() -> int:
     nozzle = None
     bell = None
     assembly = None
+    # Helium and bottles, charged to the mass budget below. Initialised here so
+    # a pressurisation block that did not run charges nothing rather than
+    # raising -- and so the closure arithmetic cannot silently read a stale
+    # value from a previous design iteration.
+    _press_total_kg = 0.0
     try:
         from cadflow.backends import get_backend
         from cadflow.sculpt import bell_contour, nozzle_solid
@@ -1342,6 +1347,7 @@ def main() -> int:
                         radius_m=flight_r, wall_m=_t_m,
                         acceleration_g=1.0, head_height_m=_tank_h))
                 _press_total = sum(r.total_kg for r in _press_rows)
+                _press_total_kg = _press_total
                 _ws = _wall_state(
                     pressure_pa=_press_rows[0].tanks[0].design_pa,
                     radius_m=flight_r, wall_m=_t_m,
@@ -1390,8 +1396,8 @@ def main() -> int:
                 if not _ws.in_compression:
                     _press_notes.append(
                         "the pressurised tank wall is in net axial tension, so "
-                        "it has no compressive buckling mode at this condition "
-                        "-- at this condition. That does not retire the "
+                        "it has no compressive buckling mode at this "
+                        "condition. That does not retire the "
                         "buckling case, it scopes it: the relief lasts exactly "
                         "as long as the pressure does. A tank is dry on the pad "
                         "before pressurisation, dry in transport and handling, "
@@ -1434,6 +1440,116 @@ def main() -> int:
                     "severity": "unverified" if _press_ok else "fail"})
             except Exception as _exc:  # noqa: BLE001
                 print(f"pressurisation unavailable: {_exc}", flush=True)
+
+            # The dry structure, which is the item the section above raises.
+            #
+            # The tanks are pressurised and that relief is real. The interstages
+            # are not: they transmit the whole thrust of the stage below into
+            # everything above, at the instant that stage accelerates hardest,
+            # with nothing inside to stabilise them. Until now they had only
+            # been analysed as coupons -- 42 mm articles at a clamped radius,
+            # against a yield allowable -- for a failure mode a thin shell does
+            # not have.
+            #
+            # Two modes are checked, not one. shell_buckling takes no length,
+            # because the classical stress is the long-cylinder asymptote and
+            # genuinely has none; the Batdorf parameter says whether that
+            # asymptote applies, and the Euler column mode is the failure a
+            # length-free check structurally cannot see.
+            try:
+                from cadflow.dry_structure import (
+                    bending_mpa_at as _bend_at, check_interstages as _dry,
+                    failures as _dry_fails)
+
+                from cadflow.assembly import (
+                    TAPER_PER_STAGE as _taper, interstage_length as _is_len_of)
+
+                _gs = p.trajectory.get("max_axial_g_by_stage") or []
+                # Lengths from the same formula the CAD draws with, not from
+                # the assembly dict -- that is not built until well below this
+                # point, so reading it here would silently fall back to a
+                # guessed length. The column mode goes as 1/L^2 and the Batdorf
+                # parameter as L^2; a guessed length is not a small error, and
+                # one that arrives silently is worse than one that raises.
+                _radii = [flight_r * (_taper ** _i) for _i in range(len(p.stack))]
+                _is_len = [_is_len_of(_radii[_i], _radii[_i + 1])
+                           for _i in range(len(p.stack) - 1)]
+                _is_stations = []
+                _z = 0.0
+                for _i, _sec in enumerate(fv.get("section_extents", [])[:len(p.stack)]):
+                    _z = float(_sec[2])
+                    if _i < len(p.stack) - 1:
+                        _is_stations.append(_z)
+                _dry_secs = _dry(p.stack, args.payload_kg, _gs,
+                                 radius_m=flight_r, wall_m=_t_m,
+                                 youngs_pa=skin_e_pa, lengths_m=_is_len)
+
+                # Bending at each interstage's own station, not zero and not the
+                # peak. The moment curve is steepest around the interstages and
+                # taking either extreme would be wrong in a knowable direction.
+                if _is_stations:
+                    from cadflow.dry_structure import check_section as _dsec
+                    _re = []
+                    for _sec, _stn in zip(_dry_secs, _is_stations):
+                        _bm = _bend_at(_res, _stn, flight_r, _t_m)
+                        _n = _dsec(name=_sec.name, length_m=_sec.length_m,
+                                   radius_m=flight_r, wall_m=_t_m,
+                                   axial_load_n=_sec.axial_load_n,
+                                   youngs_pa=skin_e_pa, bending_mpa=_bm)
+                        _n.notes = list(_sec.notes) + [
+                            f"bending at its own station "
+                            f"({_stn:.2f} m from aft) is "
+                            f"{_bm:.1f} MPa, read from the solved moment curve "
+                            f"rather than taken as zero or as the peak"]
+                        _re.append(_n)
+                    _dry_secs = _re
+
+                L.append("\n## Interstages: the structure with nothing in it\n")
+                L.append("| section | length | load | stress | shell margin | "
+                         "column margin | Batdorf Z | governs |")
+                L.append("|---|---|---|---|---|---|---|---|")
+                for _s in _dry_secs:
+                    L.append(
+                        f"| {_s.name} | {_s.length_m*1000:.0f} mm | "
+                        f"{_s.axial_load_n/1000:.1f} kN | "
+                        f"{_s.axial_stress_mpa:.1f} MPa | "
+                        f"**{_s.shell_margin:.2f}** | {_s.column_margin:.0f} | "
+                        f"{_s.batdorf_z:.0f} | {_s.governs} |")
+                for _s in _dry_secs:
+                    for _n in _s.notes:
+                        L.append(f"\n- {_s.name}: {_n}")
+                L.append(
+                    f"\nThese margins are at the **sized** wall of "
+                    f"{1000*_t_m:.2f} mm, not the {ASSEMBLY_WALL_MM:.1f} mm "
+                    f"representative gauge the CAD is drawn at. That is the "
+                    f"conservative choice by a wide margin: buckling margin "
+                    f"goes as t squared, so the drawn geometry would read "
+                    f"about {(ASSEMBLY_WALL_MM/1000.0/_t_m)**2:.0f}x these "
+                    f"numbers. The conclusion does not depend on which wall a "
+                    f"reader believes, which is the only reason it is safe to "
+                    f"have two.\n")
+                L.append(
+                    "\nThe column mode is Euler's pi^2 E I / (kL)^2 with "
+                    "I = pi r^3 t, at pinned ends. It is here because the shell "
+                    "check takes no length and so cannot see a tube that bows "
+                    "as a whole rather than folding locally -- on these short "
+                    "interstages it is nowhere near governing, which is a "
+                    "result and not a reason to have skipped it.\n")
+
+                _dry_bad = _dry_fails(_dry_secs)
+                _assembly_findings.append({
+                    "check": "interstage buckling, unpressurised",
+                    "passed": not _dry_bad,
+                    "detail": (
+                        "; ".join(f"{s.name} margin {s.margin:.2f}"
+                                  for s in _dry_bad) if _dry_bad else
+                        f"{len(_dry_secs)} dry section(s), worst margin "
+                        f"{min(s.margin for s in _dry_secs):.2f} "
+                        f"governed by the {min(_dry_secs, key=lambda s: s.margin).governs} "
+                        f"mode"),
+                    "severity": "pass" if not _dry_bad else "fail"})
+            except Exception as _exc:  # noqa: BLE001
+                print(f"dry structure check unavailable: {_exc}", flush=True)
 
             # First elastic bending mode of the stack, flying free. The
             # component table reports a frequency per part from a modal run on
@@ -1892,9 +2008,14 @@ def main() -> int:
                 nose_shape=(design_knobs.nose_shape if design_knobs
                             else "ogive"))
             budget = sum(st.struct_mass_kg for st in p.stack)
+            # The pressurisation mass computed above is charged here rather
+            # than only described. Reporting a shortfall in prose while the
+            # closure arithmetic beside it silently omits the same number is
+            # exactly the disconnection this packet keeps finding in itself.
             closure = mass_closure(
                 asm, budget,
-                liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0))
+                liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0),
+                pressurisation_kg=_press_total_kg)
             files = export_assembly(asm, args.out / "cad")
             assembly = {"summary": asm.summary(),
                         "total_length_m": asm.total_length_mm / 1000.0,
@@ -1920,6 +2041,8 @@ def main() -> int:
             L.append(f"| skin, as drawn | {closure['skin_kg']:.1f} kg |")
             L.append(f"| engine, from liftoff thrust at T/W 60 | "
                      f"{closure['engine_kg']:.1f} kg |")
+            L.append(f"| pressurisation, helium and bottles | "
+                     f"{closure['pressurisation_kg']:.1f} kg |")
             L.append(f"| accounted for | {closure['accounted_kg']:.1f} kg |")
             L.append(f"| structural budget | {closure['budget_kg']:.1f} kg |")
             L.append(f"| slack | {closure['slack_kg']:+.1f} kg |")

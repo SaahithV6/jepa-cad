@@ -43,7 +43,18 @@ class PointLoad:
     """A concentrated aerodynamic side load and where it acts."""
 
     name: str
-    station_m: float          # from the nose tip, positive aft
+    #: From the AFT end, positive forward -- the same convention
+    #: ``flight_vehicle_properties`` uses for ``section_extents``, where stage 1
+    #: starts at 0.0 and the payload sits at the top.
+    #:
+    #: This said "from the nose tip, positive aft", which is the exact opposite
+    #: and was wrong for as long as it existed. Nothing broke, because every
+    #: caller passes stations it got from the vehicle and so was already using
+    #: the real convention. The damage a comment like this does is to the next
+    #: person who trusts it: looking up the moment at a station would return the
+    #: value from the mirror-image point, which is a plausible number and not
+    #: the right one.
+    station_m: float
     force_n: float            # lateral, positive in the direction the air pushes
 
 

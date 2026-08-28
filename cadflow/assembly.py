@@ -63,6 +63,27 @@ class VehicleAssembly:
 _SHAPE_ALIASES = {"cone": "conical"}
 
 
+#: How much each stage narrows relative to the one below it.
+#:
+#: A module constant rather than a bare default, so the structural checks can
+#: reconstruct the same radii the CAD draws. Two places needing this number and
+#: only one of them owning it is how a check comes to describe a vehicle that
+#: was never built.
+TAPER_PER_STAGE = 0.92
+
+
+def interstage_length(radius, next_radius):
+    """How long the interstage between two stages is: 1.5 |dr| + 0.5 r.
+
+    A shared definition rather than a formula written twice. The buckling check
+    in ``cadflow.dry_structure`` needs this length -- the column mode goes as
+    1/L^2 and the Batdorf parameter as L^2, so a guessed length is not a small
+    error -- and the only thing worse than the check not having it would be the
+    check having its own copy that drifts from the geometry actually drawn.
+    """
+    return 1.5 * abs(radius - next_radius) + 0.5 * radius
+
+
 def _geometry_shape_name(shape: str) -> str:
     """Translate a drag-model shape name into the geometry module's spelling."""
     from cadflow.profiles import NOSE_SHAPES
@@ -81,7 +102,7 @@ def build_vehicle(stages, payload_kg: float, body_radius_m: float,
                   fin_span_m: float = 0.0, fin_root_chord_m: float = 0.0,
                   n_fins: int = 4, nozzle=None, backend=None,
                   skin_density: float = 2700.0,
-                  taper_per_stage: float = 0.92,
+                  taper_per_stage: float = TAPER_PER_STAGE,
                   nose_shape: str = "ogive") -> VehicleAssembly:
     """Assemble the complete vehicle from the planner's stack.
 
@@ -153,7 +174,7 @@ def build_vehicle(stages, payload_kg: float, body_radius_m: float,
 
         if i + 1 < len(stages):
             r_next = radii[i + 1]
-            t_len = 1.5 * abs(r - r_next) + 0.5 * r
+            t_len = interstage_length(r, r_next)
             sections = transition_sections(r / scale, r_next / scale,
                                            t_len / scale, points=CIRCLE_POINTS)
             solid = b.loft_sections([(zz + z, ring) for zz, ring in sections])
@@ -274,7 +295,8 @@ def export_assembly(assembly: VehicleAssembly, out_dir, backend=None,
 
 def mass_closure(assembly: VehicleAssembly, budget_kg: float,
                  liftoff_thrust_n: float = 0.0,
-                 engine_twr: float = 60.0) -> dict:
+                 engine_twr: float = 60.0,
+                 pressurisation_kg: float = 0.0) -> dict:
     """Does the mass budget have room for the geometry plus its engine?
 
     An independent check on the structural coefficient, arriving from the
@@ -287,14 +309,25 @@ def mass_closure(assembly: VehicleAssembly, budget_kg: float,
     85.3 kg, and the budget is 155.6 kg -- so the vehicle is 27 kg short of
     being able to contain itself. Two independent routes agreeing that a number
     is optimistic is worth more than either alone.
+
+    ``pressurisation_kg`` is the helium and its bottle, from
+    ``cadflow.pressurization``. It belongs here rather than in a second budget
+    of its own: a pump-fed stage cannot start without it, so it is structure in
+    every sense that matters to a mass statement, and this is the one place that
+    asks whether the vehicle can contain itself. Leaving it out let the packet
+    report the shortfall in prose while the closure arithmetic beside it
+    disagreed -- which is the same shape as every other defect this project has
+    found, two parts each knowing and neither telling the other.
     """
     skin = assembly.mass_kg
     engine = (float(liftoff_thrust_n) / (9.80665 * float(engine_twr))
               if liftoff_thrust_n else 0.0)
-    accounted = skin + engine
+    press = float(pressurisation_kg)
+    accounted = skin + engine + press
     return {
         "skin_kg": skin,
         "engine_kg": engine,
+        "pressurisation_kg": press,
         "accounted_kg": accounted,
         "budget_kg": float(budget_kg),
         "slack_kg": float(budget_kg) - accounted,

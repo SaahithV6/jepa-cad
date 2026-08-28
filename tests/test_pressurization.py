@@ -272,3 +272,35 @@ def test_von_mises_uses_both_membrane_stresses():
     s1, s2 = w.hoop_pa, w.net_axial_pa
     assert w.von_mises_pa == pytest.approx(math.sqrt(s1*s1 - s1*s2 + s2*s2))
     assert w.von_mises_pa < w.hoop_pa   # biaxial tension is less severe
+
+
+def test_pressurisation_is_charged_to_the_mass_closure():
+    """Reported and charged, not reported instead of charged.
+
+    The packet computes this mass and says the budget does not carry it. If the
+    closure arithmetic beside that sentence then omits the same number, the two
+    halves of one page disagree -- which is the shape of every disconnection
+    defect this project has found.
+    """
+    from cadflow.assembly import VehicleAssembly, mass_closure
+
+    asm = VehicleAssembly()
+    without = mass_closure(asm, 100.0, liftoff_thrust_n=0.0)
+    with_ = mass_closure(asm, 100.0, liftoff_thrust_n=0.0,
+                         pressurisation_kg=14.1)
+    assert with_["pressurisation_kg"] == pytest.approx(14.1)
+    assert with_["accounted_kg"] == pytest.approx(without["accounted_kg"] + 14.1)
+    assert with_["slack_kg"] == pytest.approx(without["slack_kg"] - 14.1)
+
+
+def test_pressurisation_can_be_what_breaks_the_closure():
+    """A charge that cannot change the verdict is not a charge.
+
+    If 14 kg of helium and bottles can never turn a closing budget into a
+    failing one, then adding it to the arithmetic was decoration.
+    """
+    from cadflow.assembly import VehicleAssembly, mass_closure
+
+    asm = VehicleAssembly()
+    assert mass_closure(asm, 10.0, pressurisation_kg=5.0)["closes"]
+    assert not mass_closure(asm, 10.0, pressurisation_kg=15.0)["closes"]
