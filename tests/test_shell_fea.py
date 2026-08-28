@@ -144,3 +144,24 @@ def test_a_normal_run_is_far_inside_linear_validity(work):
     assert r.converged
     strain = r.max_von_mises_mpa * 1e6 / BARREL["youngs_pa"]
     assert strain < 0.1 * MAX_LINEAR_STRAIN, strain
+
+
+def test_a_locally_wrong_field_is_refused_even_at_small_strain(work):
+    """The strain guard catches gross garbage and misses moderate corruption.
+
+    Under full-suite load this solve returned peak 409 MPa against a mean of
+    99.9 -- a peak-to-mean of 4.1 where correct runs sit at 1.05 and 1.26 --
+    and passed the strain guard, because 409 MPa in a 200 GPa material is only
+    0.2% strain. The error against closed form was 19.3%.
+
+    A uniformly loaded barrel has a uniform membrane field, and the clamped
+    edge adds bending bounded near 1.8 times membrane. Four times is not
+    something this geometry produces, whatever the strain.
+    """
+    from cadflow.shell_fea import MAX_PEAK_OVER_MEAN
+
+    r = analyse_barrel(work / "ratio", axial_n=80_000.0, **BARREL)
+    assert r.converged
+    assert r.max_von_mises_mpa / r.mean_von_mises_mpa < MAX_PEAK_OVER_MEAN
+    # and the threshold has real margin over a correct run
+    assert r.max_von_mises_mpa / r.mean_von_mises_mpa < 0.6 * MAX_PEAK_OVER_MEAN

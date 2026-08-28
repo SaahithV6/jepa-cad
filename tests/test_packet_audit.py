@@ -117,3 +117,50 @@ def test_the_tolerance_is_tight_enough_to_matter():
     """
     assert failures(audit(**_kwargs(
         components=[_component("tank", 8.19 * 1.01, 0.001)])))
+
+
+def test_it_catches_a_part_reported_where_it_is_not():
+    """The nozzle overlapping the tank by 324 mm, on paper only.
+
+    The assembly table showed the nozzle at 0.000 m while its solid sits
+    between -0.324 and 0, hanging off the aft end as the code intends. The CAD
+    was right and the station recorded beside it was not, so the report
+    described a vehicle whose engine occupies the same space as its tank.
+    Nothing compared the two.
+    """
+    from cadflow.packet_audit import stack_interference
+
+    as_reported = [("nozzle", 0.0, 0.324), ("stage 1 tank", 0.0, 2.709),
+                   ("interstage 1/2", 2.709, 0.208)]
+    bad = failures(stack_interference(as_reported))
+    assert bad and "nozzle" in bad[0].check
+
+
+def test_a_correctly_placed_stack_tiles():
+    """With the nozzle at its real station the vehicle closes end to end."""
+    from cadflow.packet_audit import stack_interference
+
+    real = [("nozzle", -0.324, 0.324), ("stage 1 tank", 0.0, 2.709),
+            ("interstage 1/2", 2.709, 0.208), ("stage 2 tank", 2.917, 0.832)]
+    assert not failures(stack_interference(real))
+
+
+def test_fins_are_excluded_from_the_interference_check():
+    """They attach to the outside of a tank and share its span by design.
+
+    Including them would report every finned vehicle as broken, which is how a
+    check earns being switched off.
+    """
+    from cadflow.packet_audit import stack_interference
+
+    with_fins = [("stage 1 tank", 0.0, 2.709), ("fin 1", 0.167, 0.670),
+                 ("fin 2", 0.167, 0.670), ("interstage 1/2", 2.709, 0.208)]
+    assert not failures(stack_interference(with_fins))
+
+
+def test_it_catches_a_gap_as_well_as_an_overlap():
+    """A vehicle with a hole in it is as wrong as one that intersects itself."""
+    from cadflow.packet_audit import stack_interference
+
+    gapped = [("stage 1 tank", 0.0, 2.709), ("interstage 1/2", 3.200, 0.208)]
+    assert failures(stack_interference(gapped))

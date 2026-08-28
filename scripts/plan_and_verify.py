@@ -1911,6 +1911,17 @@ def main() -> int:
         gross_kg=p.gross_kg, stack=p.stack, payload_kg=args.payload_kg,
         flight_vehicle_mass_kg=fv["mass_kg"], components=results,
         skin_density_kg_m3=_skin_rho, skin_material=skin_material)
+    # Geometry too: do the in-line parts tile the vehicle?
+    try:
+        from cadflow.packet_audit import stack_interference as _interf
+
+        _rows = [(r["name"], r["station_mm"] / 1000.0, r["length_mm"] / 1000.0)
+                 for r in (assembly or {}).get("summary", [])]
+        if _rows:
+            _crosses = list(_crosses) + _interf(_rows)
+    except Exception:  # noqa: BLE001
+        pass
+
     _consistency = [c.as_dict() for c in _crosses]
     _bad = _failures(_crosses)
     if _bad:
@@ -1931,15 +1942,31 @@ def main() -> int:
     if _consistency:
         _bad_n = sum(1 for c in _consistency if not c["ok"])
         L.append(f"\n## Packet self-consistency\n")
+        # Describe the checks that ran, not the ones remembered.
+        #
+        # This paragraph listed three kinds of cross-check while the audit was
+        # running four: the geometry checks were added and the sentence
+        # describing them was not. That is the same drift the audit exists to
+        # catch, occurring in the prose about the audit, which is a fair
+        # indication of how easily it happens.
+        _kinds = []
+        if any("mass equals" in c["check"] for c in _consistency):
+            _kinds.append("gross mass against the stack it lists")
+        if any("coefficient" in c["check"] for c in _consistency):
+            _kinds.append("one structural coefficient across every stage")
+        if any("weighed in" in c["check"] for c in _consistency):
+            _kinds.append("each component's mass over its volume against the "
+                          "density of the alloy the design selected")
+        if any("meets" in c["check"] for c in _consistency):
+            _kinds.append("every in-line part meeting its neighbour without "
+                          "overlap or gap")
         L.append(f"{len(_consistency) - _bad_n} of {len(_consistency)} internal "
-                 f"cross-checks agree. These compare numbers the packet already "
-                 f"reports against each other -- gross mass against the stack "
-                 f"it lists, the structural coefficient against the stage "
-                 f"masses, and every component's mass over its volume against "
-                 f"the density of the alloy the design selected. Five defects "
-                 f"in this packet were of exactly that shape and every one was "
-                 f"invisible to the tests, because each individual model was "
-                 f"right and only the connection between them was wrong.\n")
+                 f"cross-checks agree, comparing numbers the packet already "
+                 f"reports against each other: " + "; ".join(_kinds) + ". "
+                 f"Six defects in this packet were of exactly that shape and "
+                 f"every one was invisible to the tests, because each "
+                 f"individual model was right and only the connection between "
+                 f"them was wrong.\n")
         if _bad_n:
             L.append("| check | reported | expected |")
             L.append("|---|---|---|")

@@ -126,8 +126,17 @@ def build_vehicle(stages, payload_kg: float, body_radius_m: float,
 
         noz = nozzle_solid(nozzle, wall / scale / 2.0, backend=b)
         noz = b.translate(noz, 0.0, 0.0, -nozzle.length_m * scale)
+        # Record the station it was translated to, not the station the loop
+        # happens to be at.
+        #
+        # add() defaults to z, which is still zero here, so the table reported
+        # the nozzle at 0.000 m while the solid sits between -0.324 and 0. On
+        # paper that is a 324 mm interference with the base of the stage 1
+        # tank; in the geometry there is none. The CAD was right and the report
+        # invented an overlap.
         add("nozzle", "revolve", noz, nozzle.length_m * scale,
-            nozzle.exit_radius_m * scale)
+            nozzle.exit_radius_m * scale,
+            station=-nozzle.length_m * scale)
 
     # stages, aft to forward, each narrower than the one below it
     radii = [r_base * (taper_per_stage ** i) for i in range(len(stages))]

@@ -103,5 +103,34 @@ def audit(*, gross_kg: float, stack, payload_kg: float,
     return out
 
 
+def stack_interference(parts) -> list[Cross]:
+    """Do the in-line parts tile the vehicle without overlapping or gapping?
+
+    ``parts`` is a sequence of (name, station_m, length_m). Fins are excluded:
+    they attach to the outside of a tank and share its axial span by design, so
+    including them would report every finned vehicle as broken.
+
+    This exists because the assembly table showed the nozzle at 0.000 m
+    overlapping 324 mm of the stage 1 tank. The geometry was correct -- the
+    solid is translated to negative z, hanging off the aft end -- and the
+    station recorded in the report was not. Nothing compared the two, so a
+    report that described an impossible vehicle read exactly like one that did
+    not.
+    """
+    inline = [(n, float(z), float(l)) for n, z, l in parts
+              if "fin" not in str(n).lower()]
+    inline.sort(key=lambda r: r[1])
+    out: list[Cross] = []
+    for (n1, z1, l1), (n2, z2, _l2) in zip(inline, inline[1:]):
+        end = z1 + l1
+        # A tolerance in metres rather than relative: these are stations on a
+        # vehicle a few metres long, and a millimetre is the right scale for
+        # "these parts meet" regardless of how far up the stack they sit.
+        out.append(Cross(f"{n1} meets {n2} without overlap or gap",
+                         abs(end - z2) <= 1e-3, end, z2,
+                         f"{n1} ends at {end:.3f} m, {n2} starts at {z2:.3f} m"))
+    return out
+
+
 def failures(crosses) -> list[Cross]:
     return [c for c in crosses if not c.ok]

@@ -40,6 +40,22 @@ SHELL_TYPE = "S4"
 
 DEFAULT_CCX = Path.home() / ".local" / "bin" / "ccx"
 
+#: Peak-to-mean von Mises above which a uniformly loaded barrel is not
+#: describing a barrel.
+#:
+#: The membrane field under uniform axial load or internal pressure is uniform;
+#: the clamped edge adds bending whose magnitude is bounded, classically near
+#: 1.8 times membrane for a long cylinder. Correct runs here sit at 1.05 and
+#: 1.26. A run that came back at 4.10 was CalculiX under full-suite contention
+#: producing a locally wrong field -- moderate enough that the strain guard
+#: below, which catches gross garbage, passed it at 0.2% strain.
+#:
+#: This detects the symptom, not the cause. The cause is that the solver is not
+#: reliable when the machine is saturated, which no amount of checking inside
+#: this module fixes; what the check buys is that a bad result is refused
+#: rather than reported.
+MAX_PEAK_OVER_MEAN = 2.5
+
 #: Strain above which a linear elastic result describes nothing. Metals yield
 #: well below this, and the small-displacement assumption is gone too, so a
 #: solve implying more than this has failed regardless of how clean its output
@@ -264,6 +280,15 @@ def analyse_barrel(case_dir: Path, *, radius_m: float, length_m: float,
     hi = max(lo + 1, int(0.95 * len(ordered)))
     interior = ordered[lo:hi] or vm
     mean = sum(interior) / len(interior)
+    peak_ratio = max(vm) / max(mean, 1e-9)
+    if peak_ratio > MAX_PEAK_OVER_MEAN:
+        return ShellResult(
+            len(nodes), len(elements), max(vm), mean, analytic, None, False,
+            (f"peak von Mises is {peak_ratio:.1f} times the mean, past the "
+             f"{MAX_PEAK_OVER_MEAN} a uniformly loaded barrel can produce -- "
+             f"clamped-edge bending is bounded near 1.8x membrane. The field "
+             f"is locally wrong even though the strain it implies is small.",))
+
     err = (100.0 * (mean - analytic) / analytic) if analytic else None
     if analytic:
         notes.append(
