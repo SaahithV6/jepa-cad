@@ -211,3 +211,62 @@ def test_degenerate_geometry_is_refused():
         local_skin_buckling_mpa(skin_m=0.0005, spacing_m=0.0, youngs_pa=200e9)
     with pytest.raises(ValueError):
         monocoque_thickness_m(1000.0, 0.0)
+
+
+def test_stiffening_a_gauge_limited_wall_is_refused():
+    """This project's own first stage, and the reason the default was not changed.
+
+    Every wall in it -- tank, interstage, thrust structure -- sizes to 0.80 mm
+    reading "minimum gauge". Stiffeners buy buckling resistance and a wall that
+    is not buckling-limited has none to buy, so wiring stiffened sizing in as a
+    default would have added stringers to a wall that was never going to buckle.
+    """
+    from cadflow.stiffened_shell import worth_stiffening
+
+    got = worth_stiffening(monocoque_thickness_m_=0.0008, min_gauge_m=0.0008,
+                           driver="minimum gauge")
+    assert not got["worth_it"] and got["gauge_limited"]
+    assert "add mass without adding capability" in got["note"]
+
+
+def test_stiffening_a_buckling_limited_wall_is_worth_it():
+    """Above about five tonnes of stage propellant the driver changes.
+
+    The check must come out both ways or it is not a check.
+    """
+    from cadflow.stiffened_shell import worth_stiffening
+
+    got = worth_stiffening(monocoque_thickness_m_=0.0042, min_gauge_m=0.0008,
+                           driver="buckling")
+    assert got["worth_it"] and not got["gauge_limited"]
+
+
+def test_the_coefficient_is_attributed_to_the_engine_not_the_wall():
+    """The correction this module's own analysis forced.
+
+    The monocoque scaling argument is sound physics and a real capability gap
+    for large vehicles. It is not why *this* vehicle's structural coefficient
+    sits at twice flown practice. Shell is a quarter of stage structure and the
+    engine is half, at an assumed thrust-to-weight of 60 against flown engines
+    running 80 to 180.
+
+    Wiring stiffened sizing in as the default would have added stringers to a
+    gauge-limited wall and made the vehicle heavier.
+    """
+    from cadflow.structural_sizing import coefficient_attribution
+
+    a = coefficient_attribution(1006.6, 0.338, 55e3, density_kg_m3=8190.0,
+                                yield_pa=1030e6, modulus_pa=200e9)
+    assert a["dominant"] == "engine"
+    assert a["shares"]["engine"] > a["shares"]["shell"]
+    assert a["wall_driver"] == "minimum gauge"
+
+
+def test_the_attribution_sums_to_the_mass_it_decomposes():
+    """A decomposition that does not add up is a guess with subtotals."""
+    from cadflow.structural_sizing import coefficient_attribution
+
+    a = coefficient_attribution(5000.0, 0.55, 250e3, density_kg_m3=2700.0,
+                                yield_pa=280e6, modulus_pa=70e9)
+    assert sum(a["terms_kg"].values()) == pytest.approx(a["total_kg"], rel=1e-12)
+    assert sum(a["shares"].values()) == pytest.approx(1.0, rel=1e-12)

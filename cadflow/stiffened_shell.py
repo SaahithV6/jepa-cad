@@ -379,3 +379,36 @@ def size_for_stress(*, required_mpa: float, radius_m: float, youngs_pa: float,
             f"modelled; blade slenderness is held under "
             f"{MAX_BLADE_SLENDERNESS:.0f} rather than verified"),
     }
+
+
+def worth_stiffening(*, monocoque_thickness_m_: float, min_gauge_m: float,
+                     driver: str = "") -> dict:
+    """Would stiffening this wall help, or only add mass?
+
+    Stiffeners buy buckling resistance. A wall that is not buckling-limited has
+    none to buy, and adding stringers to it makes the vehicle heavier for
+    nothing.
+
+    That is this project's own first stage. Every wall in it -- tank, interstage
+    and thrust structure alike -- sizes to 0.80 mm with the driver reading
+    "minimum gauge", because at 1 tonne of propellant and 338 mm radius the
+    loads are small enough that manufacturability sets the thickness. Wiring
+    stiffened sizing in as a default would have added stringers to a wall that
+    was never going to buckle.
+
+    The crossover for this project's materials and proportions sits between one
+    and five tonnes of stage propellant: above it the driver becomes buckling
+    and the 4x wall saving is real, below it there is nothing to save.
+    """
+    gauge_limited = (driver.strip().lower() == "minimum gauge"
+                     or monocoque_thickness_m_ <= min_gauge_m * (1.0 + 1e-9))
+    return {
+        "worth_it": not gauge_limited,
+        "gauge_limited": gauge_limited,
+        "note": (
+            "the wall is at minimum gauge, so it is not buckling-limited and "
+            "stiffening it would add mass without adding capability"
+            if gauge_limited else
+            "the wall is buckling-limited, so moving material off the "
+            "mid-surface buys capability that thickness alone would pay more for"),
+    }

@@ -174,3 +174,55 @@ def stage_structural_mass(prop_mass_kg: float, radius_m: float,
     scaling = shell_mass * 0.85
     fixed = FIXED_STAGE_MASS_KG
     return shell_mass + scaling + fixed + engine_mass, parts
+
+
+def coefficient_attribution(prop_mass_kg: float, radius_m: float,
+                            thrust_n: float, **mat) -> dict:
+    """Which term makes the structural coefficient what it is.
+
+    The packet already reports that this vehicle's coefficient sits at roughly
+    twice the heaviest stage ever flown. It has never said which part of the
+    stage is responsible, and without that the finding is a complaint rather
+    than a lead.
+
+    The answer is not the one the buckling work suggested. Shell -- tank,
+    interstage and thrust structure together -- is a quarter to a third of stage
+    structure at every size tried. The engine is half, and it is half because
+    ENGINE_THRUST_TO_WEIGHT is 60, which is conservative: flown engines run from
+    about 80 for the RD-180 to 180 for a modern kerolox booster engine. At 150
+    the coefficient for this stage lands inside the flown range on its own.
+
+    So the lever is the engine mass model, not the wall. Reported as a
+    decomposition rather than a conclusion, because a reader who disagrees with
+    the engine assumption should be able to see exactly how much of the answer
+    rests on it.
+    """
+    total, parts = stage_structural_mass(prop_mass_kg, radius_m, thrust_n, **mat)
+    by_name = {p["name"]: p["mass_kg"] for p in parts}
+    shell = sum(m for n, m in by_name.items() if n != "engine")
+    engine = by_name.get("engine", 0.0)
+    # stage_structural_mass adds a scaling term and a fixed term on top of the
+    # parts it lists; recover them rather than restating the formula, so this
+    # cannot drift from the function it describes.
+    other = total - shell - engine
+    coeff = total / (total + prop_mass_kg) if prop_mass_kg > 0 else 0.0
+
+    terms = {"shell": shell, "engine": engine,
+             "plumbing, avionics and fixed": other}
+    dominant = max(terms, key=terms.get)
+    return {
+        "total_kg": total,
+        "coefficient": coeff,
+        "terms_kg": terms,
+        "shares": {k: (v / total if total > 0 else 0.0)
+                   for k, v in terms.items()},
+        "dominant": dominant,
+        "engine_thrust_to_weight": ENGINE_THRUST_TO_WEIGHT,
+        "wall_driver": by_name and next(
+            (p.get("driver", "") for p in parts if p["name"] == "tank"), ""),
+        "note": (
+            f"{dominant} is {100*terms[dominant]/total:.0f}% of stage structure. "
+            f"The engine is sized at thrust over g0 times a thrust-to-weight of "
+            f"{ENGINE_THRUST_TO_WEIGHT:g}, which is conservative against flown "
+            f"engines at 80 to 180, and it is the single largest term"),
+    }
