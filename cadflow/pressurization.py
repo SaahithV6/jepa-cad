@@ -447,11 +447,20 @@ def wall_load_state(*, pressure_pa: float, radius_m: float, wall_m: float,
 #:
 #: The membrane relation puts a dome at this vehicle's pressure and radius at
 #: 0.11 mm, which is not a thing anyone welds. Real domes are set by handling,
-#: weld lands, manhole reinforcement and forming, not by the pressure they hold,
-#: and a millimetre is the thin end of what flies. Stated as a floor rather than
-#: folded in silently, because the membrane number is the derivable one and this
-#: is not.
-DOME_MIN_GAUGE_M = 0.001
+#: weld lands, manhole reinforcement and forming, not by the pressure they hold.
+#: Stated as a floor rather than folded in silently, because the membrane number
+#: is the derivable one and this is not.
+#:
+#: Taken from structural_sizing rather than chosen here. This was an independent
+#: 1.0 mm for one revision, while the wall sizing next to it used 0.8 mm for
+#: "spun/welded shells" -- and the packet's own wall driver reads "minimum
+#: gauge", so the two constants were describing the same manufacturing limit on
+#: the same vehicle in the same alloy and disagreeing by 25%. A dome is a spun
+#: and welded shell. One process, one number, in one place.
+try:
+    from cadflow.structural_sizing import T_MIN_M as DOME_MIN_GAUGE_M
+except Exception:  # noqa: BLE001
+    DOME_MIN_GAUGE_M = 0.0008
 
 
 def dome_mass_kg(*, pressure_pa: float, radius_m: float,

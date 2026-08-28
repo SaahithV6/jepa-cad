@@ -1,0 +1,41 @@
+{
+  "apogee_km": 4000.0,
+  "rows": [
+    {
+      "payload_kg": 25.0,
+      "gross_kg": 1857.5,
+      "struct_coeff": 0.2577,
+      "stages": 4,
+      "worst_tankage_share": 1.405,
+      "affordable": false,
+      "conflict": "the mission needs 4 stages to reach its apogee and a 4-stage stack cannot afford its own tankage: stage 4 needs 140% of its structural allowance for tank ends alone. Shorter architectures were tried and none closed: 3 stage(s): no architecture closes the mission; 2 stage(s): no architecture closes the mission; 1 stage(s): no architecture closes the mission"
+    },
+    {
+      "payload_kg": 100.0,
+      "gross_kg": 7137.6,
+      "struct_coeff": 0.2602,
+      "stages": 4,
+      "worst_tankage_share": 0.899,
+      "affordable": true,
+      "conflict": null
+    },
+    {
+      "payload_kg": 400.0,
+      "gross_kg": 32218.1,
+      "struct_coeff": 0.2692,
+      "stages": 4,
+      "worst_tankage_share": 0.255,
+      "affordable": true,
+      "conflict": null
+    },
+    {
+      "payload_kg": 1500.0,
+      "gross_kg": 131202.8,
+      "struct_coeff": 0.2818,
+      "stages": 4,
+      "worst_tankage_share": 0.33,
+      "affordable": true,
+      "conflict": null
+    }
+  ]
+}

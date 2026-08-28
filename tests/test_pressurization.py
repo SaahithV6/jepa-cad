@@ -430,3 +430,38 @@ def test_a_stage_that_cannot_fit_even_a_zero_thickness_dome_reports_zero():
     rows = stage_feasibility(tiny, [_press_stack()[3]])
     assert rows[0]["break_even_gauge_m"] == 0.0
     assert not rows[0]["feasible"]
+
+
+def test_the_dome_gauge_is_the_projects_gauge_not_a_second_one():
+    """One manufacturing limit, one number.
+
+    This was an independent 1.0 mm for one revision while structural_sizing used
+    0.8 mm for "spun/welded shells" -- and the packet's own wall driver reads
+    "minimum gauge", so both constants described the same limit on the same
+    vehicle in the same alloy and disagreed by 25%. A dome is a spun and welded
+    shell.
+    """
+    from cadflow.pressurization import DOME_MIN_GAUGE_M
+    from cadflow.structural_sizing import T_MIN_M
+
+    assert DOME_MIN_GAUGE_M == T_MIN_M
+
+
+def test_the_affordability_verdict_survives_the_gauge_correction():
+    """The finding must not have been an artefact of the wrong constant.
+
+    Dome mass is linear in gauge, so 0.8 against 1.0 takes 20% off the tank
+    ends. Stage 4 still cannot pay for its own: its break-even gauge is 0.57 mm,
+    below both candidates, which is exactly what the break-even column was added
+    to make checkable.
+    """
+    from cadflow.pressurization import stage_feasibility
+
+    class S:
+        def __init__(s, pm, sm):
+            s.prop_mass_kg, s.struct_mass_kg = pm, sm
+
+    stack = [S(1006.6, 349.5), S(261.7, 90.9), S(68.0, 23.6), S(23.9, 8.3)]
+    rows = stage_feasibility(stack, _press_stack())
+    assert not rows[3]["feasible"]
+    assert rows[3]["break_even_gauge_m"] < 0.8e-3
