@@ -2495,7 +2495,25 @@ def main() -> int:
     # hundred lines above, and neither reached the summary or PACKET.json. A
     # packet that contradicts itself in the reader's favour is worse than one
     # that simply reports the failure.
-    _components_ok = all(r["passed"] for r in results)
+    # A part that could not be analysed did not fail; it was never checked.
+    #
+    # When a component's mesh degrades to a convex hull the solve deliberately
+    # reports no stress, because a hull is not the part. That was then read
+    # downstream as passed=False, so an unanalysable fin drove the whole packet
+    # to FAILED with nothing anywhere saying why -- error was None, because
+    # nothing raised. The 250 kg to 600 km mission hits this where 25 kg to
+    # 4,000 km does not, which is the only reason it was ever visible.
+    #
+    # This packet already learned that a boolean cannot carry three outcomes
+    # and gave the assembly findings VERIFIED, FAILED and INCOMPLETE. The
+    # component path kept pass/fail, so the same lesson had to be learned twice.
+    _components_unanalysed = [r for r in results
+                              if not r["passed"] and r.get("mesh_was_hull")
+                              and r.get("stress_dist") is None
+                              and not r.get("error")]
+    _components_failed = [r for r in results
+                          if not r["passed"] and r not in _components_unanalysed]
+    _components_ok = not _components_failed
     # A boolean cannot carry three outcomes, and forcing it to try is how this
     # packet reported "Overall: True" for a vehicle with an unverified control
     # requirement outstanding. Reclassifying a check from FAIL to REQUIRED made
@@ -2586,6 +2604,17 @@ def main() -> int:
                 "severity": "unverified"})
     except Exception as _mexc:  # noqa: BLE001
         print(f"margin audit unavailable: {_mexc}", flush=True)
+
+    for _r in _components_unanalysed:
+        _assembly_findings.append({
+            "check": f"component analysed: {_r['name']}",
+            "passed": False,
+            "detail": (
+                f"the mesh degraded to a convex hull, so no stress was solved "
+                f"for the part as drawn. This is not a failed check -- it is an "
+                f"absent one, and the distinction decides whether the verdict "
+                f"above is a fault in the design or a gap in the analysis"),
+            "severity": "unverified"})
 
     _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
     # The components that passed are coupons, not the flight parts.
@@ -2781,9 +2810,11 @@ def main() -> int:
 
     _assembly_unverified = [f for f in _assembly_findings
                             if f["severity"] == "unverified"]
-    allp = _components_ok and not _assembly_fails and not _assembly_unverified
+    allp = (_components_ok and not _components_unanalysed
+            and not _assembly_fails and not _assembly_unverified)
     _status = ("FAILED" if (not _components_ok or _assembly_fails)
-               else "INCOMPLETE" if _assembly_unverified
+               else "INCOMPLETE"
+               if (_assembly_unverified or _components_unanalysed)
                else "VERIFIED")
 
     if _consistency:

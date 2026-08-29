@@ -235,3 +235,31 @@ def test_the_repairs_the_loop_made_are_recorded(packet):
         pytest.skip("packet was not produced by the design loop")
     assert "What the design loop changed" in text, (
         "the loop's own repair record does not appear in the report")
+
+
+def test_an_unanalysable_part_is_not_reported_as_a_failed_one(packet):
+    """A part whose mesh degraded was never checked, not checked and found bad.
+
+    When a component's mesh falls back to a convex hull the solve deliberately
+    reports no stress, because a hull is not the part. Read as passed=False that
+    drove a whole packet to FAILED with error=None -- nothing raised, so nothing
+    explained. The distinction decides whether the verdict is a fault in the
+    design or a gap in the analysis.
+
+    This packet already learned that a boolean cannot carry three outcomes and
+    gave the assembly findings VERIFIED, FAILED and INCOMPLETE. The component
+    path kept pass/fail, so the lesson had to be learned twice.
+    """
+    unanalysed = [c for c in packet.get("components", [])
+                  if not c.get("passed", True) and c.get("mesh_was_hull")
+                  and c.get("stress_dist") is None and not c.get("error")]
+    if not unanalysed:
+        pytest.skip("every component in this packet was analysed")
+    names = [f["check"] for f in packet.get("assembly_findings", [])]
+    for c in unanalysed:
+        assert any(c["name"] in n for n in names), (
+            f"{c['name']} could not be analysed and no finding says so")
+    # and an absent analysis is incomplete, not failed
+    if not [f for f in packet.get("assembly_findings", [])
+            if f.get("severity") == "fail"]:
+        assert packet.get("status") != "FAILED"
