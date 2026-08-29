@@ -594,7 +594,10 @@ def test_an_unknown_propellant_is_refused_not_silently_made_kerosene():
     """
     from cadflow.pressurization import stage_pressurisation
 
-    with pytest.raises(KeyError, match="no tankage model"):
+    # "no tankage model" is now reserved for a liquid this module cannot size,
+    # which still has tanks. A solid gets its own message, because having no
+    # tanks and having no model for them are different facts.
+    with pytest.raises(KeyError, match="has no tankage"):
         stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
                              combination="solid_apcp", radius_m=0.5,
                              wall_m=0.001)
@@ -623,3 +626,38 @@ def test_every_known_liquid_combination_still_sizes():
         got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
                                    combination=comb, radius_m=0.5, wall_m=0.001)
         assert got.tank_volume_m3 > 0 and got.total_kg > 0
+
+
+def test_a_solid_has_no_tanks_and_an_unmodelled_liquid_still_does():
+    """Two refusals that mean opposite things about the vehicle.
+
+    For one revision every refused propellant was told its propellant is
+    "carried in the motor case". That is true of a solid and false of every
+    liquid, so a hypergolic vehicle would have been told it has no tanks -- a
+    claim about the vehicle, made because the model lacked one fluid.
+    """
+    from cadflow.pressurization import NON_LIQUID, stage_pressurisation
+
+    with pytest.raises(KeyError, match="cast grain"):
+        stage_pressurisation(stage=1, propellant_mass_kg=1.0,
+                             combination="solid_apcp", radius_m=0.5,
+                             wall_m=0.001)
+    with pytest.raises(KeyError, match="gap in the model"):
+        stage_pressurisation(stage=1, propellant_mass_kg=1.0,
+                             combination="some_new_kerolox", radius_m=0.5,
+                             wall_m=0.001)
+    assert "solid_apcp" in NON_LIQUID
+
+
+def test_the_storable_bipropellant_sizes_tanks():
+    """N2O4/MMH is a liquid pair and has tanks like any other.
+
+    N2O4 was in the fluid table without MMH, so the one combination that needed
+    both was unreachable.
+    """
+    from cadflow.pressurization import stage_pressurisation
+
+    got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                               combination="n2o4_mmh", radius_m=0.5,
+                               wall_m=0.001)
+    assert got.tank_volume_m3 > 0 and got.total_kg > 0

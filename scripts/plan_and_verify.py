@@ -379,9 +379,12 @@ def main() -> int:
     # Read from the tankage model rather than a list here: a propellant with no
     # tanks has no free surface, and that is the same question.
     try:
-        from cadflow.pressurization import COMBINATIONS as _LIQUIDS
+        from cadflow.pressurization import NON_LIQUID as _NON_LIQUID
 
-        _has_liquid = args.propellant in _LIQUIDS
+        # Phase, not modelled-ness. An unmodelled liquid still sloshes, so
+        # keying this on COMBINATIONS would have silenced the slosh checks for
+        # any bipropellant whose fluid properties happen to be missing.
+        _has_liquid = args.propellant not in _NON_LIQUID
     except Exception:  # noqa: BLE001
         _has_liquid = True
     # The inter-stage coast the trajectory integrates, so the separation check
@@ -1791,13 +1794,24 @@ def main() -> int:
                 # saying so is the correct output rather than an omission.
                 L.append(f"\n## Tank pressurisation\n")
                 L.append(f"\nNot applicable. {str(_kexc).strip(chr(34))}\n")
+                # A vehicle with genuinely no tanks passes; a liquid this
+                # model cannot size is unverified, not fine.
+                #
+                # This reported "the propellant is carried in the motor case"
+                # for anything the tankage model refused, which is true of a
+                # solid and false of every liquid. n2o4_mmh would have been told
+                # it has no tanks -- a claim about the vehicle, made because the
+                # model lacked one fluid's properties.
+                try:
+                    from cadflow.pressurization import NON_LIQUID as _NOTANK
+                except Exception:  # noqa: BLE001
+                    _NOTANK = {"solid_apcp"}
+                _genuinely_none = args.propellant in _NOTANK
                 _assembly_findings.append({
                     "check": "tank pressurisation applies",
-                    "passed": True,
-                    "detail": (f"{args.propellant} has no tankage to size: the "
-                               f"propellant is carried in the motor case, so "
-                               f"there is no ullage, pressurant or dome mass"),
-                    "severity": "pass"})
+                    "passed": bool(_genuinely_none),
+                    "detail": str(_kexc).strip(chr(34)),
+                    "severity": "pass" if _genuinely_none else "unverified"})
             except Exception as _exc:  # noqa: BLE001
                 print(f"pressurisation unavailable: {_exc}", flush=True)
 

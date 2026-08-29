@@ -97,7 +97,21 @@ PROPELLANTS = {
     "lh2": {"vapour_pa": 101325.0, "density": 71.0, "name": "liquid hydrogen"},
     "lch4": {"vapour_pa": 101325.0, "density": 422.0, "name": "liquid methane"},
     "n2o4": {"vapour_pa": 96_000.0, "density": 1440.0, "name": "N2O4"},
+    # Monomethylhydrazine, the fuel half of the storable pair. N2O4 was here
+    # without it, so the one combination that could have used either was
+    # unreachable.
+    "mmh": {"vapour_pa": 6_600.0, "density": 880.0, "name": "MMH"},
 }
+
+#: Propellants that are not liquid and therefore have no tankage at all.
+#:
+#: Distinct from "this module has no model for it". A solid carries its
+#: propellant as a cast grain bonded to the case: no ullage, no pressurant, no
+#: domes, and that is a fact about the vehicle. An unmodelled liquid still has
+#: tanks and the packet must not claim otherwise -- which it did for one
+#: revision, telling a hypergolic vehicle its propellant was "carried in the
+#: motor case".
+NON_LIQUID = {"solid_apcp"}
 
 #: Which propellants a combination uses, oxidiser first.
 #:
@@ -117,6 +131,7 @@ COMBINATIONS = {
     "lox_rp1": ("lox", "rp1"),
     "lox_lh2": ("lox", "lh2"),
     "lox_ch4": ("lox", "lch4"),
+    "n2o4_mmh": ("n2o4", "mmh"),
 }
 
 
@@ -298,12 +313,19 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
     # of domes -- forty-two kilograms of hardware for a motor that has no tanks,
     # no pressurant and no domes at all. A silent default for an input the code
     # does not understand is how a confident wrong answer gets produced.
-    if combination not in COMBINATIONS:
+    if combination in NON_LIQUID:
         raise KeyError(
-            f"no tankage model for {combination!r}. Known liquid combinations "
-            f"are {sorted(COMBINATIONS)}. A solid motor carries its propellant "
-            f"in the case and has no tanks, pressurant or domes, so this module "
-            f"does not describe it")
+            f"{combination} has no tankage: the propellant is a cast grain "
+            f"bonded to the motor case, so there is no ullage, pressurant or "
+            f"dome mass to size")
+    if combination not in COMBINATIONS:
+        # A liquid this module lacks properties for still has tanks. Saying it
+        # has none would be a claim about the vehicle rather than about the
+        # model, and the wrong one.
+        raise KeyError(
+            f"no tankage model for {combination!r}, though it is a liquid and "
+            f"does have tanks. Known combinations are {sorted(COMBINATIONS)}; "
+            f"this is a gap in the model, not a property of the vehicle")
     ox_key, fuel_key = COMBINATIONS[combination]
     ox = PROPELLANTS[ox_key]
     fuel = PROPELLANTS[fuel_key]
