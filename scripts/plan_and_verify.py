@@ -2704,6 +2704,45 @@ def main() -> int:
                 L.append(f"| {_h.get('iteration', '?')} | {_h['note']} | "
                          + (f"{_g:.1f} kg |" if isinstance(_g, (int, float))
                             else "-- |"))
+            # The knobs the loop moved, not only the steps it annotated.
+            #
+            # At 200 bar the repair loop lowered chamber pressure to 153.3 to
+            # satisfy the throat heat flux limit -- a correct repair, and the
+            # single most consequential change it made -- and the record showed
+            # only "nose shape chosen". The per-iteration knob values were in
+            # the history all along; only entries carrying a note were rendered.
+            # A user who asks for 200 bar and is given 153 has to be told, and
+            # told why, or the provenance cross reads as an unexplained
+            # substitution because that is indistinguishable from what it is.
+            # First and last entry that actually carries the key.
+            #
+            # Comparing the first entry against the last *noted* step found
+            # nothing: annotated steps like "nose shape chosen" do not carry
+            # chamber_bar, so the lookup returned None and the row never
+            # rendered. The knob values live in the unannotated iteration
+            # entries -- which is precisely why they were invisible in the first
+            # place, and why looking for them in the annotated ones repeated the
+            # original mistake.
+            def _knob_span(key):
+                vals = [h[key] for h in (design_history or []) if key in h]
+                return (vals[0], vals[-1]) if len(vals) >= 2 else (None, None)
+
+            for _k, _label in (("chamber_bar", "chamber pressure, bar"),
+                               ("twr", "thrust-to-weight by stage")):
+                _a, _b = _knob_span(_k)
+                if _a is not None and _b is not None and _a != _b:
+                    # Rounded. A report for a person should not print sixteen
+                    # significant figures of a thrust-to-weight ratio; the
+                    # precision is noise and it buries the change it is meant
+                    # to show.
+                    def _fmt(v):
+                        if isinstance(v, (list, tuple)):
+                            return "[" + ", ".join(f"{float(x):.2f}"
+                                                   for x in v) + "]"
+                        return f"{float(v):.4g}"
+
+                    L.append(f"| knobs | {_label} moved from {_fmt(_a)} to "
+                             f"{_fmt(_b)} to satisfy a constraint | -- |")
             _tried = [a for _h in _steps for a in (_h.get("alternatives") or [])]
             for _a in _tried:
                 L.append(f"\n- also tried: {_a}")
