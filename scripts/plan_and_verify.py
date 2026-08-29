@@ -420,8 +420,18 @@ def main() -> int:
             # different propellant entirely.
             from cadflow.autodesign import Knobs as _Knobs
 
+            # Every input the caller gave, not just the one most recently
+            # noticed.
+            #
+            # Passing Knobs(propellant=...) fixed the propellant and left
+            # chamber_bar at its 55.0 default, so --chamber-bar was silently
+            # replaced exactly as --propellant had been. Constructing a defaults
+            # object and overriding one field is the same omission in a new
+            # place: the knobs the caller set have to be threaded together or
+            # the next one added will be dropped the same way.
             _res = _autodesign(args.payload_kg, args.apogee_km,
-                               knobs=_Knobs(propellant=args.propellant),
+                               knobs=_Knobs(propellant=args.propellant,
+                                            chamber_bar=float(args.chamber_bar)),
                                max_iters=12)
             design_knobs = _res["knobs"]
             design_history = _res["history"]
