@@ -246,7 +246,7 @@ def hoop_stress_pa(pressure_pa: float, radius_m: float, wall_m: float) -> float:
 
 def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
                          combination: str = "lox_rp1",
-                         of_ratio: float = 2.56,
+                         of_ratio: float | None = None,
                          radius_m: float, wall_m: float,
                          bottle_density_kg_m3: float = 4430.0,
                          bottle_allowable_pa: float = 620e6,
@@ -262,6 +262,20 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
     conservative end and it is stated rather than optimised, because a lighter
     number here would be a claim about hardware this project does not design.
     """
+    # The mixture ratio the engine actually burns, not a number written here.
+    #
+    # This defaulted to a hardcoded 2.56 while the chemistry and trajectory used
+    # the catalogue's 2.45 for lox/rp1, so the tanks were sized for a 1.3%
+    # different oxidiser fraction than the engine consumes -- both tank volumes
+    # wrong, in opposite directions, on a vehicle whose tank ends are the thing
+    # that decides whether a stage is affordable.
+    if of_ratio is None:
+        try:
+            from cadflow.combustion import REFERENCE
+
+            of_ratio = float(REFERENCE[combination][0])
+        except Exception:  # noqa: BLE001
+            of_ratio = 2.45
     ox_key, fuel_key = COMBINATIONS.get(combination, ("lox", "rp1"))
     ox = PROPELLANTS[ox_key]
     fuel = PROPELLANTS[fuel_key]

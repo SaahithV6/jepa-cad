@@ -556,3 +556,29 @@ def test_a_degenerate_reference_is_refused():
     with pytest.raises(ValueError):
         wall_for_pressure_m(pressure_pa=400e3, radius_m=0.338,
                             allowable_pa=131e6, reference_wall_m=0.0)
+
+
+def test_the_tanks_are_sized_at_the_ratio_the_engine_burns():
+    """Two mixture ratios in one vehicle is two different vehicles.
+
+    stage_pressurisation defaulted to a hardcoded 2.56 while the chemistry and
+    trajectory used the catalogue's 2.45 for lox/rp1. The oxidiser fraction
+    differs by 1.3%, so both tank volumes were wrong in opposite directions --
+    on a vehicle whose tank ends decide whether a stage can be afforded at all.
+    """
+    from cadflow.combustion import REFERENCE
+    from cadflow.pressurization import stage_pressurisation
+
+    got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                               radius_m=0.338, wall_m=0.0008)
+    of = float(REFERENCE["lox_rp1"][0])
+    assert f"O/F {of:.2f}" in " ".join(got.notes)
+
+
+def test_an_explicit_ratio_still_overrides():
+    """A caller trading mixture ratio has to be able to say so."""
+    from cadflow.pressurization import stage_pressurisation
+
+    got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                               radius_m=0.338, wall_m=0.0008, of_ratio=3.1)
+    assert "O/F 3.10" in " ".join(got.notes)
