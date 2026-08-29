@@ -296,7 +296,8 @@ def export_assembly(assembly: VehicleAssembly, out_dir, backend=None,
 def mass_closure(assembly: VehicleAssembly, budget_kg: float,
                  liftoff_thrust_n: float = 0.0,
                  engine_twr: float = 60.0,
-                 pressurisation_kg: float = 0.0) -> dict:
+                 pressurisation_kg: float = 0.0,
+                 tps_kg: float = 0.0) -> dict:
     """Does the mass budget have room for the geometry plus its engine?
 
     An independent check on the structural coefficient, arriving from the
@@ -323,11 +324,22 @@ def mass_closure(assembly: VehicleAssembly, budget_kg: float,
     engine = (float(liftoff_thrust_n) / (9.80665 * float(engine_twr))
               if liftoff_thrust_n else 0.0)
     press = float(pressurisation_kg)
-    accounted = skin + engine + press
+    # Thermal protection, which the design loop sizes and nothing weighed.
+    #
+    # autodesign computes an areal mass, multiplies it by wetted area and stores
+    # the result on the evaluation, where it had exactly two references: the
+    # field declaration and the assignment. It reached no constraint, no gross
+    # mass and no report, so a vehicle that needed a blanket got one for free.
+    # No packet produced so far took that branch -- Inconel survives this
+    # mission -- but the path existed and would have been wrong the moment a
+    # hotter design used it, which is also the moment it would matter most.
+    tps = float(tps_kg)
+    accounted = skin + engine + press + tps
     return {
         "skin_kg": skin,
         "engine_kg": engine,
         "pressurisation_kg": press,
+        "tps_kg": tps,
         "accounted_kg": accounted,
         "budget_kg": float(budget_kg),
         "slack_kg": float(budget_kg) - accounted,

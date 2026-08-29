@@ -465,3 +465,32 @@ def test_the_affordability_verdict_survives_the_gauge_correction():
     rows = stage_feasibility(stack, _press_stack())
     assert not rows[3]["feasible"]
     assert rows[3]["break_even_gauge_m"] < 0.8e-3
+
+
+def test_thermal_protection_is_charged_to_the_closure():
+    """The loop sizes a blanket and nothing weighed it.
+
+    tps_mass_kg had exactly two references in autodesign -- the field
+    declaration and the assignment. It reached no constraint, no gross mass and
+    no report, so a vehicle that needed thermal protection got it free. No
+    packet so far took that branch, because Inconel survives this mission, but
+    the path existed and would have been wrong the moment a hotter design used
+    it, which is also when it would matter most.
+    """
+    from cadflow.assembly import VehicleAssembly, mass_closure
+
+    asm = VehicleAssembly()
+    without = mass_closure(asm, 100.0)
+    with_ = mass_closure(asm, 100.0, tps_kg=11.8)
+    assert with_["tps_kg"] == pytest.approx(11.8)
+    assert with_["accounted_kg"] == pytest.approx(without["accounted_kg"] + 11.8)
+    assert with_["slack_kg"] == pytest.approx(without["slack_kg"] - 11.8)
+
+
+def test_thermal_protection_can_break_the_closure():
+    """A charge that cannot change the verdict is not a charge."""
+    from cadflow.assembly import VehicleAssembly, mass_closure
+
+    asm = VehicleAssembly()
+    assert mass_closure(asm, 10.0, tps_kg=5.0)["closes"]
+    assert not mass_closure(asm, 10.0, tps_kg=15.0)["closes"]

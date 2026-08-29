@@ -333,6 +333,17 @@ def main() -> int:
     design_knobs = None
     design_history = None
     repaired_plan = None
+    # Initialised before the block that sets them, not after it.
+    #
+    # Both of these were declared 570 lines below their own assignment, so the
+    # declaration ran second and reset them. design_conflict is the worse case:
+    # the repair loop reports why it cannot fix an unaffordable stack, and that
+    # message has never once reached the packet, because it was overwritten with
+    # None before anything read it. A variable initialised after its first write
+    # is not a safety net, it is an eraser.
+    design_conflict = None
+    _tps_total_kg = 0.0
+
     if args.autodesign:
         try:
             from cadflow.autodesign import autodesign as _autodesign
@@ -349,6 +360,7 @@ def main() -> int:
             # markdown for several revisions.
             design_conflict = _res.get("conflict")
             _ev = _res["evaluation"]
+            _tps_total_kg = float(getattr(_ev, "tps_mass_kg", 0.0) or 0.0)
             # Use the repaired PLAN, not just the repaired knobs. Wiring only
             # the knobs through produced a packet whose header announced
             # "converged, 0 violations" while every section below still
@@ -917,7 +929,6 @@ def main() -> int:
     # raising -- and so the closure arithmetic cannot silently read a stale
     # value from a previous design iteration.
     _press_total_kg = 0.0
-    design_conflict = None
     try:
         from cadflow.backends import get_backend
         from cadflow.sculpt import bell_contour, nozzle_solid
@@ -2216,7 +2227,8 @@ def main() -> int:
             closure = mass_closure(
                 asm, budget,
                 liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0),
-                pressurisation_kg=_press_total_kg)
+                pressurisation_kg=_press_total_kg,
+                tps_kg=_tps_total_kg)
             files = export_assembly(asm, args.out / "cad")
             assembly = {"summary": asm.summary(),
                         "total_length_m": asm.total_length_mm / 1000.0,
@@ -2244,6 +2256,8 @@ def main() -> int:
                      f"{closure['engine_kg']:.1f} kg |")
             L.append(f"| pressurisation, helium and bottles | "
                      f"{closure['pressurisation_kg']:.1f} kg |")
+            if closure.get("tps_kg"):
+                L.append(f"| thermal protection | {closure['tps_kg']:.1f} kg |")
             L.append(f"| accounted for | {closure['accounted_kg']:.1f} kg |")
             L.append(f"| structural budget | {closure['budget_kg']:.1f} kg |")
             L.append(f"| slack | {closure['slack_kg']:+.1f} kg |")
