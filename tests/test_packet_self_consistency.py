@@ -205,3 +205,29 @@ def test_pressurisation_mass_is_charged_where_it_is_reported(packet):
         pytest.skip("packet predates the split pressurisation findings")
     assert "pressurisation" in closure["detail"], (
         "the closure does not show the pressurisation mass it was charged")
+
+
+def test_the_repairs_the_loop_made_are_recorded(packet):
+    """A verdict reached after repairs is a different claim from a clean one.
+
+    design_history carried the loop's record of its own decisions -- which alloy
+    it right-sized to, whether it dropped a stage, whether it reached for
+    thermal protection -- and was assigned and never read. The packet reported
+    what the vehicle is and never how it came to be that, which is the one thing
+    a reader cannot reconstruct from the result.
+
+    Checked on the markdown rather than the JSON because that is where a reader
+    meets it, and the whole point is what a reader can see.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    newest = max(PACKETS, key=lambda p: p.stat().st_mtime)
+    md = list(newest.parent.glob("*.md"))
+    if not md:
+        pytest.skip("packet has no markdown report")
+    text = md[0].read_text()
+    if "autodesign" not in text.lower() and "repair loop" not in text.lower():
+        pytest.skip("packet was not produced by the design loop")
+    assert "What the design loop changed" in text, (
+        "the loop's own repair record does not appear in the report")

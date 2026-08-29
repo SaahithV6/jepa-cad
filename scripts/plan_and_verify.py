@@ -2347,6 +2347,39 @@ def main() -> int:
     # requirement remains unchecked, so `all_passed` is False unless the packet
     # actually verified everything, and the three-way status says which of the
     # three situations it is.
+    # How the loop arrived at this design.
+    #
+    # design_history was assigned and never read: the repair loop's record of
+    # its own decisions -- which alloy it right-sized to, which nose it chose,
+    # whether it dropped a stage or reached for thermal protection -- was
+    # computed and discarded. The packet reported what the vehicle is and never
+    # how it came to be that, which is the one thing a reader cannot reconstruct
+    # from the result.
+    #
+    # It matters more now that the loop can repair things. A design that passes
+    # because a blanket was added and the alloy changed underneath it is a
+    # different claim from one that passed on its first evaluation, and the
+    # difference is invisible in the findings.
+    if design_history:
+        _steps = [h for h in design_history if h.get("note")]
+        if _steps:
+            L.append("\n## What the design loop changed\n")
+            L.append("| step | change | gross |")
+            L.append("|---|---|---|")
+            for _h in _steps:
+                _g = _h.get("gross_kg")
+                L.append(f"| {_h.get('iteration', '?')} | {_h['note']} | "
+                         + (f"{_g:.1f} kg |" if isinstance(_g, (int, float))
+                            else "-- |"))
+            _tried = [a for _h in _steps for a in (_h.get("alternatives") or [])]
+            for _a in _tried:
+                L.append(f"\n- also tried: {_a}")
+            L.append("\nEvery row is a change the loop made to satisfy a "
+                     "constraint it could not otherwise meet. A design that "
+                     "reaches a clean verdict after four repairs is a different "
+                     "claim from one that was right at the first evaluation, and "
+                     "nothing else in this packet distinguishes them.\n")
+
     # Is each passing margin bigger than the error bar on the number it came
     # from?
     #
