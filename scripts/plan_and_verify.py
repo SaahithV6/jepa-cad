@@ -344,6 +344,9 @@ def main() -> int:
     # is not a safety net, it is an eraser.
     design_conflict = None
     _tps_total_kg = 0.0
+    # Ring baffles, charged to the closure. One per tank: the slosh criterion is
+    # evaluated on stage 1 and every stage has the same problem.
+    _baffle_total_kg = 0.0
 
     if args.autodesign:
         try:
@@ -1983,13 +1986,83 @@ def main() -> int:
                              f"only when the slosh model, the mass properties "
                              f"and the aerodynamics are evaluated together at "
                              f"one flight condition.")
+                # Judge the separation against what the damping requires, not
+                # against a coincidence window.
+                #
+                # This passed anything outside 0.8 to 1.25, while
+                # slosh_baffles.required_separation computes the real
+                # criterion -- 5.0x for a bare tank at zeta = 0.0005, falling to
+                # 1.5x once baffles bring it to 0.05. The comment directly below
+                # already stated the 5:1 rule; the verdict above it used a
+                # different and much weaker test, so a design separated by 1.89x
+                # read as a clean pass against a requirement of 5.0x.
+                #
+                # The fix is cheap enough that the gap is worth closing rather
+                # than reporting: one 41 mm ring baffle, 0.33 kg, raises damping
+                # by a factor of ninety and takes the requirement below what
+                # this vehicle already has.
+                from cadflow.slosh_baffles import (
+                    BARE_TANK_DAMPING as _ZETA_BARE,
+                    required_separation as _req_sep, size_baffles as _size_baf)
+
+                _need_sep = _req_sep(_ZETA_BARE)
+                _baffle = None
+                if _coincide < _need_sep:
+                    try:
+                        _baffle = _size_baf(
+                            tank_radius_m=flight_r,
+                            fill_depth_m=max(0.2, 0.5 * fv["length_m"]
+                                             / max(1, len(p.stack))),
+                            slosh_hz=_maxq_slosh,
+                            required_bandwidth_hz=_rb,
+                            wall_density_kg_m3=_skin_rho)
+                    except ValueError:
+                        _baffle = None
+                _sep_ok = _coincide >= _need_sep or _baffle is not None
+                _sep_detail = (
+                    f"slosh {_maxq_slosh:.2f} Hz against pitch {_rb:.2f} Hz, "
+                    f"ratio {_coincide:.2f} against {_need_sep:.1f} required at "
+                    f"a bare-tank damping of {_ZETA_BARE}")
+                if _baffle is not None:
+                    _sep_detail += (
+                        f"; {_baffle.n_baffles} ring baffle(s) "
+                        f"{1000*_baffle.width_m:.0f} mm wide raise damping to "
+                        f"{_baffle.damping_ratio:.3f}, which drops the "
+                        f"requirement to {_baffle.achieved_separation:.1f} and "
+                        f"costs {_baffle.mass_kg:.2f} kg")
+                elif _coincide < _need_sep:
+                    _sep_detail += "; no baffle within a sensible width closes it"
                 _assembly_findings.append({
                     "check": "slosh / pitch-mode separation",
-                    "passed": not (0.8 <= _coincide <= 1.25),
-                    "detail": (f"slosh {_maxq_slosh:.2f} Hz against pitch "
-                               f"{_rb:.2f} Hz, ratio {_coincide:.2f}"),
-                    "severity": ("fail" if 0.8 <= _coincide <= 1.25
-                                 else "pass")})
+                    "passed": bool(_sep_ok),
+                    "detail": _sep_detail,
+                    "severity": "pass" if _sep_ok else "fail"})
+                if _baffle is not None:
+                    # Charged, not merely recommended.
+                    #
+                    # Passing this check on the strength of a part that is not
+                    # in the vehicle and not in the mass budget is the overclaim
+                    # this packet has already made three times -- with the
+                    # pressurant, the tank domes and the thermal protection. A
+                    # baffle the design depends on is a baffle the design
+                    # carries.
+                    _baffle_total_kg += float(_baffle.mass_kg) * len(p.stack)
+                    L.append(
+                        f"\n**The separation needs baffles.** At the bare-tank "
+                        f"damping of {_ZETA_BARE} the rule is "
+                        f"{_need_sep:.1f}x and this vehicle has "
+                        f"{_coincide:.2f}x. {_baffle.n_baffles} ring baffle(s) "
+                        f"{1000*_baffle.width_m:.0f} mm wide raise damping to "
+                        f"{_baffle.damping_ratio:.3f} -- a factor of "
+                        f"{_baffle.damping_ratio/_ZETA_BARE:.0f} -- which takes "
+                        f"the requirement to {_baffle.achieved_separation:.1f}x, "
+                        f"below what the vehicle already has, for "
+                        f"{_baffle.mass_kg:.2f} kg.\n")
+                    L.append(
+                        "\nThis verdict previously used a coincidence window, "
+                        "passing anything outside 0.8 to 1.25 while the "
+                        "criterion the damping actually implies sat unused in "
+                        "the module next to it.\n")
                 # A shut window is not automatically a dead end. The 5:1
                 # separation is the rule for an undamped mode, and baffles
                 # change that. What baffles cannot change is a mode that sits
@@ -2282,7 +2355,7 @@ def main() -> int:
                 asm, budget,
                 liftoff_thrust_n=p.trajectory.get("liftoff_thrust_n", 0.0),
                 pressurisation_kg=_press_total_kg,
-                tps_kg=_tps_total_kg)
+                tps_kg=_tps_total_kg + _baffle_total_kg)
             files = export_assembly(asm, args.out / "cad")
             assembly = {"summary": asm.summary(),
                         "total_length_m": asm.total_length_mm / 1000.0,
@@ -2311,7 +2384,8 @@ def main() -> int:
             L.append(f"| pressurisation, helium and bottles | "
                      f"{closure['pressurisation_kg']:.1f} kg |")
             if closure.get("tps_kg"):
-                L.append(f"| thermal protection | {closure['tps_kg']:.1f} kg |")
+                L.append(f"| thermal protection and slosh baffles | "
+                         f"{closure['tps_kg']:.1f} kg |")
             L.append(f"| accounted for | {closure['accounted_kg']:.1f} kg |")
             L.append(f"| structural budget | {closure['budget_kg']:.1f} kg |")
             L.append(f"| slack | {closure['slack_kg']:+.1f} kg |")

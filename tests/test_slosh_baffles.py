@@ -118,3 +118,40 @@ def test_an_impossible_geometry_returns_nothing():
     """
     assert size_baffles(tank_radius_m=1.0, fill_depth_m=3.0, slosh_hz=2.0,
                         required_bandwidth_hz=1.9, max_width_ratio=0.001) is None
+
+
+def test_the_separation_rule_comes_from_the_damping_not_a_fixed_window():
+    """The criterion the packet was not using.
+
+    A verdict that passes anything outside a 0.8 to 1.25 coincidence window
+    calls a 1.89x separation clean, while the rule this module computes for a
+    bare tank is 5.0x. Both numbers existed; only the weaker one reached the
+    finding.
+    """
+    from cadflow.slosh_baffles import (
+        BARE_TANK_DAMPING, WELL_DAMPED_RATIO, required_separation)
+
+    bare = required_separation(BARE_TANK_DAMPING)
+    damped = required_separation(WELL_DAMPED_RATIO)
+    assert bare == pytest.approx(5.0, abs=0.1)
+    assert damped == pytest.approx(1.5, abs=0.1)
+    # the vehicle's actual 1.89x sits between them, which is the whole point:
+    # it fails the bare rule and clears the damped one
+    assert damped < 1.89 < bare
+
+
+def test_a_small_baffle_moves_the_requirement_below_what_the_vehicle_has():
+    """0.33 kg buys a factor of ninety in damping.
+
+    Worth asserting because the cost is what makes closing the gap obvious
+    rather than a trade -- a requirement missed by 2.6x and fixed by a third of
+    a kilogram is not a design compromise.
+    """
+    from cadflow.slosh_baffles import BARE_TANK_DAMPING, size_baffles
+
+    b = size_baffles(tank_radius_m=0.338, fill_depth_m=1.1, slosh_hz=2.47,
+                     required_bandwidth_hz=1.31, wall_density_kg_m3=2680.0)
+    assert b is not None
+    assert b.damping_ratio > 50 * BARE_TANK_DAMPING
+    assert b.achieved_separation < 1.89
+    assert b.mass_kg < 1.0
