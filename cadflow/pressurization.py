@@ -100,10 +100,23 @@ PROPELLANTS = {
 }
 
 #: Which propellants a combination uses, oxidiser first.
+#:
+#: Only combinations the planner can actually fly. lox_lch4 was listed here and
+#: nowhere else in the program: not in planner.PROPELLANTS, not in
+#: combustion.REFERENCE. Asking for it died with a bare KeyError deep inside
+#: chamber_properties, because this table advertised a capability the rest of
+#: the code does not have. A lookup that offers more than the system supports is
+#: a promise made by whoever edited the table last.
+#:
+#: Methane is spelled lox_ch4, which is what the chemistry calls it. This table
+#: said lox_lch4 -- a name nothing else in the program uses -- so a real,
+#: supported combination was unreachable through it while appearing to be
+#: offered. The CLI now validates against the chemistry's own key set, so a
+#: name that exists only here cannot be advertised again.
 COMBINATIONS = {
     "lox_rp1": ("lox", "rp1"),
     "lox_lh2": ("lox", "lh2"),
-    "lox_lch4": ("lox", "lch4"),
+    "lox_ch4": ("lox", "lch4"),
 }
 
 

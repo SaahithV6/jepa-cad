@@ -294,11 +294,34 @@ def component_specs(body_r_mm: float, stages, gross_kg: float, max_q_pa: float,
     return specs
 
 
+def _planner_propellants() -> set[str]:
+    """Propellant combinations the planner can actually fly.
+
+    Read from the chemistry rather than listed here, so the CLI cannot drift
+    from what the program supports -- which is exactly how lox_lch4 came to be
+    offered by one table and understood by none.
+    """
+    try:
+        from generate_propulsion_trajectory_corpus import PROPELLANTS
+
+        return set(PROPELLANTS)
+    except Exception:  # noqa: BLE001
+        return {"lox_rp1"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--payload-kg", type=float, required=True)
     ap.add_argument("--apogee-km", type=float, required=True)
-    ap.add_argument("--propellant", type=str, default="lox_rp1")
+    # Validated against what the planner can actually fly, not left open.
+    #
+    # --propellant lox_lch4 crashed with a bare KeyError inside
+    # chamber_properties, several hundred lines into a run, because one lookup
+    # table offered a combination the chemistry does not know. A choice the
+    # program cannot honour should be refused at the point it is asked for.
+    _PROPELLANTS = tuple(sorted(_planner_propellants()))
+    ap.add_argument("--propellant", type=str, default="lox_rp1",
+                    choices=_PROPELLANTS)
     ap.add_argument("--chamber-bar", type=float, default=55.0)
     ap.add_argument("--out", type=Path, default=ROOT / "artifacts/plan_packet")
     ap.add_argument("--solve-structure", action="store_true",
@@ -363,7 +386,23 @@ def main() -> int:
         try:
             from cadflow.autodesign import autodesign as _autodesign
 
-            _res = _autodesign(args.payload_kg, args.apogee_km, max_iters=12)
+            # Give the loop the propellant the caller asked for.
+            #
+            # This called autodesign with no knobs, so Knobs.propellant stayed
+            # at its "lox_rp1" default and --propellant was honoured everywhere
+            # except the loop that actually builds the vehicle. 250 kg to
+            # 600 km on lox_lh2 returned 2837.2 kg gross and two stages --
+            # identical to the same mission on lox_rp1, to a tenth of a
+            # kilogram. Hydrogen is 11.4x bulkier than kerosene and has far
+            # higher specific impulse; it cannot produce the same vehicle. The
+            # flag was being read, printed in the header, and used for the
+            # standalone plan, while the design it described came from a
+            # different propellant entirely.
+            from cadflow.autodesign import Knobs as _Knobs
+
+            _res = _autodesign(args.payload_kg, args.apogee_km,
+                               knobs=_Knobs(propellant=args.propellant),
+                               max_iters=12)
             design_knobs = _res["knobs"]
             design_history = _res["history"]
             # What the loop concluded it could not fix.
