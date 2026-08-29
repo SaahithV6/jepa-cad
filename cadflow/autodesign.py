@@ -100,6 +100,22 @@ class Knobs:
     #: shapes. CFD now prices all three on an open-base vehicle, so the choice
     #: can be made on measured drag rather than left at a default.
     nose_shape: str = "ogive"
+    #: Oxidiser-to-fuel mass ratio. None takes the propellant catalogue's value.
+    #:
+    #: A design variable for the same reason the others are, and a conspicuous
+    #: omission: the loop could move chamber pressure, thrust-to-weight, the
+    #: structural coefficient, the skin alloy, the nose shape, the stage count
+    #: and whether to carry a blanket -- but not the single most important
+    #: propulsion parameter. planner.plan has accepted an of_ratio throughout;
+    #: nothing was passing one.
+    #:
+    #: The interesting part is which optimum applies. Peak specific impulse for
+    #: lox/rp1 sits at 2.208 and peak *density* impulse near 2.56. The usual
+    #: answer is to maximise Isp, but this vehicle's tank mass is set by surface
+    #: area at minimum gauge rather than by pressure, so denser propellant means
+    #: smaller tanks means less structure -- and tank ends are what decide
+    #: whether its smallest stage is affordable at all.
+    of_ratio: float | None = None
     #: Protect the structure with a blanket instead of skinning it in an alloy
     #: that survives the airflow.
     #:
@@ -306,7 +322,8 @@ def _plan_at_coeff(apogee_km: float, payload_kg: float, knobs: "Knobs"):
                         chamber_bar=knobs.chamber_bar,
                         nose_shape=knobs.nose_shape,
                         twr_by_stage=list(knobs.twr_by_stage),
-                        max_stages=knobs.max_stages)
+                        max_stages=knobs.max_stages,
+                        of_ratio=knobs.of_ratio)
     saved_coeff, saved_mr = _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR
     try:
         _pl.STRUCT_COEFF = float(knobs.struct_coeff)
@@ -316,7 +333,8 @@ def _plan_at_coeff(apogee_km: float, payload_kg: float, knobs: "Knobs"):
                         chamber_bar=knobs.chamber_bar,
                         nose_shape=knobs.nose_shape,
                         twr_by_stage=list(knobs.twr_by_stage),
-                        max_stages=knobs.max_stages)
+                        max_stages=knobs.max_stages,
+                        of_ratio=knobs.of_ratio)
     finally:
         _pl.STRUCT_COEFF, _pl.MAX_STAGE_MR = saved_coeff, saved_mr
         _pl.clear_plan_cache()
