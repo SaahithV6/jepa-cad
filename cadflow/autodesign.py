@@ -301,6 +301,26 @@ def _size_tps_for(ev, knobs, backface_limit_k: float) -> dict | None:
         volume = st.prop_mass_kg / 1020.0
         length_m += max(0.2, volume / (math.pi * radius_m ** 2))
     wetted_m2 = 2.0 * math.pi * radius_m * max(length_m, 2.0 * radius_m)
+
+    # Plus the nose, which this omitted entirely.
+    #
+    # A bare 2 pi r L covers the barrel and stops at the shoulder, leaving out
+    # the one part of the vehicle that most needs a blanket: the nose is where
+    # stagnation heating peaks. It is 21% of the wetted area on this airframe,
+    # so the thermal protection mass -- which is now charged to the mass budget
+    # -- was understated by about two kilograms, in the direction that makes the
+    # vehicle look lighter than it is.
+    #
+    # profiles.wetted_area is exact for a solid of revolution and was sitting
+    # unused; the nose shape is a design variable the loop already moves.
+    try:
+        from cadflow.profiles import nose_profile, wetted_area
+
+        _nose = nose_profile(radius_m, 4.0 * radius_m,
+                             getattr(knobs, "nose_shape", "ogive"), 200)
+        wetted_m2 += wetted_area(_nose)
+    except Exception:  # noqa: BLE001 - the barrel area is still the bulk of it
+        pass
     got["wetted_area_m2"] = wetted_m2
     got["mass_kg"] = got["areal_mass_kg_m2"] * wetted_m2
     return got

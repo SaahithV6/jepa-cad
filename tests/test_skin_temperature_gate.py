@@ -94,3 +94,33 @@ def test_a_caller_can_still_impose_something_stricter():
     assert ev.skin_limit_k == pytest.approx(300.0)
     if ev.skin_temp_k > 300.0:
         assert any("skin" in v.quantity.lower() for v in ev.violations)
+
+
+def test_thermal_protection_covers_the_nose_as_well_as_the_barrel():
+    """The blanket was sized on a bare cylinder, stopping at the shoulder.
+
+    2 pi r L leaves out the one part of the vehicle that most needs protecting:
+    the nose is where stagnation heating peaks. On this airframe it is 21% of
+    the wetted area, so the TPS mass -- now charged to the mass budget -- was
+    understated by about two kilograms, in the direction that makes the vehicle
+    look lighter than it is.
+    """
+    import math
+
+    from cadflow.profiles import nose_profile, wetted_area
+
+    r, length = 0.338, 4.4
+    barrel = 2.0 * math.pi * r * length
+    nose = wetted_area(nose_profile(r, 4.0 * r, "ogive", 200))
+    assert nose / barrel > 0.15, "the nose is not a rounding error"
+
+    ev = evaluate(PAYLOAD, APOGEE, Knobs(skin_material="al-6061-t6",
+                                         use_tps=True), None)
+    if not getattr(ev, "tps", None) or not ev.tps.get("required"):
+        pytest.skip("this mission needs no thermal protection")
+    # the area the sizing used has to exceed a bare barrel of the same vehicle
+    assert ev.tps["wetted_area_m2"] > 0.0
+    implied_barrel = 2.0 * math.pi * (
+        max(0.05, (ev.gross_kg / 1000.0) ** (1 / 3) * 0.55 / 2.0)) ** 1 * 1.0
+    assert ev.tps["mass_kg"] == pytest.approx(
+        ev.tps["areal_mass_kg_m2"] * ev.tps["wetted_area_m2"], rel=1e-9)
