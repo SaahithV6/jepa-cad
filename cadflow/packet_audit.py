@@ -62,6 +62,8 @@ KIND_DESCRIPTIONS = {
     "mission": "the apogee error against the apogee it is computed from",
     "stability": "the normal force slope, centre of pressure and static margin "
                  "against the stations they are measured between",
+    "provenance": "the inputs each subsystem used against the ones the caller "
+                  "asked for",
 }
 
 
@@ -220,3 +222,50 @@ def stack_interference(parts) -> list[Cross]:
 
 def failures(crosses) -> list[Cross]:
     return [c for c in crosses if not c.ok]
+
+
+def input_provenance(*, requested: dict, used: dict) -> list[Cross]:
+    """Did every subsystem use the inputs the caller actually asked for?
+
+    Nearly every defect found by sweeping this program's mission and propellant
+    space was one shape: a component using a value nobody gave it. Not a wrong
+    model -- a correct model applied to the wrong input, silently substituted by
+    a default argument, a ``.get`` fallback or an omitted parameter.
+
+    The three worst were all this:
+
+      * ``--propellant lox_lh2`` produced a vehicle identical to kerosene to a
+        tenth of a kilogram, because autodesign was called with no knobs and
+        ``Knobs.propellant`` stayed at its default. The packet header said
+        hydrogen; the design was kerosene.
+      * Tank sizing was never passed ``combination``, so every vehicle got
+        kerosene tanks whatever it burned, including a solid motor.
+      * Tanks were sized at an O/F of 2.56 while the chemistry burned 2.45,
+        because one module carried a hardcoded default.
+
+    None raised. Each produced a confident, internally consistent, wrong answer,
+    and 700-odd tests passed through all of them, because every module was right
+    about what it was handed. Unit tests verify modules; this verifies that the
+    modules were handed the same design.
+
+    Compared as strings for names and with a relative tolerance for numbers, so
+    a propellant that differs by identity and a chamber pressure that differs by
+    a rounding are both caught without either being noise.
+    """
+    out: list[Cross] = []
+    for key in sorted(set(requested) & set(used)):
+        want, got = requested[key], used[key]
+        if want is None or got is None:
+            continue
+        if isinstance(want, str) or isinstance(got, str):
+            out.append(Cross(
+                f"{key} used is the {key} requested",
+                str(want) == str(got), 0.0, 0.0,
+                f"asked for {want!r}, the design used {got!r}",
+                kind="provenance"))
+        else:
+            out.append(_agree(
+                f"{key} used is the {key} requested", float(got), float(want),
+                1e-3, f"asked for {want}, the design used {got}",
+                kind="provenance"))
+    return out

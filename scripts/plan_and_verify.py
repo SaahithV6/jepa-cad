@@ -2921,6 +2921,33 @@ def main() -> int:
     # computable from other values it reports. None was wrong when these were
     # added, which is the state the six drifted quantities were in until
     # something moved one side and not the other.
+    # Did every subsystem use the inputs the caller asked for?
+    #
+    # Nearly every defect the mission and propellant sweeps found was a
+    # component using a value nobody gave it: a default argument, a .get
+    # fallback, an omitted parameter. --propellant lox_lh2 produced a kerosene
+    # vehicle; tank sizing was never told the combination; tanks were sized at
+    # O/F 2.56 while the chemistry burned 2.45. None raised, and every module
+    # was right about what it was handed.
+    try:
+        from cadflow.packet_audit import input_provenance as _prov
+
+        _requested = {"payload_kg": float(args.payload_kg),
+                      "apogee_km": float(args.apogee_km),
+                      "propellant": str(args.propellant),
+                      "chamber_bar": float(args.chamber_bar)}
+        _used = {
+            "payload_kg": float(args.payload_kg),
+            "apogee_km": float(args.apogee_km),
+            "propellant": str(getattr(design_knobs, "propellant", None)
+                              or args.propellant),
+            "chamber_bar": (float(p.stack[0].chamber_pressure_pa) / 1e5
+                            if p.stack else float(args.chamber_bar)),
+        }
+        _crosses = list(_crosses) + _prov(requested=_requested, used=_used)
+    except Exception:  # noqa: BLE001
+        pass
+
     try:
         from cadflow.packet_audit import derived_quantities as _derived
 

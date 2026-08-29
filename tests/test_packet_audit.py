@@ -248,3 +248,49 @@ def test_it_catches_a_centre_of_pressure_belonging_to_different_fins():
     st["cp_z_m"] = 0.857            # the pre-trade cp, with post-trade slopes
     bad = failures(derived_quantities(**_derived(stability=st)))
     assert any("weighted mean" in c.check for c in bad)
+
+
+def test_it_catches_a_design_built_from_a_different_propellant():
+    """The largest defect the sweeps found, as a standing check.
+
+    --propellant lox_lh2 produced a vehicle identical to kerosene to a tenth of
+    a kilogram, because autodesign was called with no knobs and Knobs.propellant
+    stayed at its default. The packet header said hydrogen and the design was
+    kerosene: a document internally consistent and wholly wrong about its
+    subject.
+    """
+    from cadflow.packet_audit import failures, input_provenance
+
+    bad = failures(input_provenance(
+        requested={"propellant": "lox_lh2"}, used={"propellant": "lox_rp1"}))
+    assert bad and "lox_lh2" in bad[0].detail
+
+
+def test_it_catches_a_mixture_ratio_that_two_modules_disagree_on():
+    """Tanks sized at 2.56 while the chemistry burned 2.45."""
+    from cadflow.packet_audit import failures, input_provenance
+
+    assert failures(input_provenance(requested={"of_ratio": 2.45},
+                                     used={"of_ratio": 2.56}))
+
+
+def test_a_design_built_from_its_own_inputs_is_quiet():
+    """A check that fires on correct packets gets switched off."""
+    from cadflow.packet_audit import failures, input_provenance
+
+    same = {"propellant": "lox_rp1", "payload_kg": 25.0, "chamber_bar": 55.0}
+    assert not failures(input_provenance(requested=same, used=dict(same)))
+
+
+def test_rounding_is_not_reported_as_a_substitution():
+    """Chamber pressure round-trips through pascals and back.
+
+    A tolerance tight enough to catch a substituted value and loose enough to
+    ignore a float conversion, or the check cries wolf on every packet.
+    """
+    from cadflow.packet_audit import failures, input_provenance
+
+    assert not failures(input_provenance(requested={"chamber_bar": 55.0},
+                                         used={"chamber_bar": 55.00000001}))
+    assert failures(input_provenance(requested={"chamber_bar": 55.0},
+                                     used={"chamber_bar": 60.0}))
