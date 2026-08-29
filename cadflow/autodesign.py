@@ -781,9 +781,18 @@ def _afford_tankage(payload_kg, apogee_km, knobs, ev, limits):
         if got.plan is not None and got.feasible:
             trial_shares = _tankage_shares(got, trial)
             if trial_shares and all(f["feasible"] for f in trial_shares):
+                # Name what actually changed. "Thermal protection" alone hides
+                # the substantive half of this repair: the blanket is only worth
+                # its mass because it lets the structure be a lighter alloy, and
+                # a reader who is not told the material moved cannot judge the
+                # result.
+                _tps_kg = float(getattr(got, "tps_mass_kg", 0.0) or 0.0)
+                _how = (f"a {_tps_kg:.1f} kg blanket, which frees the structure "
+                        f"from {knobs.skin_material} to {trial.skin_material}"
+                        if trial.skin_material != knobs.skin_material
+                        else f"a {_tps_kg:.1f} kg blanket")
                 return {"fixed": True, "knobs": trial, "evaluation": got,
-                        "before": shares, "after": trial_shares,
-                        "how": "thermal protection"}
+                        "before": shares, "after": trial_shares, "how": _how}
             tried.append(
                 "thermal protection: the structure survives but its smallest "
                 "stage still cannot afford its tankage")

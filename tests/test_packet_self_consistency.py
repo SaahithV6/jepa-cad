@@ -219,15 +219,19 @@ def test_the_repairs_the_loop_made_are_recorded(packet):
     Checked on the markdown rather than the JSON because that is where a reader
     meets it, and the whole point is what a reader can see.
     """
-    import json as _json
-    from pathlib import Path as _Path
-
     newest = max(PACKETS, key=lambda p: p.stat().st_mtime)
     md = list(newest.parent.glob("*.md"))
     if not md:
         pytest.skip("packet has no markdown report")
     text = md[0].read_text()
-    if "autodesign" not in text.lower() and "repair loop" not in text.lower():
+
+    # struct_coeff_solved is written only when the fixed point ran, which is
+    # what the design loop does. The first version of this guard looked for
+    # "autodesign" or "repair loop" in the markdown -- both are stdout messages
+    # that never reach the report, so the test skipped on every packet
+    # including the ones it was written to check. A guard that never lets its
+    # own assertion run is indistinguishable from no test.
+    if packet.get("struct_coeff_solved") is None:
         pytest.skip("packet was not produced by the design loop")
     assert "What the design loop changed" in text, (
         "the loop's own repair record does not appear in the report")
