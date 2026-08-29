@@ -1538,6 +1538,71 @@ def main() -> int:
                 _fz_bad = [f for f in _fz if not f["feasible"]]
                 for _f in _fz_bad:
                     L.append(f"\n- {_f['note']}")
+
+                # Why the alloy is what it is, when a stage cannot afford it.
+                #
+                # Dome mass is linear in density, so the material decides
+                # affordability as much as the geometry does -- Inconel is three
+                # times aluminium. If that alloy was forced by the thermal
+                # environment rather than chosen for strength, then "this stage
+                # is too small" is the wrong diagnosis: the chain runs
+                # aeroheating to material to density to dome mass to
+                # affordability, and no single check in this packet owns it.
+                #
+                # This became visible only when the skin-temperature gate was
+                # turned back on. With it disabled the loop flew aluminium at
+                # 895 K, and the resulting threefold density advantage made
+                # designs read affordable that are not.
+                if _fz_bad:
+                    try:
+                        # Imported here rather than relying on the module
+                        # alias bound 1,100 lines above inside another try: if
+                        # that one failed, this reads as a NameError about
+                        # _iter_m rather than as the missing catalogue it is.
+                        from cadflow.autodesign import _material as _mat_of
+                        from cadflow.space_materials import iter_materials
+
+                        _m = _mat_of(skin_material)
+                        _skin_k = float(p.trajectory.get("max_skin_temp_k") or 0.0)
+                        _lim_k = float(_m.max_service_temp_k)
+                        # "Lighter" has to mean lighter enough to matter.
+                        #
+                        # Any density below the incumbent's passes a bare < ,
+                        # and stainless 321 at 8000 against Inconel's 8190 does
+                        # -- by 2.3%, which changes no verdict. Reporting that
+                        # as an available trade would say the alloy is not
+                        # thermally forced when for every practical purpose it
+                        # is. A tenth is the smallest saving that moves dome
+                        # mass enough to be worth a reader's attention.
+                        _MEANINGFUL = 0.10
+                        _cooler = [x for x in iter_materials()
+                                   if x.yield_mpa
+                                   and x.max_service_temp_k >= _skin_k
+                                   and x.density_kg_m3
+                                   <= _m.density_kg_m3 * (1.0 - _MEANINGFUL)]
+                        L.append(
+                            f"\n**The alloy is thermally forced.** The skin "
+                            f"reaches {_skin_k:.0f} K and {skin_material} is "
+                            f"rated to {_lim_k:.0f} K, a margin of "
+                            f"{_lim_k - _skin_k:.0f} K "
+                            f"({100*(_lim_k - _skin_k)/max(_lim_k,1):.1f}%). "
+                            + (f"No lighter alloy in the catalogue survives this "
+                               f"temperature, so the tank ends weigh what they "
+                               f"weigh: at {_m.density_kg_m3:.0f} kg/m3 the domes "
+                               f"are the largest part of the tankage bill, and "
+                               f"the affordability failure above is a thermal "
+                               f"result reported as a structural one."
+                               if not _cooler else
+                               f"{len(_cooler)} alloy(s) at least "
+                               f"{100*_MEANINGFUL:.0f}% lighter also survive it "
+                               f"(lightest {min(_cooler, key=lambda x: x.density_kg_m3).material_id} "
+                               f"at {min(x.density_kg_m3 for x in _cooler):.0f} "
+                               f"kg/m3), so the choice is not thermally forced "
+                               f"and the design loop should be able to trade "
+                               f"here.")
+                            + "\n")
+                    except Exception as _mexc:  # noqa: BLE001
+                        L.append(f"\n(alloy provenance unavailable: {_mexc})\n")
                 if _fz_bad and design_conflict:
                     L.append(
                         f"\n**The design loop could not repair this.** "
