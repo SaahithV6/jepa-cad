@@ -233,6 +233,10 @@ def test_the_repairs_the_loop_made_are_recorded(packet):
     # own assertion run is indistinguishable from no test.
     if packet.get("struct_coeff_solved") is None:
         pytest.skip("packet was not produced by the design loop")
+    # The section is unconditional. A design that needed no repairs says so,
+    # because an absent section cannot be told apart from an unrecorded one --
+    # and "right at first evaluation" is a stronger claim than "made right",
+    # which is exactly the thing worth being able to read.
     assert "What the design loop changed" in text, (
         "the loop's own repair record does not appear in the report")
 

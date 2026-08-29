@@ -2565,6 +2565,21 @@ def main() -> int:
     # difference is invisible in the findings.
     if design_history:
         _steps = [h for h in design_history if h.get("note")]
+        if not _steps:
+            # Say so, rather than rendering nothing.
+            #
+            # An absent section is ambiguous between "the loop changed nothing"
+            # and "the loop's changes were not recorded", and those are very
+            # different claims about a design. 50 kg to 20,000 km converges in
+            # three iterations without a single repair, which is a fact worth
+            # stating -- it is the difference between a design that was right
+            # and one that was made right.
+            L.append("\n## What the design loop changed\n")
+            L.append("\nNothing. The loop converged without needing to move a "
+                     "single knob, so this design is as first evaluated rather "
+                     "than as repaired. That is a stronger claim than a clean "
+                     "verdict reached after several interventions, and the "
+                     "distinction is invisible in the findings alone.\n")
         if _steps:
             L.append("\n## What the design loop changed\n")
             L.append("| step | change | gross |")
