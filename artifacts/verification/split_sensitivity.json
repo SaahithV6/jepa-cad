@@ -1,0 +1,71 @@
+{
+  "rows": [
+    {
+      "twr": 66.0,
+      "stages": 4,
+      "split": [
+        0.74,
+        0.1924,
+        0.05,
+        0.0176
+      ],
+      "top_prop_kg": 21.89,
+      "top_struct_kg": 7.09,
+      "worst_tankage": 1.533,
+      "affordable": false
+    },
+    {
+      "twr": 70.0,
+      "stages": 4,
+      "split": [
+        0.74,
+        0.1924,
+        0.05,
+        0.0176
+      ],
+      "top_prop_kg": 21.89,
+      "top_struct_kg": 6.8,
+      "worst_tankage": 0.546,
+      "affordable": true
+    },
+    {
+      "twr": 74.0,
+      "stages": 3,
+      "split": [
+        0.82,
+        0.1476,
+        0.0324
+      ],
+      "top_prop_kg": 49.21,
+      "top_struct_kg": 14.69,
+      "worst_tankage": 0.998,
+      "affordable": true
+    },
+    {
+      "twr": 78.0,
+      "stages": 3,
+      "split": [
+        0.82,
+        0.1476,
+        0.0324
+      ],
+      "top_prop_kg": 45.06,
+      "top_struct_kg": 12.96,
+      "worst_tankage": 1.06,
+      "affordable": false
+    },
+    {
+      "twr": 82.0,
+      "stages": 3,
+      "split": [
+        0.82,
+        0.1476,
+        0.0324
+      ],
+      "top_prop_kg": 43.11,
+      "top_struct_kg": 11.98,
+      "worst_tankage": 0.391,
+      "affordable": true
+    }
+  ]
+}

@@ -54,7 +54,18 @@ DEFAULT_LIMITS = {
     #: modelled, and left at that it capped every alloy at aluminium's rating:
     #: Inconel 718 was reported as surviving 450 K rather than 920 K, and the
     #: loop bought thermal protection for a skin that did not need it.
-    "skin_temp_k": _NO_GATE_K,
+    #:
+    #: None, not _NO_GATE_K. Those are two different intentions -- "impose no
+    #: extra cap, the material governs" and "switch the gate off entirely" --
+    #: and collapsing them onto one sentinel disabled the gate by default.
+    #: plan_and_verify calls autodesign with no limits, so every packet this
+    #: project has produced ran with no skin-temperature gate: the loop returned
+    #: aluminium 6061-T6, rated to 420 K, on a skin at 895 K, reporting
+    #: feasible with an empty violation list. Aluminium is nearly molten there.
+    #: The 3x density difference against Inconel then decided whether the
+    #: vehicle could afford its own tankage, so a disabled thermal gate was
+    #: setting a structural verdict.
+    "skin_temp_k": None,
     #: how far the structural coefficient the loads demand may exceed the one
     #: the vehicle was sized at before the design is called unclosed. Two
     #: percent, because the planner picks architectures discretely and the
@@ -346,16 +357,21 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
         skin_limit = float(skin.max_service_temp_k)
         ev.skin_material = skin.material_id
     except KeyError:
-        skin_limit = float(lim["skin_temp_k"])
+        _cap = lim.get("skin_temp_k")
+        skin_limit = float(_cap) if _cap is not None else float(_NO_GATE_K)
     # The physical limit is what the material survives. `limits["skin_temp_k"]`
     # remains meaningful in two ways: a *lower* value is a caller demanding more
     # margin than the alloy needs, and an absurd value disables the gate for
     # callers testing something else. Reading the material and ignoring the
     # limit entirely -- which is what this did at first -- silently took that
     # switch away from every caller that had been using it.
-    caller_cap = float(lim["skin_temp_k"])
-    gate_disabled = caller_cap >= _NO_GATE_K
-    skin_limit = min(skin_limit, caller_cap) if not gate_disabled else skin_limit
+    # None means "no extra cap": the material's own rating governs and the gate
+    # is live. Only an explicit _NO_GATE_K disables it, which is what a caller
+    # testing something unrelated to heating passes.
+    caller_cap = lim.get("skin_temp_k")
+    gate_disabled = caller_cap is not None and float(caller_cap) >= _NO_GATE_K
+    if caller_cap is not None and not gate_disabled:
+        skin_limit = min(skin_limit, float(caller_cap))
     ev.skin_limit_k = skin_limit
     if ev.skin_temp_k > skin_limit and not gate_disabled:
         upgrade = coolest_capable_material(ev.skin_temp_k, knobs.skin_material)

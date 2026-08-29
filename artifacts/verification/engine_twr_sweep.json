@@ -1,0 +1,42 @@
+{
+  "payload_kg": 25.0,
+  "apogee_km": 4000.0,
+  "rows": [
+    {
+      "engine_twr": 60.0,
+      "gross_kg": 1857.5,
+      "struct_coeff": 0.2577,
+      "stages": 4,
+      "worst_tankage": 1.405,
+      "affordable": false,
+      "conflict": true
+    },
+    {
+      "engine_twr": 66.0,
+      "gross_kg": 1674.0,
+      "struct_coeff": 0.2447,
+      "stages": 4,
+      "worst_tankage": 1.533,
+      "affordable": false,
+      "conflict": true
+    },
+    {
+      "engine_twr": 82.0,
+      "gross_kg": 1725.4,
+      "struct_coeff": 0.2175,
+      "stages": 3,
+      "worst_tankage": 0.391,
+      "affordable": true,
+      "conflict": false
+    },
+    {
+      "engine_twr": 100.0,
+      "gross_kg": 1411.8,
+      "struct_coeff": 0.1956,
+      "stages": 3,
+      "worst_tankage": 0.464,
+      "affordable": true,
+      "conflict": false
+    }
+  ]
+}
