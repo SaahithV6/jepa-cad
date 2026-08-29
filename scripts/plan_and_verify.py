@@ -344,6 +344,17 @@ def main() -> int:
     # is not a safety net, it is an eraser.
     design_conflict = None
     _tps_total_kg = 0.0
+    # The inter-stage coast the trajectory integrates, so the separation check
+    # judges the same flight the rest of the packet describes.
+    try:
+        import inspect as _inspect
+
+        from cadflow.multistage import integrate_stack as _istack
+
+        _flown_coast_s = float(_inspect.signature(_istack)
+                               .parameters["coast_between_stages_s"].default)
+    except Exception:  # noqa: BLE001
+        _flown_coast_s = 2.0
     # Ring baffles, charged to the closure. One per tank: the slosh criterion is
     # evaluated on stage 1 and every stage has the same problem.
     _baffle_total_kg = 0.0
@@ -2208,9 +2219,27 @@ def main() -> int:
                 _need = coast_for_clearance_s(spent_mass_kg=_spent,
                                               upper_mass_kg=_upper,
                                               body_diameter_m=_D)
+                # Judge the coast the vehicle actually flies, not the minimum
+                # that would just suffice.
+                #
+                # This passed coast_s = max(1.0, _need), where _need is
+                # coast_for_clearance_s -- required_gap / v_rel. check_separation
+                # then computes gap = v_rel * coast_s and asks gap >= required,
+                # so the test was comparing a quantity against the value it was
+                # derived from. In floating point that answers no about half the
+                # time, and 50 kg to 20,000 km duly reported a separation
+                # failure on a vehicle whose separations are fine.
+                #
+                # 25 kg to 4,000 km could never expose it: its requirement is
+                # 0.60 s, below the 1.0 s floor, so the coast always exceeded
+                # the minimum and the comparison was never self-referential.
+                #
+                # The trajectory coasts COAST_BETWEEN_STAGES_S between stages.
+                # That is the number the design flies and the one the check
+                # should judge.
                 _sr = check_separation(stage_index=_i + 1, spent_mass_kg=_spent,
                                        upper_mass_kg=_upper, body_diameter_m=_D,
-                                       coast_s=max(1.0, _need))
+                                       coast_s=_flown_coast_s)
                 _sep_ok = _sep_ok and _sr.clears
                 L.append(f"| {_i+1}/{_i+2} | {_spent:.1f} kg | {_upper:.1f} kg | "
                          f"{_sr.relative_velocity_m_s:.2f} m/s | **{_need:.2f} s** |")
