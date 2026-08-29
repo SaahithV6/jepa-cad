@@ -1252,6 +1252,46 @@ def main() -> int:
             elif _t_buckle is None:
                 _buckle_repair = (_t_m, None)
 
+            # And against the load the packet itself calls dominant.
+            #
+            # Internal pressure never sized anything here. The wall came from
+            # axial compression, buckling and minimum gauge, and the pressure
+            # case was applied afterwards as a check -- so the largest membrane
+            # stress on the tank, three times the flight stress by the packet's
+            # own reckoning, had no influence on the thickness carrying it.
+            #
+            # v40 passed that check at a margin of 1.010. Not a designed margin:
+            # the wall had been sized for a different load and the pressure case
+            # landed just inside. Sizing to merely reach the allowable gives
+            # 0.794 mm, under the gauge floor, which is why it read as a pass at
+            # all. Sizing so the margin clears the 14.5% this project has
+            # measured between element orders gives 0.909 mm, and pressure
+            # becomes the driver it should always have been.
+            _press_repair = None
+            try:
+                from cadflow.margin_audit import RESOLVED_MARGIN
+                from cadflow.pressurization import (
+                    tank_pressure as _tp, wall_for_pressure_m as _wall_press)
+
+                _tank_h_pre = fv["length_m"] / max(1, len(p.stack))
+                _p_des = _tp("lox", acceleration_g=1.0,
+                             head_height_m=_tank_h_pre).design_pa
+                _st_pre = skin_stress_mpa(_res.peak_moment_nm, _axial_n,
+                                          flight_r, _t_m)
+                _t_press = _wall_press(
+                    pressure_pa=_p_des, radius_m=flight_r,
+                    allowable_pa=allowable_mpa * 1e6,
+                    axial_flight_pa=-_st_pre["axial_mpa"] * 1e6,
+                    bending_pa=-_st_pre["bending_mpa"] * 1e6,
+                    reference_wall_m=_t_m, target_margin=RESOLVED_MARGIN)
+                if _t_press > _t_m + 1e-9:
+                    _press_repair = (_t_m, _t_press)
+                    _t_m = _t_press
+                    _wall_driver = ("internal pressure, sized for a margin "
+                                    "outside measured uncertainty")
+            except Exception as _pexc:  # noqa: BLE001
+                print(f"pressure sizing unavailable: {_pexc}", flush=True)
+
             _st = skin_stress_mpa(_res.peak_moment_nm, _axial_n, flight_r, _t_m)
 
             L.append("\n## Flight loads on the assembly\n")
@@ -1278,6 +1318,19 @@ def main() -> int:
             L.append(f"| load set closes | shear {_res.closure_shear_n:.2e} N, "
                      f"moment {_res.closure_moment_nm:.2e} N m -> "
                      f"**{_res.balanced}** |")
+            if _press_repair is not None:
+                _was, _now = _press_repair
+                L.append(
+                    f"\n**The wall was thickened for internal pressure**, "
+                    f"{1000*_was:.3f} to {1000*_now:.3f} mm. Pressure was "
+                    f"previously checked and never sized: the wall came from "
+                    f"axial load, buckling and minimum gauge, so the largest "
+                    f"membrane stress on the tank had no influence on the "
+                    f"thickness carrying it. The target is a margin outside the "
+                    f"numerical uncertainty this packet measures for its own "
+                    f"stresses, not merely a margin above one -- sizing to "
+                    f"exactly the allowable leaves a verdict the analysis "
+                    f"cannot resolve.\n")
             if _buckle_repair is not None:
                 _was, _now = _buckle_repair
                 if _now is None:

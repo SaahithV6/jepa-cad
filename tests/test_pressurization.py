@@ -494,3 +494,65 @@ def test_thermal_protection_can_break_the_closure():
     asm = VehicleAssembly()
     assert mass_closure(asm, 10.0, tps_kg=5.0)["closes"]
     assert not mass_closure(asm, 10.0, tps_kg=15.0)["closes"]
+
+
+def test_pressure_sizes_the_wall_rather_than_only_checking_it():
+    """The dominant membrane load had no influence on the thickness carrying it.
+
+    The wall came from axial compression, buckling and minimum gauge, and the
+    pressure case was applied afterwards. Packet v40 passed it at a margin of
+    1.010 -- an arithmetic coincidence, not a designed margin.
+    """
+    from cadflow.pressurization import wall_for_pressure_m
+
+    p_des = 140.6e6 * 0.0008 / 0.338
+    t = wall_for_pressure_m(pressure_pa=p_des, radius_m=0.338,
+                            allowable_pa=131e6, axial_flight_pa=-26.8e6,
+                            bending_pa=-18.7e6, reference_wall_m=0.0008,
+                            target_margin=1.0)
+    # reaching the allowable needs less than the gauge floor, which is exactly
+    # why the thin margin read as a pass
+    assert t < 0.0008
+
+
+def test_sizing_to_a_resolvable_margin_makes_pressure_the_driver():
+    """Above the gauge floor, so the wall grows and the verdict becomes real."""
+    from cadflow.margin_audit import RESOLVED_MARGIN
+    from cadflow.pressurization import wall_for_pressure_m
+
+    p_des = 140.6e6 * 0.0008 / 0.338
+    t = wall_for_pressure_m(pressure_pa=p_des, radius_m=0.338,
+                            allowable_pa=131e6, axial_flight_pa=-26.8e6,
+                            bending_pa=-18.7e6, reference_wall_m=0.0008,
+                            target_margin=RESOLVED_MARGIN)
+    assert t > 0.0008
+    assert t == pytest.approx(0.000909, abs=2e-5)
+
+
+def test_the_answer_does_not_depend_on_the_reference_wall():
+    """Every membrane term goes as 1/t, so the answer follows by proportion.
+
+    The flight stresses are passed *as stresses at the reference wall*, so a
+    consistent comparison has to scale them with it. The first version of this
+    test held them fixed while doubling the reference, which describes two
+    different vehicles -- the same stress at twice the wall is twice the load --
+    and it failed for that reason rather than because the proportion was wrong.
+    """
+    from cadflow.pressurization import wall_for_pressure_m
+
+    base = dict(pressure_pa=400e3, radius_m=0.338, allowable_pa=131e6,
+                target_margin=1.0)
+    a = wall_for_pressure_m(reference_wall_m=0.0008, axial_flight_pa=-20e6,
+                            bending_pa=-10e6, **base)
+    # same loads seen at twice the wall are half the stress
+    b = wall_for_pressure_m(reference_wall_m=0.0016, axial_flight_pa=-10e6,
+                            bending_pa=-5e6, **base)
+    assert a == pytest.approx(b, rel=1e-12)
+
+
+def test_a_degenerate_reference_is_refused():
+    from cadflow.pressurization import wall_for_pressure_m
+
+    with pytest.raises(ValueError):
+        wall_for_pressure_m(pressure_pa=400e3, radius_m=0.338,
+                            allowable_pa=131e6, reference_wall_m=0.0)

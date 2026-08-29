@@ -553,3 +553,42 @@ def stage_feasibility(stages, pressurisations) -> list[dict]:
                    f"skin, plumbing or avionics")),
         })
     return out
+
+
+def wall_for_pressure_m(*, pressure_pa: float, radius_m: float,
+                        allowable_pa: float, axial_flight_pa: float = 0.0,
+                        bending_pa: float = 0.0, reference_wall_m: float = 0.0008,
+                        target_margin: float = 1.0) -> float:
+    """Wall thickness at which the membrane state reaches its allowable.
+
+    Internal pressure never sized anything in this project. The wall came from
+    axial compression, buckling and minimum gauge, and the pressure case was
+    applied afterwards as a check -- so the dominant membrane load on the tank,
+    which ``wall_load_state`` reports as three times the flight stress, had no
+    influence on the thickness carrying it.
+
+    That produced a margin of 1.010 in packet v40: not a designed margin but an
+    arithmetic coincidence, the wall having been sized for a different load and
+    the pressure case landing just inside the allowable.
+
+    Every membrane term here scales as 1/t -- hoop pr/t, dome axial pr/2t, and
+    the flight stresses which are load over area -- so von Mises scales as 1/t
+    exactly and the required thickness follows by proportion rather than by
+    iteration.
+
+    ``target_margin`` defaults to 1.0, meaning "just reaches the allowable".
+    Callers that want a margin their analysis can actually resolve should pass
+    ``cadflow.margin_audit.RESOLVED_MARGIN``: sizing to 1.0 leaves a verdict
+    inside the 14.5% this project has measured between element orders, which is
+    a pass that cannot be distinguished from a failure.
+    """
+    if reference_wall_m <= 0 or allowable_pa <= 0:
+        raise ValueError("reference wall and allowable must be positive")
+    state = wall_load_state(pressure_pa=pressure_pa, radius_m=radius_m,
+                            wall_m=reference_wall_m,
+                            axial_flight_pa=axial_flight_pa,
+                            bending_pa=bending_pa)
+    vm = state.von_mises_pa
+    if vm <= 0:
+        return 0.0
+    return reference_wall_m * vm * float(target_margin) / float(allowable_pa)
