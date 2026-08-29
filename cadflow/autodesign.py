@@ -175,8 +175,27 @@ def _material(material_id: str):
     raise KeyError(f"unknown material {material_id!r}")
 
 
-def best_material_for(temp_k: float):
-    """Lightest-per-strength catalogue material that survives this temperature.
+def best_material_for(temp_k: float, protected: bool = False,
+                      gauge_limited: bool = False):
+    """Lightest catalogue material that survives this temperature.
+
+    "Lightest" depends on what sets the wall, and the two regimes rank the
+    catalogue almost in opposite orders.
+
+    A strength-driven wall gets thinner as the alloy gets stronger, so the
+    figure of merit is yield over density and maraging steel at 0.212 beats
+    aluminium at 0.102 despite being three times as dense.
+
+    A *gauge*-driven wall does not get thinner at all -- it is already as thin
+    as the shop can make it -- so its mass is rho times area times a fixed
+    minimum thickness, and strength does not enter. There the only thing that
+    matters is density, and the ranking inverts: maraging-250 weighs 2.96x an
+    aluminium wall of identical geometry.
+
+    Every wall in this project's first stage reads "minimum gauge", so the
+    selector was optimising a quantity none of them respond to and would have
+    answered maraging steel to a question about tank ends that only density can
+    answer.
 
     Returns the material itself rather than "an upgrade or nothing", so a design
     that has grown cooler can be moved back down. The loop otherwise ratchets:
@@ -186,12 +205,27 @@ def best_material_for(temp_k: float):
     """
     from cadflow.space_materials import iter_materials
 
+    # Under a blanket the structure never sees the airflow, so the surface
+    # temperature stops being a filter and the choice becomes purely
+    # structural. That is the whole point of protecting it: this vehicle is
+    # forced onto Inconel at 8190 kg/m3 by 885 K of skin, while Ti-6Al-4V at
+    # 0.199 MPa per kg/m3 beats Inconel's 0.126 on strength for weight and is
+    # simply not allowed to be considered.
+    #
+    # The thermal side does not disappear, it moves: the blanket is then sized
+    # to hold the backface at whatever the chosen alloy can take, so a colder
+    # alloy buys a thicker blanket. The loop pays that in tps_mass_kg and keeps
+    # the result only if the total is lighter.
     capable = [m for m in iter_materials()
-               if m.yield_mpa and m.max_service_temp_k >= temp_k
+               if m.yield_mpa
+               and (protected or m.max_service_temp_k >= temp_k)
                and m.category in ("aluminum", "titanium", "steel", "superalloy")]
     if not capable:
         return None
-    capable.sort(key=lambda m: -(m.yield_mpa / m.density_kg_m3))
+    if gauge_limited:
+        capable.sort(key=lambda m: m.density_kg_m3)
+    else:
+        capable.sort(key=lambda m: -(m.yield_mpa / m.density_kg_m3))
     return capable[0]
 
 
@@ -558,18 +592,81 @@ def _right_size_material(payload_kg, apogee_km, knobs, ev, limits):
     Returns None unless the swap both changes something and stays feasible --
     a cheaper design that violates a constraint is not a cheaper design.
     """
-    want = best_material_for(ev.skin_temp_k)
+    want = best_material_for(ev.skin_temp_k, protected=knobs.use_tps,
+                             gauge_limited=_walls_are_gauge_limited(ev, knobs))
     if want is None or want.material_id == knobs.skin_material:
         return None
     try:
         current = _material(knobs.skin_material)
     except KeyError:
         return None
-    if (want.yield_mpa / want.density_kg_m3) <= (current.yield_mpa / current.density_kg_m3):
-        return None
+
+    # Judge the swap by what the vehicle weighs, not by a figure of merit.
+    #
+    # This gated on yield over density improving, which is the right measure
+    # only for a strength-driven wall. Every wall in this vehicle reads
+    # "minimum gauge", where mass is density times a fixed thickness and
+    # strength does not enter -- so the guard would reject aluminium at 2700 in
+    # favour of keeping Inconel at 8190, on a comparison neither wall responds
+    # to.
+    #
+    # It also settles the circularity honestly. A weaker alloy can push a wall
+    # out of the gauge regime into strength, making it thicker rather than
+    # lighter; flying the trial and comparing charged mass catches that without
+    # anyone having to reason about it.
     trial = replace(knobs, skin_material=want.material_id)
     got = evaluate(payload_kg, apogee_km, trial, limits)
-    return (trial, got) if got.feasible else None
+    if not got.feasible:
+        return None
+    if _charged_mass(got) >= _charged_mass(ev) - 1e-9:
+        return None
+    return (trial, got)
+
+
+def _charged_mass(ev) -> float:
+    """Gross plus the thermal protection, which gross does not include.
+
+    Comparing bare gross across a TPS trade would hand the blanket branch a
+    free win: the structure it protects is lighter and the blanket that makes
+    that possible would not appear on either side of the comparison.
+    """
+    return float(ev.gross_kg) + float(getattr(ev, "tps_mass_kg", 0.0) or 0.0)
+
+
+def _walls_are_gauge_limited(ev, knobs) -> bool:
+    """Is the wall as thin as the shop can make it, or as thin as the load allows?
+
+    Decides which way to rank the catalogue, so it has to be read from the
+    sizing rather than assumed. Falls back to False -- the strength ranking,
+    which is what this did before -- when the sizing is unavailable, because
+    that is the behaviour every existing caller was tuned against.
+    """
+    plan = getattr(ev, "plan", None)
+    if plan is None or not getattr(plan, "stack", None):
+        return False
+    try:
+        from cadflow.structural_sizing import stage_structural_mass
+
+        mat = _material(knobs.skin_material)
+        _total, parts = stage_structural_mass(
+            float(plan.stack[0].prop_mass_kg),
+            max(0.10, (ev.gross_kg / 1000.0) ** (1 / 3) * 0.55) / 2.0,
+            float(getattr(plan, "trajectory", {}).get("liftoff_thrust_n")
+                  or 0.0) or 1.0,
+            density_kg_m3=float(mat.density_kg_m3),
+            yield_pa=float(mat.yield_mpa) * 1e6 if mat.yield_mpa else None,
+            # youngs_modulus_gpa, not youngs_gpa. Written as a getattr with a
+            # None default the first time, which would have silently passed no
+            # modulus at all and let the buckling term size itself off a
+            # default -- a wrong number rather than an error.
+            modulus_pa=float(mat.youngs_modulus_gpa) * 1e9
+            if mat.youngs_modulus_gpa else None)
+    except Exception:  # noqa: BLE001
+        return False
+    drivers = [str(x.get("driver", "")) for x in parts if "driver" in x]
+    if not drivers:
+        return False
+    return sum(d == "minimum gauge" for d in drivers) > len(drivers) / 2
 
 
 def _tankage_shares(ev, knobs):
@@ -652,6 +749,46 @@ def _afford_tankage(payload_kg, apogee_km, knobs, ev, limits):
             if trial_shares else float("nan")
         tried.append(f"{cap} stage(s): closes, but its smallest stage still "
                      f"needs {100*worst:.0f}% of its allowance for tankage")
+
+    # Before giving up: protect the structure instead of shortening the stack.
+    #
+    # The alloy is forced by the airflow, and its density is what the tank ends
+    # cannot afford. A blanket moves the thermal problem off the structure and
+    # lets it be aluminium, which is the one lever that acts directly on the
+    # quantity failing. It costs mass -- about ten kilos of aerogel here -- so
+    # it is tried after the architecture changes that cost nothing, and only
+    # when it actually fixes what it was reached for.
+    if not knobs.use_tps:
+        # Take the lighter alloy in the same move.
+        #
+        # A blanket over the alloy the airflow forced buys nothing: the whole
+        # benefit is that the structure no longer has to survive the airflow, so
+        # it can be aluminium. Setting use_tps alone left rene-41 in place and
+        # the tankage unchanged at 141%, because evaluate does not re-run
+        # material selection -- that happens in _right_size_material, a step
+        # this one does not reach.
+        # getattr, because this reaches into an object it does not own and the
+        # step is an enhancement rather than a gate. A real Evaluation always
+        # carries skin_temp_k; a caller passing something simpler should get no
+        # thermal repair, not an AttributeError from a repair path.
+        _light = best_material_for(
+            float(getattr(ev, "skin_temp_k", 0.0) or 0.0), protected=True,
+            gauge_limited=_walls_are_gauge_limited(ev, knobs))
+        trial = replace(knobs, use_tps=True,
+                        skin_material=(_light.material_id if _light
+                                       else knobs.skin_material))
+        got = evaluate(payload_kg, apogee_km, trial, limits)
+        if got.plan is not None and got.feasible:
+            trial_shares = _tankage_shares(got, trial)
+            if trial_shares and all(f["feasible"] for f in trial_shares):
+                return {"fixed": True, "knobs": trial, "evaluation": got,
+                        "before": shares, "after": trial_shares,
+                        "how": "thermal protection"}
+            tried.append(
+                "thermal protection: the structure survives but its smallest "
+                "stage still cannot afford its tankage")
+        else:
+            tried.append("thermal protection: no catalogued blanket closes it")
 
     # No shorter stack works. That is a conclusion, not a silence.
     #
@@ -740,8 +877,10 @@ def autodesign(payload_kg: float, apogee_km: float,
                 knobs, ev = afforded["knobs"], afforded["evaluation"]
                 history.append({
                     "iteration": i + 1,
-                    "note": "stage dropped: smallest stage could not afford "
-                            "its tankage",
+                    "note": (f"tankage repaired by {afforded['how']}"
+                             if afforded.get("how") else
+                             "stage dropped: smallest stage could not afford "
+                             "its tankage"),
                     "stages": ev.stages,
                     "stages_before": before_n,
                     "gross_kg": ev.gross_kg,

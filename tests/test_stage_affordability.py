@@ -33,10 +33,20 @@ class _Plan:
 
 
 class _Ev:
-    def __init__(self, stack, gross, stages):
+    """A minimal stand-in for an Evaluation.
+
+    skin_temp_k is here because the thermal repair path reads it. It was absent
+    at first and three tests failed with AttributeError from inside a repair --
+    which is the fixture being unrealistic rather than the code being wrong, but
+    it also showed the repair reaching into an object it does not own without a
+    guard.
+    """
+
+    def __init__(self, stack, gross, stages, skin_temp_k=885.0):
         self.plan = _Plan(stack)
         self.gross_kg = gross
         self.stages = stages
+        self.skin_temp_k = skin_temp_k
         self.feasible = True
         self.violations = []
 
@@ -131,9 +141,16 @@ def test_an_unaffordable_stack_with_no_shorter_option_reports_a_conflict():
     got = _afford_tankage(25.0, 4000.0, kn, ev, None)
     assert got is not None and got["fixed"] is False
     assert "cannot afford its own tankage" in got["conflict"]
-    # and it says what it tried, not merely that it failed
+    # and it says what it tried, not merely that it failed.
+    #
+    # This asserted that every alternative mentions "stage(s)", which was true
+    # when shortening the stack was the only repair. The thermal one is now
+    # among them, and a test that demanded all attempts look alike would have
+    # to be loosened every time the loop learned a new move -- so it checks
+    # that each attempt is reported, not that they share a shape.
     assert got["alternatives"]
-    assert all("stage(s):" in a for a in got["alternatives"])
+    assert all(a.strip() for a in got["alternatives"])
+    assert any("stage(s):" in a for a in got["alternatives"])
 
 
 def test_the_conflict_names_the_stage_and_the_number():
@@ -149,3 +166,54 @@ def test_missing_pressurisation_leaves_the_loop_alone():
     ev = _Ev([], 100.0, 0)
     assert _tankage_shares(ev, Knobs()) is None
     assert _afford_tankage(1.0, 1.0, Knobs(), ev, None) is None
+
+
+def test_a_blanket_is_tried_before_the_loop_gives_up():
+    """The repair that acts on the quantity actually failing.
+
+    The alloy is forced by the airflow and its density is what the tank ends
+    cannot afford, so protecting the structure and taking a lighter alloy is the
+    one lever aimed at the failing number. It is tried after the architecture
+    changes, because it costs mass where they do not.
+    """
+    from dataclasses import replace
+
+    ev, kn = _four_stage(), Knobs(skin_material="inconel-718")
+    got = _afford_tankage(25.0, 4000.0, kn, ev, None)
+    assert got is not None
+    # either it repaired the design, or it reports having tried
+    if got["fixed"]:
+        assert got["knobs"].use_tps
+    else:
+        assert any("thermal protection" in a for a in got["alternatives"])
+
+
+def test_protecting_a_dense_alloy_alone_buys_nothing():
+    """Which is why the trial takes the lighter material in the same move.
+
+    Setting use_tps and leaving rene-41 in place left the tankage unchanged at
+    141%: evaluate does not re-run material selection, so the blanket protected
+    an alloy that never needed protecting from a mass point of view.
+    """
+    from cadflow.autodesign import best_material_for
+
+    forced = best_material_for(885.0, protected=False, gauge_limited=True)
+    freed = best_material_for(885.0, protected=True, gauge_limited=True)
+    assert freed.density_kg_m3 < forced.density_kg_m3 * 0.5
+
+
+def test_the_gauge_regime_inverts_the_material_ranking():
+    """Strength per weight is the wrong measure for a wall at minimum gauge.
+
+    A gauge-driven wall does not get thinner as the alloy gets stronger -- it is
+    already as thin as the shop allows -- so its mass is density times a fixed
+    thickness. Ranking by yield over density picks maraging steel at 8000 kg/m3
+    where the same geometry in aluminium weighs a third as much.
+    """
+    from cadflow.autodesign import best_material_for
+
+    by_strength = best_material_for(885.0, protected=True, gauge_limited=False)
+    by_density = best_material_for(885.0, protected=True, gauge_limited=True)
+    assert by_density.density_kg_m3 < by_strength.density_kg_m3
+    assert (by_strength.yield_mpa / by_strength.density_kg_m3
+            > by_density.yield_mpa / by_density.density_kg_m3)

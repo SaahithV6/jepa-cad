@@ -1,0 +1,32 @@
+{
+  "rows": [
+    {
+      "case": "bare structure (loop picks the alloy)",
+      "converged": true,
+      "material": "inconel-718",
+      "use_tps": false,
+      "gross_kg": 1857.5,
+      "tps_kg": 0.0,
+      "charged_kg": 1857.5,
+      "stages": 4,
+      "skin_temp_k": 884.9,
+      "worst_tankage": 1.405,
+      "affordable": false,
+      "violations": 0
+    },
+    {
+      "case": "aluminium under a blanket",
+      "converged": true,
+      "material": "inconel-718",
+      "use_tps": true,
+      "gross_kg": 1857.5,
+      "tps_kg": 0.0,
+      "charged_kg": 1857.5,
+      "stages": 4,
+      "skin_temp_k": 884.9,
+      "worst_tankage": 1.405,
+      "affordable": false,
+      "violations": 0
+    }
+  ]
+}
