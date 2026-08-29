@@ -2119,14 +2119,43 @@ def main() -> int:
                 # a requirement exists and is unverified, and the overall
                 # verdict has to distinguish that from a failure.
                 _needs_phase = _disp["requires_phase_stabilisation"]
+                # The damping the design actually carries, which is the
+                # baffled value when baffles were fitted and the bare-tank value
+                # when they were not.
+                _phase_hard = None
+                if _needs_phase:
+                    try:
+                        from cadflow.control_authority import (
+                            phase_stabilisation_difficulty as _phase_diff)
+                        from cadflow.slosh_baffles import (
+                            BARE_TANK_DAMPING as _ZB)
+
+                        _zeta_now = (_baffle.damping_ratio
+                                     if _baffle is not None else _ZB)
+                        _phase_hard = _phase_diff(_zeta_now)
+                    except Exception:  # noqa: BLE001
+                        _phase_hard = None
                 _assembly_findings.append({
                     "check": "flexible mode stabilisation",
                     "passed": not _needs_phase,
+                    # Say how hard, not only whether.
+                    #
+                    # mode_disposition answers which side of crossover a mode is
+                    # on, and damping does not move a frequency, so the verdict
+                    # is unchanged by baffles. The difficulty is not: a bare
+                    # tank resonates at Q = 1000, a needle where a few degrees of
+                    # phase error destabilises the vehicle, while the baffles
+                    # this packet now carries put it at Q = 10.6, a broad hill a
+                    # conventional autopilot rolls over. Reporting only the
+                    # verdict made this finding read identically before and after
+                    # a change that altered the problem by two orders of
+                    # magnitude.
                     "detail": (
                         "all modes gain-stabilisable with a conventional rolloff"
                         if not _needs_phase else
                         f"{', '.join(_needs_phase)} below crossover; phase "
-                        f"stabilisation required and not verified here"),
+                        f"stabilisation required and not verified here"
+                        + (f" -- {_phase_hard['note']}" if _phase_hard else "")),
                     "severity": "pass" if not _needs_phase else "unverified"})
                 # The bandwidth window is not a separate finding. It and the
                 # mode disposition above are the same physical fact -- slosh

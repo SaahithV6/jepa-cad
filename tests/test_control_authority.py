@@ -324,3 +324,34 @@ def test_the_verdict_reads_correctly_for_one_mode():
     d = mode_disposition(crossover_hz=3.85, modes={"slosh": 2.48})
     assert "slosh sits below crossover" in d["verdict"]
     assert " sit below" not in d["verdict"]
+
+
+def test_phase_stabilisation_difficulty_separates_two_different_problems():
+    """Same verdict, two orders of magnitude apart in difficulty.
+
+    mode_disposition answers which side of crossover a mode sits on, and damping
+    does not move a frequency -- so baffles do not change the verdict. They
+    change the problem completely: a bare tank resonates at Q = 1000, a needle
+    where a few degrees of phase error destabilises the vehicle, while a baffled
+    one sits at Q = 10.6, a broad hill a conventional autopilot rolls over.
+
+    Reporting only the verdict made this project's slosh finding read
+    identically before and after a change that altered the engineering by a
+    factor of ninety.
+    """
+    from cadflow.control_authority import phase_stabilisation_difficulty
+
+    bare = phase_stabilisation_difficulty(0.0005)
+    baffled = phase_stabilisation_difficulty(0.047)
+    assert bare["peak_amplification"] == pytest.approx(1000.0)
+    assert baffled["peak_amplification"] == pytest.approx(10.6, abs=0.2)
+    assert bare["band"] == "needle-sharp"
+    assert baffled["band"] == "broad"
+
+
+def test_zero_damping_is_refused_rather_than_reported_as_infinite():
+    """An undamped mode has no finite peak, which is not a number to report."""
+    from cadflow.control_authority import phase_stabilisation_difficulty
+
+    with pytest.raises(ValueError):
+        phase_stabilisation_difficulty(0.0)

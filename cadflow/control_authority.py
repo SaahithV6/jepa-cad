@@ -376,3 +376,44 @@ def bandwidth_window(*, first_bending_hz: float, lowest_slosh_hz: float,
                     f"baffles or structural damping may open it; failing that "
                     f"it needs notch filtering or a different configuration.")),
     }
+
+
+def phase_stabilisation_difficulty(damping_ratio: float) -> dict:
+    """How hard a mode below crossover is to phase stabilise, given its damping.
+
+    ``mode_disposition`` answers *whether* a mode needs phase stabilisation, and
+    that answer depends only on which side of crossover it sits -- damping does
+    not move a frequency. But it says nothing about how demanding the task is,
+    and the difference is enormous.
+
+    A lightly damped mode has a resonant peak of Q = 1/(2 zeta). A bare
+    propellant tank at zeta = 0.0005 gives Q = 1000: a needle-sharp resonance
+    where a few degrees of phase error at one frequency drives the vehicle
+    unstable. Ring baffles at zeta = 0.047 give Q = 10.6, a broad low hill that
+    a conventional autopilot rolls over.
+
+    Same verdict -- phase stabilisation required -- and two completely different
+    engineering problems. Reporting only the verdict tells a reader nothing
+    about which one they have, so this project's slosh finding read identically
+    before and after baffles were added to the design.
+    """
+    z = float(damping_ratio)
+    if z <= 0:
+        raise ValueError("damping ratio must be positive")
+    q = 1.0 / (2.0 * z)
+    if q > 200:
+        band = "needle-sharp"
+        note = ("a few degrees of phase error at the resonance is enough to "
+                "drive it unstable, so the compensator has to be accurate at "
+                "one frequency and stay accurate as the tank drains and the "
+                "frequency moves")
+    elif q > 30:
+        band = "sharp"
+        note = ("demanding but tractable: the compensator has to track the mode "
+                "as the fill level changes")
+    else:
+        band = "broad"
+        note = ("routine: the peak is low enough that a conventional autopilot "
+                "with adequate phase margin rolls over it")
+    return {"damping_ratio": z, "peak_amplification": q, "band": band,
+            "note": f"peak amplification Q = {q:.0f} ({band}); {note}"}
