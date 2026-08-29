@@ -100,6 +100,21 @@ class Knobs:
     #: shapes. CFD now prices all three on an open-base vehicle, so the choice
     #: can be made on measured drag rather than left at a default.
     nose_shape: str = "ogive"
+    #: Protect the structure with a blanket instead of skinning it in an alloy
+    #: that survives the airflow.
+    #:
+    #: A design variable for the same reason the others are. The loop treats
+    #: thermal protection as a last resort -- sized only when no alloy survives
+    #: at all -- so it has no way to notice that a blanket over a light alloy can
+    #: weigh less than a bare heavy one. For this vehicle the skin reaches 885 K,
+    #: which forces Inconel at 8190 kg/m3, and Inconel's density is what makes
+    #: the smallest stage unable to afford its tank ends. Aerogel over aluminium
+    #: is about 11.8 kg of blanket against roughly 40 kg of tankage.
+    #:
+    #: False by default: a bare structure is simpler, and TPS is an ablator or a
+    #: blanket with inspection and refurbishment costs this project does not
+    #: model. The loop turns it on only when it pays.
+    use_tps: bool = False
     #: Cap on stage count. None lets the planner choose freely.
     #:
     #: A design variable for the same reason struct_coeff is one. Architecture
@@ -332,9 +347,6 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
     except Exception:  # noqa: BLE001 - closure is a gate, not a crash
         pass
 
-    if ev.tps:
-        ev.tps_mass_kg = float(ev.tps.get("mass_kg") or 0.0)
-
     if ev.peak_g > lim["payload_g"]:
         ev.violations.append(Violation(
             "loads", "peak axial acceleration", ev.peak_g, lim["payload_g"],
@@ -375,7 +387,24 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
     ev.skin_limit_k = skin_limit
     if ev.skin_temp_k > skin_limit and not gate_disabled:
         upgrade = coolest_capable_material(ev.skin_temp_k, knobs.skin_material)
-        if upgrade is not None:
+        if knobs.use_tps:
+            # The caller has chosen to protect the structure rather than skin it
+            # in something that survives bare. Size the blanket to hold the
+            # backface at what this alloy can take; if nothing catalogued can,
+            # _size_tps_for returns None and the violation stands.
+            ev.tps = _size_tps_for(ev, knobs, skin_limit)
+            # Covered when a blanket was sized and weighed, or when the sizing
+            # says none is needed. Anything else leaves the skin unprotected and
+            # the violation has to stand -- a knob that silently succeeds when
+            # it cannot do its job is worse than no knob.
+            covered = bool(ev.tps) and (
+                ev.tps.get("required") is False
+                or ev.tps.get("mass_kg") is not None)
+            if not covered:
+                ev.violations.append(Violation(
+                    "aeroheating", "peak skin temperature", ev.skin_temp_k,
+                    skin_limit, "no thermal protection covers this"))
+        elif upgrade is not None:
             ev.violations.append(Violation(
                 "aeroheating", "peak skin temperature", ev.skin_temp_k,
                 skin_limit, "upgrade skin material"))
@@ -392,6 +421,17 @@ def evaluate(payload_kg: float, apogee_km: float, knobs: Knobs,
                     skin_limit,
                     "exceeds every alloy and every catalogued TPS; "
                     "needs a different trajectory"))
+
+    # After the gate, because the gate is what sizes it.
+    #
+    # This assignment used to sit sixty lines earlier, reading ev.tps before
+    # anything had set it, so tps_mass_kg was always zero. That is the third
+    # instance of the same ordering error in this file: a value read above the
+    # code that produces it. Combined with the mass never being charged
+    # downstream, thermal protection was free twice over -- never weighed, and
+    # never even computed.
+    if ev.tps:
+        ev.tps_mass_kg = float(ev.tps.get("mass_kg") or 0.0)
     return ev
 
 
