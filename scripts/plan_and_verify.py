@@ -2985,13 +2985,32 @@ def main() -> int:
                       "apogee_km": float(args.apogee_km),
                       "propellant": str(args.propellant),
                       "chamber_bar": float(args.chamber_bar)}
+        # Compare what the loop decided against what was built, not against
+        # what the caller asked for.
+        #
+        # Those are two different invariants and conflating them made the packet
+        # report FAILED for a design that is fine. At 200 bar the loop lowers
+        # chamber pressure to 153.3 to satisfy the throat heat flux limit -- a
+        # correct repair, now reported in the knob trajectory. Checking the
+        # built value against the *request* flags that as a substitution, when
+        # the substitution the check exists for is the silent kind: a subsystem
+        # using something nobody decided.
+        #
+        #   provenance      : the loop's decision vs what was built
+        #   knob trajectory : the caller's request vs the loop's decision
+        #
+        # The first catches a disconnection. The second reports a design
+        # decision. Only the first is a failure.
+        _decided_bar = float(getattr(design_knobs, "chamber_bar", None)
+                             or args.chamber_bar)
+        _requested["chamber_bar"] = _decided_bar
         _used = {
             "payload_kg": float(args.payload_kg),
             "apogee_km": float(args.apogee_km),
             "propellant": str(getattr(design_knobs, "propellant", None)
                               or args.propellant),
             "chamber_bar": (float(p.stack[0].chamber_pressure_pa) / 1e5
-                            if p.stack else float(args.chamber_bar)),
+                            if p.stack else _decided_bar),
         }
         _crosses = list(_crosses) + _prov(requested=_requested, used=_used)
     except Exception:  # noqa: BLE001
@@ -3033,6 +3052,29 @@ def main() -> int:
                        f"disagree: " + "; ".join(c.check for c in _bad[:3])),
             "severity": "fail"})
 
+    _assembly_unverified = [f for f in _assembly_findings
+                            if f["severity"] == "unverified"]
+    allp = (_components_ok and not _components_unanalysed
+            and not _assembly_fails and not _assembly_unverified)
+    # Recount the findings after everything has been appended.
+    #
+    # _assembly_fails was computed two hundred lines above, before the
+    # self-consistency finding is added, and the status then read that stale
+    # list -- so a failing cross-check could never affect the verdict. It went
+    # unnoticed because until the provenance check produced one, the packet had
+    # never had a self-consistency failure at all: a status line that could not
+    # see a whole category of failure, in a packet whose purpose is to report
+    # them.
+    #
+    # The same ordering error as three earlier ones in this file, and the same
+    # signature: a value read before the code that completes it, yielding a
+    # plausible answer rather than an exception.
+    _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
+    # Dicts, as the original does. Recounting is meant to pick up findings
+    # appended since, not to change the type -- rebuilding this as a list of
+    # names broke the two consumers that read _u["check"] and _u["detail"],
+    # which is a fix introducing a defect of a different kind while repairing
+    # one.
     _assembly_unverified = [f for f in _assembly_findings
                             if f["severity"] == "unverified"]
     allp = (_components_ok and not _components_unanalysed

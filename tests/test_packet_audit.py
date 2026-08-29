@@ -294,3 +294,29 @@ def test_rounding_is_not_reported_as_a_substitution():
                                          used={"chamber_bar": 55.00000001}))
     assert failures(input_provenance(requested={"chamber_bar": 55.0},
                                      used={"chamber_bar": 60.0}))
+
+
+def test_a_repair_the_loop_reports_is_not_a_substitution():
+    """Two invariants that must not be conflated.
+
+    At 200 bar the design loop lowers chamber pressure to 153.3 to satisfy the
+    throat heat flux limit. That is the loop working, and the knob trajectory
+    reports it. Checking the built value against the caller's *request* flagged
+    it as a substitution and drove the packet to FAILED for a design that is
+    fine.
+
+      provenance      : the loop's decision vs what was built  -- a failure
+      knob trajectory : the request vs the loop's decision     -- a decision
+
+    The check exists for the silent kind: a subsystem using a value nobody
+    decided on.
+    """
+    from cadflow.packet_audit import failures, input_provenance
+
+    # the loop decided 153.3 and the vehicle was built at 153.3: no failure,
+    # however far that is from what the caller typed
+    assert not failures(input_provenance(requested={"chamber_bar": 153.3},
+                                         used={"chamber_bar": 153.3}))
+    # the loop decided 153.3 and something built 200: a real disconnection
+    assert failures(input_provenance(requested={"chamber_bar": 153.3},
+                                     used={"chamber_bar": 200.0}))

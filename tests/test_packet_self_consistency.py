@@ -267,3 +267,22 @@ def test_an_unanalysable_part_is_not_reported_as_a_failed_one(packet):
     if not [f for f in packet.get("assembly_findings", [])
             if f.get("severity") == "fail"]:
         assert packet.get("status") != "FAILED"
+
+
+def test_a_failing_cross_check_reaches_the_status(packet):
+    """A self-consistency failure has to make the packet FAILED.
+
+    _assembly_fails was computed two hundred lines before the self-consistency
+    finding was appended, and the status read that stale list -- so a failing
+    cross-check could never change the verdict. It went unnoticed because until
+    the provenance check produced one, no packet had ever had a self-consistency
+    failure: a status line blind to a whole category of failure, in a document
+    whose purpose is reporting them.
+    """
+    fails = [f for f in packet.get("assembly_findings", [])
+             if f.get("severity") == "fail"]
+    if not fails:
+        pytest.skip("this packet has no failing findings")
+    assert packet.get("status") == "FAILED", (
+        f"{len(fails)} finding(s) failed and the status reads "
+        f"{packet.get('status')}")
