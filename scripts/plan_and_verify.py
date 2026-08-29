@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import math
 import sys
@@ -2346,6 +2347,57 @@ def main() -> int:
     # requirement remains unchecked, so `all_passed` is False unless the packet
     # actually verified everything, and the three-way status says which of the
     # three situations it is.
+    # Is each passing margin bigger than the error bar on the number it came
+    # from?
+    #
+    # v40 reported the tank wall as passing at 130.0 MPa against a 131 MPa
+    # allowable -- eight parts in a thousand -- in the same document that states
+    # element order moves the p95 stress this loop sizes against by -13.9% to
+    # +14.5%. Both are true and they cannot both be load-bearing. A margin
+    # smaller than its own uncertainty is not a pass, and reporting it as one is
+    # the kind of overclaim a reader has no way to see.
+    try:
+        from cadflow.margin_audit import (
+            audit as _margin_audit, summary as _margin_summary,
+            unresolved as _margin_thin)
+
+        _margins = {}
+        for _f in _assembly_findings:
+            _m = re.search(r"margin ([0-9.]+)", str(_f.get("detail", "")))
+            if _m:
+                _margins[_f["check"]] = float(_m.group(1))
+        try:
+            if _st and allowable_mpa:
+                _margins["tank wall under pressure"] = (
+                    allowable_mpa / max(_ws.von_mises_pa / 1e6, 1e-9))
+        except Exception:  # noqa: BLE001
+            pass
+        _mv = _margin_audit(_margins) if _margins else []
+        _thin = _margin_thin(_mv)
+        if _mv:
+            L.append("\n## Are these margins bigger than their own error bars?\n")
+            L.append("| check | margin | outside measured uncertainty |")
+            L.append("|---|---|---|")
+            for _v in _mv:
+                L.append(f"| {_v.check} | {_v.margin:.3f} | "
+                         f"**{_v.resolved}** |")
+            _txt = _margin_summary(_mv)
+            if _txt:
+                L.append(f"\n{_txt}\n")
+            else:
+                L.append("\nEvery passing margin clears its allowable by more "
+                         "than the 14.5% this project has measured between "
+                         "element orders, so no verdict here rests on numerical "
+                         "noise.\n")
+        for _v in _thin:
+            _assembly_findings.append({
+                "check": f"margin is established: {_v.check}",
+                "passed": False,
+                "detail": _v.note,
+                "severity": "unverified"})
+    except Exception as _mexc:  # noqa: BLE001
+        print(f"margin audit unavailable: {_mexc}", flush=True)
+
     _assembly_fails = [f for f in _assembly_findings if f["severity"] == "fail"]
     # The components that passed are coupons, not the flight parts.
     #
