@@ -367,6 +367,23 @@ def main() -> int:
     # is not a safety net, it is an eraser.
     design_conflict = None
     _tps_total_kg = 0.0
+    # Does this vehicle carry liquid at all?
+    #
+    # slosh.py computes a free-surface mode for whatever mass it is handed; it
+    # has no notion of phase. A solid_apcp packet duly reported "slosh below
+    # crossover, phase stabilisation required" for a motor whose propellant is
+    # a cast grain bonded to the case. Nothing sloshes in a solid, and a
+    # requirement invented for a mode that cannot exist is worse than a missing
+    # one, because it reads as engineering.
+    #
+    # Read from the tankage model rather than a list here: a propellant with no
+    # tanks has no free surface, and that is the same question.
+    try:
+        from cadflow.pressurization import COMBINATIONS as _LIQUIDS
+
+        _has_liquid = args.propellant in _LIQUIDS
+    except Exception:  # noqa: BLE001
+        _has_liquid = True
     # The inter-stage coast the trajectory integrates, so the separation check
     # judges the same flight the rest of the packet describes.
     try:
@@ -1517,8 +1534,18 @@ def main() -> int:
                                 for _i in range(len(p.stack))]
                 _press_rows = []
                 for _i, _s in enumerate(p.stack, 1):
+                    # Tell it which propellant it is sizing.
+                    #
+                    # combination was never passed, so it defaulted to lox_rp1
+                    # and every vehicle got kerosene tanks whatever it burns. A
+                    # solid_apcp stage came back with 0.98 m3 of tank, helium
+                    # and domes -- and the refusal added to stage_pressurisation
+                    # for exactly that case could not fire, because the module
+                    # was never told what it was looking at. The same omission
+                    # as the design loop, one layer down.
                     _press_rows.append(_press(
                         stage=_i, propellant_mass_kg=float(_s.prop_mass_kg),
+                        combination=args.propellant,
                         radius_m=_press_radii[_i - 1], wall_m=_t_m,
                         acceleration_g=1.0, head_height_m=_tank_h,
                         wall_density_kg_m3=_skin_rho,
@@ -1757,6 +1784,20 @@ def main() -> int:
                         f"{100*max(f['fraction_of_allowance'] for f in _fz):.0f}% "
                         f"of its structural allowance for tankage"),
                     "severity": "pass" if not _fz_bad else "fail"})
+            except KeyError as _kexc:
+                # A propellant with no tankage model is a statement about the
+                # vehicle, not a missing feature. A solid motor carries its
+                # propellant in the case: there is nothing to pressurise, and
+                # saying so is the correct output rather than an omission.
+                L.append(f"\n## Tank pressurisation\n")
+                L.append(f"\nNot applicable. {str(_kexc).strip(chr(34))}\n")
+                _assembly_findings.append({
+                    "check": "tank pressurisation applies",
+                    "passed": True,
+                    "detail": (f"{args.propellant} has no tankage to size: the "
+                               f"propellant is carried in the motor case, so "
+                               f"there is no ullage, pressurant or dome mass"),
+                    "severity": "pass"})
             except Exception as _exc:  # noqa: BLE001
                 print(f"pressurisation unavailable: {_exc}", flush=True)
 
@@ -2082,6 +2123,12 @@ def main() -> int:
                         f"costs {_baffle.mass_kg:.2f} kg")
                 elif _coincide < _need_sep:
                     _sep_detail += "; no baffle within a sensible width closes it"
+                if not _has_liquid:
+                    _sep_detail = (
+                        f"not applicable: {args.propellant} is a cast grain "
+                        f"bonded to the case, so there is no free surface and "
+                        f"nothing to slosh")
+                    _sep_ok = True
                 _assembly_findings.append({
                     "check": "slosh / pitch-mode separation",
                     "passed": bool(_sep_ok),
@@ -2185,6 +2232,11 @@ def main() -> int:
                         _phase_hard = _phase_diff(_zeta_now)
                     except Exception:  # noqa: BLE001
                         _phase_hard = None
+                if not _has_liquid:
+                    # Bending modes remain real on a solid; slosh does not.
+                    _needs_phase = [m for m in _needs_phase
+                                    if "slosh" not in m.lower()]
+                    _phase_hard = None
                 _assembly_findings.append({
                     "check": "flexible mode stabilisation",
                     "passed": not _needs_phase,

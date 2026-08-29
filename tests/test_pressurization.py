@@ -582,3 +582,44 @@ def test_an_explicit_ratio_still_overrides():
     got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
                                radius_m=0.338, wall_m=0.0008, of_ratio=3.1)
     assert "O/F 3.10" in " ".join(got.notes)
+
+
+def test_an_unknown_propellant_is_refused_not_silently_made_kerosene():
+    """A solid motor has no tanks, and the model has to say so.
+
+    COMBINATIONS.get(combination, ("lox", "rp1")) turned any unrecognised
+    propellant into kerosene. Asked to size a solid_apcp stage it returned
+    0.98 m3 of tank, 1.0 kg of helium and 41.2 kg of domes -- forty-two
+    kilograms of hardware for a motor that has none of those things.
+    """
+    from cadflow.pressurization import stage_pressurisation
+
+    with pytest.raises(KeyError, match="no tankage model"):
+        stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                             combination="solid_apcp", radius_m=0.5,
+                             wall_m=0.001)
+
+
+def test_the_refusal_says_what_it_does_know():
+    """An error a caller cannot act on is a complaint."""
+    from cadflow.pressurization import COMBINATIONS, stage_pressurisation
+
+    try:
+        stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                             combination="unobtainium_ox", radius_m=0.5,
+                             wall_m=0.001)
+    except KeyError as exc:
+        for known in COMBINATIONS:
+            assert known in str(exc)
+    else:
+        pytest.fail("an unknown combination was accepted")
+
+
+def test_every_known_liquid_combination_still_sizes():
+    """The refusal must not have taken the working cases with it."""
+    from cadflow.pressurization import COMBINATIONS, stage_pressurisation
+
+    for comb in COMBINATIONS:
+        got = stage_pressurisation(stage=1, propellant_mass_kg=1000.0,
+                                   combination=comb, radius_m=0.5, wall_m=0.001)
+        assert got.tank_volume_m3 > 0 and got.total_kg > 0

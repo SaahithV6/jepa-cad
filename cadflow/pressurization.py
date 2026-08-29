@@ -289,7 +289,22 @@ def stage_pressurisation(*, stage: int, propellant_mass_kg: float,
             of_ratio = float(REFERENCE[combination][0])
         except Exception:  # noqa: BLE001
             of_ratio = 2.45
-    ox_key, fuel_key = COMBINATIONS.get(combination, ("lox", "rp1"))
+    # Refuse a combination this module does not know, rather than pretending
+    # it is kerosene.
+    #
+    # This was COMBINATIONS.get(combination, ("lox", "rp1")), so any
+    # unrecognised propellant silently became lox/rp1. Asked to size a
+    # solid_apcp stage it returned 0.98 m3 of tank, 1.0 kg of helium and 41.2 kg
+    # of domes -- forty-two kilograms of hardware for a motor that has no tanks,
+    # no pressurant and no domes at all. A silent default for an input the code
+    # does not understand is how a confident wrong answer gets produced.
+    if combination not in COMBINATIONS:
+        raise KeyError(
+            f"no tankage model for {combination!r}. Known liquid combinations "
+            f"are {sorted(COMBINATIONS)}. A solid motor carries its propellant "
+            f"in the case and has no tanks, pressurant or domes, so this module "
+            f"does not describe it")
+    ox_key, fuel_key = COMBINATIONS[combination]
     ox = PROPELLANTS[ox_key]
     fuel = PROPELLANTS[fuel_key]
 
